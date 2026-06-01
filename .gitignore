@@ -1,0 +1,11 @@
+# Personal, per-project overrides — never commit
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Dependencies / build
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
