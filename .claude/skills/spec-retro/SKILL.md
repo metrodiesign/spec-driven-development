@@ -1,6 +1,6 @@
 ---
 name: spec-retro
-description: Create a detailed session retrospective at the end of a work session. Use when wrapping up, before /clear, while session history is still in context.
+description: Create a lean session retrospective at the end of a work session. Use when wrapping up, before /clear, while session history is still in context.
 disable-model-invocation: true
 allowed-tools:
   - Bash
@@ -9,169 +9,98 @@ allowed-tools:
   - Glob
 ---
 
-# Session Retrospective
+# Session Retrospective (lean)
 
-Produce a complete session retrospective. Run at the END of a work session,
-BEFORE /clear or compaction, while the full session history is still in context —
-otherwise the reflection below cannot be accurate.
+Produce a SHORT retrospective. Run at the END of a work session, BEFORE /clear or
+compaction, while the full session history is still in context.
+
+Design goal: capture only the durable, reusable signal — **cost, files changed,
+and lessons** — and skip long reflective narrative. Output should be ~6-9k tokens,
+not 20k. The expensive tier is output; do not pad. Every section below is the
+WHOLE template. Do not add ceremony sections (AI Diary, Co-Creation Map,
+Communication Dynamics, Seeds, Teaching Moments, etc.) — those were removed on
+purpose to cut output cost.
 
 ## Steps
 
-1. **Gather Session Data**:
-   - Run `git diff --name-only main...HEAD` or `git diff --name-only HEAD~10` for changed files
-   - Run `git log --oneline main...HEAD` or `git log --oneline -10` for commits
-   - Get current timestamp: `TZ='Asia/Bangkok' date +"%Y-%m-%d %H:%M"` (GMT+7)
+1. **Gather session data**:
+   - Changed files — check BOTH tracked and untracked (this repo keeps `app/` as
+     untracked `??`, so `git diff --stat` alone misses real code):
+     `git status --short` and `git log --oneline -10`
+   - Timestamp: `TZ='Asia/Bangkok' date +"%Y-%m-%d %H:%M"` (GMT+7)
+   - This session's real cost from the authoritative ledger (Claude Code's own
+     statusline field `.cost.total_cost_usd` — never recompute from transcript):
+     `cat ~/.claude/cost-sessions/$CLAUDE_CODE_SESSION_ID.json 2>/dev/null`
+     → fills **Session Cost**. If absent, write "cost unavailable (ledger not
+     active)". Subscription bills nothing per token; this is an estimate.
+   - Per-model / cache-tier breakdown (tokens from transcript, cost allocated from
+     the ledger total — never recomputed):
+     `python3 scripts/session-cost.py --breakdown-only "$CLAUDE_CODE_SESSION_ID"`
+     Paste its markdown verbatim at `<BREAKDOWN>`. If it prints the
+     "breakdown ไม่พร้อม" fallback, paste that line as-is.
 
-2. **Create Retrospective File**:
-   Create file at `retrospectives/YYYY-MM/DD/HH.MM_retrospective.md`
-   (e.g., `retrospectives/2025-12/06/11.30_retrospective.md`)
+2. **Write the file** at `retrospectives/YYYY-MM/DD/HH.MM_<scope-slug>.md`
+   (`<scope-slug>` = short kebab-case of the primary focus, e.g. `task4-header-nav`;
+   MANDATORY — a bare `HH.MM_retrospective.md` is indistinguishable by filename).
 
-   Use this template (ALL sections required):
+   **ภาษา (บังคับ)**: เนื้อหาเป็นภาษาไทย (คำอธิบาย, สรุป, ตาราง). คงอังกฤษเฉพาะ: code,
+   path/ชื่อไฟล์, ชื่อ command, error message, technical term. **ห้าม emoji ทุกชนิด**
+   ในไฟล์. อนุญาตลูกศร `→`.
+
+   Use EXACTLY this template (all sections required, but keep each one tight):
+
    ```markdown
    # Session Retrospective
 
    **Session Date**: YYYY-MM-DD
-   **Start Time**: ~HH:MM GMT+7
-   **End Time**: HH:MM GMT+7
-   **Duration**: ~X minutes
-   **Primary Focus**: [Brief description]
-   **Session Type**: [Feature Development | Bug Fix | Research | Refactoring]
+   **Time**: ~HH:MM–HH:MM GMT+7 (~X min)
+   **Primary Focus**: [สรุปสั้น 1 บรรทัด ภาษาไทย]
+   **Type**: [Feature | Bugfix | Research | Refactor | Tooling]
 
-   ## Session Summary
-   [2-3 sentence overview of what was accomplished]
+   ## Session Cost
 
-   ## Timeline
-   - HH:MM - [Event]
-   - HH:MM - [Event]
+   - Total (estimated; subscription bills nothing per token): $X.XX
+   - Duration ~Xm / Lines +A / -B (from ledger)
+   - Source: `.cost.total_cost_usd` via `~/.claude/cost-sessions/$CLAUDE_CODE_SESSION_ID.json`
 
-   ## Technical Details
+   <BREAKDOWN>
+   (แทนด้วย output ของ `scripts/session-cost.py --breakdown-only` — ตาราง token/model
+   + cost ปันส่วน. ถ้า transcript ไม่มี usage แปะบรรทัด fallback ที่ script พิมพ์)
 
-   ### Files Modified
-   [List files with line counts: `git diff --stat`]
+   ## Summary
 
-   ### Key Code Changes
-   For each significant change, show WHAT and WHY:
-   - **[file.ext]** (+X/-Y): [What changed] → [Why]
+   [2-4 ประโยค: ทำอะไรเสร็จ, REQ ID ที่ปิด, ผล verify (เขียว/เลข). จบ.]
 
-   ### Architecture Decisions
-   - [Decision]: [Rationale]
+   ## Files Changed
 
-   ## 📝 AI Diary (REQUIRED - min 150 words)
-   Write first-person narrative. Be VULNERABLE - include doubts and uncertainty.
-
-   **MUST include at least ONE of each (3+ sentences each):**
-   - 🤔 "I assumed X but learned Y when..."
-   - 😕 "I was confused about X until..."
-   - 😮 "I expected X but got Y because..."
-
-   ## What Went Well
-   Each item needs: WHAT succeeded → WHY it worked → IMPACT
-   - [Success]: [Why it worked] → [Measurable impact]
-
-   ## What Could Improve
-   [Session-specific issues - what went wrong THIS session, not future todos]
-
-   ## Blockers & Resolutions
-   - **Blocker**: [Description]
-     **Resolution**: [How solved]
-
-   ## 💭 Honest Feedback (REQUIRED - min 100 words)
-   **Must include ALL THREE friction points (no exceptions):**
-   - 🔴 What DIDN'T work?
-   - 🟡 What was FRUSTRATING?
-   - 🟢 What DELIGHTED you?
-
-   ## 🤝 Co-Creation Map
-   **DO NOT modify rows** - use these exact 5 categories:
-
-   | Contribution | Human | AI | Together |
-   |--------------|-------|-----|----------|
-   | Direction/Vision | | | |
-   | Options/Alternatives | | | |
-   | Final Decision | | | |
-   | Execution | | | |
-   | Meaning/Naming | | | |
-
-   ## ✨ Resonance Moments
-   - [What was suggested] → [What you chose] → [Why it mattered]
-
-   ## 🎯 Intent vs Interpretation
-   | You Said | I Understood | Gap? | Impact |
-   |----------|--------------|------|--------|
-   | | | ✓/⚠️/❌ | |
-
-   Legend: ✓=aligned, ⚠️=minor gap (self-corrected), ❌=needed clarification
-
-   **ADVERSARIAL CHECK**: If all ✓, answer ALL THREE (min 1 sentence each):
-   1. **Unverified assumption**
-   2. **Near-miss**
-   3. **Over-confidence**
-
-   ## 💬 Communication Dynamics (REQUIRED)
-
-   ### Clarity
-   | Direction | Clear? | Example |
-   |-----------|--------|---------|
-   | You → Me (instructions) | | |
-   | Me → You (explanations) | | |
-
-   ### Feedback Loop
-   - **Speed**: [Instant/Minutes/Late]
-   - **Recovery**: How smoothly did we correct course?
-   - **Pattern**: Any recurring miscommunication?
-
-   ### Trust & Initiative
-   - **Trust level**: [Too much/Right/Too little]
-   - **Proactivity**: too proactive / too passive / balanced?
-   - **Assumptions**: What did I assume that I should have asked about?
-
-   ### What Would Make Next Session Better?
-   - **You could**: [Specific action]
-   - **I could**: [Specific action]
-   - **We could**: [Specific thing to try together]
-
-   ## 🌱 Seeds Planted
-   - 🌱 **Incremental**: [Idea] → **Trigger**: use when [condition]
-   - 🌿 **Transformative**: [Idea] → **Trigger**: use when [condition]
-   - 🌳 **Moonshot**: [Idea] → **Trigger**: use when [condition]
-
-   Require at least one 🌿 or 🌳.
-
-   ## 📚 Teaching Moments
-   - **You → Me**: "[Lesson]" — discovered when [moment] — matters because [impact]
-   - **Me → You**: "[Lesson]" — discovered when [moment] — matters because [impact]
-   - **Us → Future**: "[Pattern/doc]" — created because [need] — use when [trigger]
+   [รายการไฟล์จาก `git status --short` (รวม untracked) — path + (+X/-Y ถ้ารู้) +
+   เหตุผลสั้นต่อไฟล์ 1 วรรค. โค้ดจริงใน untracked path ต้องไม่ตกหล่น.]
 
    ## Lessons Learned
-   - **Pattern**: [Description] - [Why it matters]
-   - **Discovery**: [What learned] - [How to apply]
+
+   เพิ่มเฉพาะบทเรียน reusable, mistake-preventing จริง (0 ก็ได้ถ้าไม่มี). รูปแบบเดียวกับ
+   `.claude/rules/lessons.md` เพื่อ promote ตรงในขั้นถัดไป:
+
+   - **Pattern**: [สิ่งที่ทำ/กับดัก] — **Why**: [ทำไมถึงสำคัญ/กันพลาดอะไร]
+   - **Discovery**: [สิ่งที่เพิ่งรู้] — **Why**: [นำไปใช้อย่างไร]
 
    ## Next Steps
-   - [ ] [Task 1]
-   - [ ] [Task 2]
 
-   ---
-   ## ✅ Pre-Save Validation (REQUIRED)
-   - [ ] **AI Diary**: 🤔(_) 😕(_) 😮(_) emojis found, _____ words total
-   - [ ] **Honest Feedback**: 🔴"_____" 🟡"_____" 🟢"_____"
-   - [ ] **Communication Dynamics**: Examples filled: You→Me(_) Me→You(_)
-   - [ ] **Co-Creation Map**: Row count = _____ (must be 5)
-   - [ ] **Intent vs Interpretation**: Gaps found: ⚠️(_) ❌(_)
-   - [ ] **Seeds Planted**: 🌿(_) 🌳(_)
-   - [ ] **Template cleanup**: No instruction text left in final doc
-
-   ⚠️ **HARD STOP**: Can't fill blanks = retrospective incomplete. Fix first.
+   - [ ] [task ต่อไป / TODO ค้าง]
    ```
 
-3. **Promote durable lessons (token-safe — see §10)**:
+3. **Promote durable lessons (token-safe)**:
    Do NOT append lessons to CLAUDE.md. Add ONLY genuinely reusable,
-   mistake-preventing lessons to `.claude/rules/lessons.md`, and prune stale ones.
+   mistake-preventing lessons to `.claude/rules/lessons.md`, and prune stale or
+   duplicate ones (the file is loaded into every turn's prefix — keep it lean).
 
 4. **Commit**: `git add retrospectives/ .claude/rules/lessons.md && git commit -m "docs: session retrospective YYYY-MM-DD"`
 
-## Critical Requirements
-- **AI Diary**: MUST include detailed first-person narrative
-- **Honest Feedback**: MUST include frank assessment
-- **Communication Dynamics**: MUST reflect on human-AI collaboration quality
-- **Time Zone**: Use GMT+7 (Bangkok) as primary
-- **Sequencing**: Manual skill — run before clearing/compacting, never after.
+## Critical requirements
+
+- **Cost**: always fill from the ledger; never recompute from the transcript.
+- **Files Changed**: include untracked (`??`) paths — `git status --short`, not just `--stat`.
+- **Lessons**: only durable, reusable ones; quality over quantity (zero is fine).
+- **Brevity**: no ceremony sections, no padding. Output is the most expensive tier.
+- **Time Zone**: GMT+7 (Bangkok).
+- **Sequencing**: manual skill — run before clearing/compacting, never after.
