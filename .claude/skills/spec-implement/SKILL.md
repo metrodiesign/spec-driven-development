@@ -10,6 +10,7 @@ Resolve $ARGUMENTS to the target task(s): a single id (e.g. 2), a range (1-3), o
 all incomplete tasks. For multiple tasks, work in dependency order.
 
 For EACH task:
+
 1. Read the task plus its linked REQ IDs in requirements.md and the relevant parts
    of design.md and @.claude/rules/structure.md.
 2. Plan the task with your own internal TODO list, then implement the WHOLE task in
@@ -22,3 +23,7 @@ For EACH task:
 Pause for my confirmation at each TASK boundary (not after every file). When I
 asked for a range or "all", continue to the next task after reporting, stopping
 early only if a test fails or a requirement turns out to be infeasible.
+
+For unattended / CI runs, do NOT run "all" in one session (context grows per task
+and a session cannot /clear itself). Instead drive one cohesive task per fresh
+session — implement, then `/spec-retro`, then clear — via `scripts/pane-loop.sh`.

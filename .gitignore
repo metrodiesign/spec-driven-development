@@ -6,6 +6,13 @@ CLAUDE.local.md
 node_modules/
 dist/
 build/
+__pycache__/
+*.pyc
+.next/
+next-env.d.ts
+coverage/
+tsconfig.tsbuildinfo
+.playwright-mcp/
 .env
 .env.*
 !.env.example
