@@ -10,23 +10,23 @@
 
 นี่คือหัวใจของเอกสารนี้ ทุกอย่างใน Kiro มี "ของจริง" ใน Claude Code:
 
-| Kiro | Claude Code (เนทีฟ) | ไฟล์/คำสั่ง |
-|---|---|---|
-| Master prompt / behavior | **CLAUDE.md** (รัฐธรรมนูญที่อ่านทุก session) | `./CLAUDE.md`, `~/.claude/CLAUDE.md` |
-| Steering (always) | CLAUDE.md + `@import` | `@docs/tech.md` ใน CLAUDE.md |
-| Steering (fileMatch) | **Rules แบบมีเงื่อนไข** | `.claude/rules/*.md` + frontmatter `paths:` |
-| Steering (manual) | Skill ที่ปิด auto-invoke | `.claude/skills/<x>/SKILL.md` + `disable-model-invocation: true` |
-| Steering (auto) | Skill ที่ match จาก description | `.claude/skills/<x>/SKILL.md` |
-| Steering foundation (product/tech/structure) | Rules + import | `.claude/rules/product.md` ฯลฯ |
-| Spec workflow phases | **Slash commands (เป็น skills)** | `.claude/skills/spec-*/SKILL.md` → `/spec-*` |
-| Hooks (File Save → lint) | **Hook** `PostToolUse` matcher `Edit\|Write` | `.claude/settings.json` |
-| Hooks (Agent Stop → test) | **Hook** `Stop` | `.claude/settings.json` |
-| Hooks (Pre/Post Task Execution) | **Hook** `TaskCreated` / `TaskCompleted` | `.claude/settings.json` |
-| Hooks (User Prompt Submit) | **Hook** `UserPromptSubmit` | `.claude/settings.json` |
-| Skills | **Skills** (มาตรฐานเดียวกัน) | `.claude/skills/` |
-| Custom agents / Autopilot | **Subagents** | `.claude/agents/*.md` |
-| `#spec` ในแชต | `@` อ้างไฟล์ + รัน slash command | `@.claude/specs/<feature>/` |
-| Run all Tasks (parallel) | รันทีละ task หรือทั้งชุดตามลำดับ dependency | `/spec-implement all` |
+| Kiro                                         | Claude Code (เนทีฟ)                          | ไฟล์/คำสั่ง                                                      |
+| -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
+| Master prompt / behavior                     | **CLAUDE.md** (รัฐธรรมนูญที่อ่านทุก session) | `./CLAUDE.md`, `~/.claude/CLAUDE.md`                             |
+| Steering (always)                            | CLAUDE.md + `@import`                        | `@docs/tech.md` ใน CLAUDE.md                                     |
+| Steering (fileMatch)                         | **Rules แบบมีเงื่อนไข**                      | `.claude/rules/*.md` + frontmatter `paths:`                      |
+| Steering (manual)                            | Skill ที่ปิด auto-invoke                     | `.claude/skills/<x>/SKILL.md` + `disable-model-invocation: true` |
+| Steering (auto)                              | Skill ที่ match จาก description              | `.claude/skills/<x>/SKILL.md`                                    |
+| Steering foundation (product/tech/structure) | Rules + import                               | `.claude/rules/product.md` ฯลฯ                                   |
+| Spec workflow phases                         | **Slash commands (เป็น skills)**             | `.claude/skills/spec-*/SKILL.md` → `/spec-*`                     |
+| Hooks (File Save → lint)                     | **Hook** `PostToolUse` matcher `Edit\|Write` | `.claude/settings.json`                                          |
+| Hooks (Agent Stop → test)                    | **Hook** `Stop`                              | `.claude/settings.json`                                          |
+| Hooks (Pre/Post Task Execution)              | **Hook** `TaskCreated` / `TaskCompleted`     | `.claude/settings.json`                                          |
+| Hooks (User Prompt Submit)                   | **Hook** `UserPromptSubmit`                  | `.claude/settings.json`                                          |
+| Skills                                       | **Skills** (มาตรฐานเดียวกัน)                 | `.claude/skills/`                                                |
+| Custom agents / Autopilot                    | **Subagents**                                | `.claude/agents/*.md`                                            |
+| `#spec` ในแชต                                | `@` อ้างไฟล์ + รัน slash command             | `@.claude/specs/<feature>/`                                      |
+| Run all Tasks (parallel)                     | รันทีละ task หรือทั้งชุดตามลำดับ dependency  | `/spec-implement all`                                            |
 
 **สรุปสั้น:** CLAUDE.md = พฤติกรรม, `.claude/rules/` = มาตรฐาน, `.claude/skills/spec-*` = ขั้นตอน, `.claude/settings.json` = automation, `.claude/agents/` = ผู้เชี่ยวชาญเฉพาะทาง
 
@@ -71,6 +71,9 @@ your-project/
 │       │   └── tasks.md
 │       └── shopping-cart/
 ├── retrospectives/                    # บันทึก retrospective ราย session (commit)
+├── scripts/                           # automation
+│   ├── pane-loop.sh                   #   orchestrator: 1 task = 1 iTerm pane (ดู §7)
+│   └── *cost*.py / *cost*.sh          #   cost ledger ที่ /spec-retro อ่าน (ดู §11)
 └── src/
 ```
 
@@ -93,9 +96,9 @@ code, ALWAYS. Do not jump to implementation for any non-trivial feature.
 Every feature flows through three artifacts under `.claude/specs/<feature-name>/`,
 in order, with an APPROVAL GATE after each:
 
-  1. requirements.md  — WHAT the system must do (behavior, in EARS notation)
-  2. design.md        — HOW it will be built (architecture)
-  3. tasks.md         — discrete, trackable implementation steps
+1. requirements.md — WHAT the system must do (behavior, in EARS notation)
+2. design.md — HOW it will be built (architecture)
+3. tasks.md — discrete, trackable implementation steps
 
 After producing each artifact, STOP and ask me to review before generating the
 next. Wait for explicit approval ("approved" / "continue"). The only exception is
@@ -104,26 +107,27 @@ when I invoke `/spec-quick`, which runs all phases without gates.
 ## How to run each phase
 
 Use the project slash commands — do not improvise the structure:
-  /spec-new <idea>        choose a workflow and ask clarifying questions
-  /spec-requirements      generate requirements.md (EARS)
-  /spec-analyze           audit requirements for gaps/conflicts before design
-  /spec-design            generate design.md
-  /spec-tasks             generate tasks.md
-  /spec-implement <id|range|all>  implement one or more cohesive tasks, end-to-end
-  /spec-bugfix <bug>      root-cause-first bug workflow
-  /spec-pbt               extract properties and write property-based tests
-  /spec-retro             session retrospective — run at END of session, BEFORE /clear
+/spec-new <idea> choose a workflow and ask clarifying questions
+/spec-requirements generate requirements.md (EARS)
+/spec-analyze audit requirements for gaps/conflicts before design
+/spec-design generate design.md
+/spec-tasks generate tasks.md
+/spec-implement <id|range|all> implement one or more cohesive tasks, end-to-end
+/spec-bugfix <bug> root-cause-first bug workflow
+/spec-pbt extract properties and write property-based tests
+/spec-retro session retrospective — run at END of session, BEFORE /clear
 
 ## EARS notation (mandatory for requirements)
 
 Write every functional requirement using one of these patterns, each with a
 stable ID (REQ-1.2):
-  - THE SYSTEM SHALL <behavior>                                   (ubiquitous)
-  - WHEN <trigger> THE SYSTEM SHALL <behavior>                    (event-driven)
-  - WHILE <state> THE SYSTEM SHALL <behavior>                     (state-driven)
-  - WHERE <feature included> THE SYSTEM SHALL <behavior>          (optional)
-  - IF <unwanted condition> THEN THE SYSTEM SHALL <response>      (error handling)
-Requirements must be atomic, unambiguous, and testable.
+
+- THE SYSTEM SHALL <behavior> (ubiquitous)
+- WHEN <trigger> THE SYSTEM SHALL <behavior> (event-driven)
+- WHILE <state> THE SYSTEM SHALL <behavior> (state-driven)
+- WHERE <feature included> THE SYSTEM SHALL <behavior> (optional)
+- IF <unwanted condition> THEN THE SYSTEM SHALL <response> (error handling)
+  Requirements must be atomic, unambiguous, and testable.
 
 ## Project standards
 
@@ -159,6 +163,7 @@ horizontal layers that are useless alone.
 
 ```markdown
 # Personal defaults
+
 - I prefer TDD: write tests first, then implementation.
 - Comments explain WHY, not WHAT.
 - When you finish a turn, tell me the exact command to verify the result.
@@ -167,13 +172,13 @@ horizontal layers that are useless alone.
 
 ### กลไกสำคัญของ CLAUDE.md
 
-| กลไก | คำอธิบาย |
-|---|---|
-| **ลำดับชั้น** | Claude อ่าน CLAUDE.md โดยไล่ขึ้นไปตามต้นไม้ไดเรกทอรีจาก working directory ไฟล์ที่อยู่สูงกว่ามีลำดับความสำคัญและโหลดก่อน ลำดับ: managed (องค์กร) → user (`~/.claude/`) → project → subdirectory |
-| **`@import`** | ดึงไฟล์อื่นเข้ามาด้วย `@path/to/file` รองรับทั้ง path สัมพัทธ์และสัมบูรณ์ เช่น `@.claude/rules/tech.md` หรือ `@README.md` import ซ้อนได้ลึกสุด 5 ชั้น และ import ที่อยู่ใน code block จะไม่ถูกประมวลผล |
-| **CLAUDE.local.md** | สำหรับ preference ส่วนตัวต่อโปรเจกต์ที่ไม่อยากcommit ให้สร้าง CLAUDE.local.md ที่ root มันโหลดคู่กับ CLAUDE.md (อย่าลืมใส่ใน .gitignore) |
-| **`/init`** | คำสั่ง /init เป็นวิธีเร็วที่สุดในการตั้งค่า project memory มันสร้างไฟล์ CLAUDE.md พร้อมเอกสารโครงสร้างพื้นฐานของโปรเจกต์ |
-| **`/memory`** | เปิดดู/แก้ไฟล์ memory ทั้งหมดที่โหลดอยู่ และเช็กว่าไฟล์ไหนถูกโหลดบ้าง |
+| กลไก                | คำอธิบาย                                                                                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **ลำดับชั้น**       | Claude อ่าน CLAUDE.md โดยไล่ขึ้นไปตามต้นไม้ไดเรกทอรีจาก working directory ไฟล์ที่อยู่สูงกว่ามีลำดับความสำคัญและโหลดก่อน ลำดับ: managed (องค์กร) → user (`~/.claude/`) → project → subdirectory         |
+| **`@import`**       | ดึงไฟล์อื่นเข้ามาด้วย `@path/to/file` รองรับทั้ง path สัมพัทธ์และสัมบูรณ์ เช่น `@.claude/rules/tech.md` หรือ `@README.md` import ซ้อนได้ลึกสุด 5 ชั้น และ import ที่อยู่ใน code block จะไม่ถูกประมวลผล |
+| **CLAUDE.local.md** | สำหรับ preference ส่วนตัวต่อโปรเจกต์ที่ไม่อยากcommit ให้สร้าง CLAUDE.local.md ที่ root มันโหลดคู่กับ CLAUDE.md (อย่าลืมใส่ใน .gitignore)                                                               |
+| **`/init`**         | คำสั่ง /init เป็นวิธีเร็วที่สุดในการตั้งค่า project memory มันสร้างไฟล์ CLAUDE.md พร้อมเอกสารโครงสร้างพื้นฐานของโปรเจกต์                                                                               |
+| **`/memory`**       | เปิดดู/แก้ไฟล์ memory ทั้งหมดที่โหลดอยู่ และเช็กว่าไฟล์ไหนถูกโหลดบ้าง                                                                                                                                  |
 
 ---
 
@@ -186,50 +191,85 @@ horizontal layers that are useless alone.
 สร้าง 3 ไฟล์นี้ใน `.claude/rules/` แล้ว `@import` จาก CLAUDE.md (ดูข้อ 2)
 
 **`.claude/rules/product.md`**
+
 ```markdown
 # Product Overview
+
 ## Purpose
+
 <ผลิตภัณฑ์นี้แก้ปัญหาอะไร — หนึ่งย่อหน้า>
+
 ## Target Users
+
 - <ผู้ใช้ + ความต้องการ>
+
 ## Key Features
+
 - <ฟีเจอร์หลัก>
+
 ## Business Objectives
+
 - <metric ที่วัดความสำเร็จ>
+
 ## Non-Goals
+
 - <สิ่งที่จงใจไม่ทำ — กัน scope creep>
 ```
 
 **`.claude/rules/tech.md`**
+
 ```markdown
 # Technology Stack
+
 ## Languages & Runtimes
+
 - <เช่น TypeScript 5.x, Node.js 20 LTS>
+
 ## Frameworks & Core Libraries
+
 - <framework + เหตุผล>
+
 ## Data Layer
+
 - <database, ORM, caching>
+
 ## Tooling
+
 - <test runner, linter, formatter, build, CI>
+
 ## Hard Constraints
+
 - <ข้อห้ามฝ่าฝืน เช่น latency < 200ms, ต้อง compliant PDPA>
+
 ## Rule
+
 Prefer this stack over alternatives. Do not introduce a new library without
 stating why and asking for approval.
 ```
 
 **`.claude/rules/structure.md`**
+
 ```markdown
 # Project Structure
+
 ## Folder Layout
+
 <โครงโฟลเดอร์ + อธิบายแต่ละส่วน>
+
 ## Naming Conventions
+
 - ไฟล์ / คอมโพเนนต์ / ฟังก์ชัน
+
 ## Import Ordering
-1. external  2. internal absolute  3. relative
+
+1. external 2. internal absolute 3. relative
+
 ## Architectural Patterns
+
 - <เช่น ทุก API ต้องผ่าน validation layer>
+
 ## Anti-Patterns
+
 - <เช่น ห้ามเรียก DB ตรงจาก component>
 ```
 
@@ -238,26 +278,32 @@ stating why and asking for approval.
 ใช้ frontmatter `paths:` ให้ rule โหลดเฉพาะตอนแตะไฟล์ที่ตรงแพทเทิร์น — เทียบเท่า `fileMatch` ของ Kiro เป๊ะ ๆ
 
 **`.claude/rules/components.md`**
+
 ```markdown
 ---
 paths:
   - "src/components/**/*.tsx"
   - "src/components/**/*.jsx"
 ---
+
 # Component Standards
+
 - ทุก component เป็น function component + hooks
 - props ต้องมี type ชัดเจน ห้าม any
 - <กฎเฉพาะ component อื่น ๆ>
 ```
 
 **`.claude/rules/api-design.md`**
+
 ```markdown
 ---
 paths:
   - "src/app/api/**/*"
   - "src/server/**/*"
 ---
+
 # API Design Standards
+
 - ทุก endpoint return รูปแบบ error เดียวกัน: { error: { code, message } }
 - ใช้ HTTP status code ตามมาตรฐาน
 - validate input ที่ชั้น handler ก่อนเสมอ
@@ -268,6 +314,7 @@ paths:
 ### 3.3 โหมด `manual` และ `auto`
 
 ทำผ่าน **skills** (ดูข้อ 4):
+
 - **manual** = ใส่ `disable-model-invocation: true` ใน frontmatter → เรียกได้เฉพาะตอนพิมพ์ `/ชื่อ` เอง
 - **auto** = ใส่ `description` ที่ชัดเจน → Claude โหลดเองเมื่อ request ตรงกับ description
 
@@ -285,6 +332,7 @@ paths:
 ### `/spec-new` — เริ่ม feature + เลือก workflow
 
 `.claude/skills/spec-new/SKILL.md`
+
 ```markdown
 ---
 name: spec-new
@@ -297,16 +345,17 @@ argument-hint: <short description of the feature>
 The feature idea is: $ARGUMENTS
 
 Step 1 — Recommend ONE workflow and explain why in two sentences:
-  - Requirements-First (Requirements → Design → Tasks): I know the behavior I want;
-    architecture is flexible. Best for product/customer-driven features.
-  - Design-First (Design → Requirements → Tasks): I have an architecture in mind or
-    strict non-functional constraints (latency, compliance).
-  - Quick (`/spec-quick`): well-understood feature, no approval gates wanted.
+
+- Requirements-First (Requirements → Design → Tasks): I know the behavior I want;
+  architecture is flexible. Best for product/customer-driven features.
+- Design-First (Design → Requirements → Tasks): I have an architecture in mind or
+  strict non-functional constraints (latency, compliance).
+- Quick (`/spec-quick`): well-understood feature, no approval gates wanted.
 
 Step 2 — Create the spec folder at `.claude/specs/<kebab-case-name>/`.
 
 Step 3 — Ask me ALL clarifying questions you need in a single message:
-  who the user is, what they want, why, success criteria, edge cases, constraints.
+who the user is, what they want, why, success criteria, edge cases, constraints.
 
 Do NOT generate any artifact yet. Wait for my answers, then tell me to run
 `/spec-requirements` (or `/spec-design` for Design-First).
@@ -315,6 +364,7 @@ Do NOT generate any artifact yet. Wait for my answers, then tell me to run
 ### `/spec-requirements` — สร้าง requirements.md
 
 `.claude/skills/spec-requirements/SKILL.md`
+
 ```markdown
 ---
 name: spec-requirements
@@ -326,20 +376,25 @@ argument-hint: <feature folder name (optional)>
 
 Write `.claude/specs/<feature>/requirements.md` with this structure:
 
-  # Requirements: <Feature Name>
-  ## Overview
+# Requirements: <Feature Name>
+
+## Overview
+
   <one paragraph tying this to product.md>
 
-  ## REQ-1: <Capability, e.g. User Registration>
-  **User Story:** As a <role>, I want <goal>, so that <benefit>.
-  **Acceptance Criteria (EARS):**
-  - 1.1  WHEN <event> THE SYSTEM SHALL <behavior>
-  - 1.2  IF <error condition> THEN THE SYSTEM SHALL <response>
-  - 1.3  WHILE <state> THE SYSTEM SHALL <behavior>
+## REQ-1: <Capability, e.g. User Registration>
 
-  (repeat REQ-2, REQ-3, ...)
+**User Story:** As a <role>, I want <goal>, so that <benefit>.
+**Acceptance Criteria (EARS):**
 
-  ## Edge Cases & Open Questions
+- 1.1 WHEN <event> THE SYSTEM SHALL <behavior>
+- 1.2 IF <error condition> THEN THE SYSTEM SHALL <response>
+- 1.3 WHILE <state> THE SYSTEM SHALL <behavior>
+
+(repeat REQ-2, REQ-3, ...)
+
+## Edge Cases & Open Questions
+
   <anything ambiguous>
 
 Rules: every requirement is atomic, testable, and has a stable ID. Cover the happy
@@ -352,6 +407,7 @@ When done: STOP. Show me a summary and ask me to review. Suggest I run
 ### `/spec-analyze` — ตรวจคุณภาพ requirements
 
 `.claude/skills/spec-analyze/SKILL.md`
+
 ```markdown
 ---
 name: spec-analyze
@@ -362,10 +418,10 @@ description: Audit the requirements.md of the active spec for logical issues bef
 
 Read the active spec's requirements.md and report issues in FOUR categories:
 
-  1. Logical inconsistencies — requirements that contradict each other
-  2. Ambiguities — statements open to more than one interpretation
-  3. Conflicting constraints — requirements that cannot all hold at once
-  4. Gaps — missing scenarios, unhandled edge cases, undefined error behavior
+1. Logical inconsistencies — requirements that contradict each other
+2. Ambiguities — statements open to more than one interpretation
+3. Conflicting constraints — requirements that cannot all hold at once
+4. Gaps — missing scenarios, unhandled edge cases, undefined error behavior
 
 For each issue: cite the REQ ID, explain the problem, propose a concrete fix.
 Do NOT silently edit the file — present the analysis and let me decide what to apply.
@@ -374,6 +430,7 @@ Do NOT silently edit the file — present the analysis and let me decide what to
 ### `/spec-design` — สร้าง design.md
 
 `.claude/skills/spec-design/SKILL.md`
+
 ```markdown
 ---
 name: spec-design
@@ -386,14 +443,21 @@ First read the active spec's requirements.md and the project rules
 (@.claude/rules/tech.md, @.claude/rules/structure.md). Then write
 `.claude/specs/<feature>/design.md`:
 
-  # Design: <Feature Name>
-  ## Architecture Overview        — components and responsibilities
-  ## Sequence Diagrams            — Mermaid for key flows
-  ## Data Models & Interfaces     — schemas, types, API contracts
-  ## Technology Decisions         — choices + rationale (prefer tech.md)
-  ## Error Handling Strategy      — how each error case is handled
-  ## Testing Strategy             — unit/integration/property; map to REQ IDs
-  ## Requirement Traceability     — table: design element → REQ-x.y it satisfies
+# Design: <Feature Name>
+
+## Architecture Overview — components and responsibilities
+
+## Sequence Diagrams — Mermaid for key flows
+
+## Data Models & Interfaces — schemas, types, API contracts
+
+## Technology Decisions — choices + rationale (prefer tech.md)
+
+## Error Handling Strategy — how each error case is handled
+
+## Testing Strategy — unit/integration/property; map to REQ IDs
+
+## Requirement Traceability — table: design element → REQ-x.y it satisfies
 
 For a deeper architectural pass, consider delegating to the `spec-architect`
 subagent. When done: STOP for my review, then suggest `/spec-tasks`.
@@ -402,6 +466,7 @@ subagent. When done: STOP for my review, then suggest `/spec-tasks`.
 ### `/spec-tasks` — สร้าง tasks.md
 
 `.claude/skills/spec-tasks/SKILL.md`
+
 ```markdown
 ---
 name: spec-tasks
@@ -415,30 +480,32 @@ Read the active spec's design.md and requirements.md, then write
 model: each task is a COHESIVE, INDEPENDENTLY VERIFIABLE slice that you can
 implement end-to-end in one pass, even if it spans many files.
 
-  # Implementation Tasks: <Feature Name>
-  > Each task is a cohesive, independently verifiable slice. Implement a whole task
-  > in one pass (it may touch many files). Decompose into sub-steps yourself at
-  > execution time — do NOT pre-split tasks here.
+# Implementation Tasks: <Feature Name>
 
-  - [ ] 1. <Cohesive capability> — <one line: scope + what "done" means>
-         Satisfies: REQ-1 (all criteria).  Verify: <test / command>.
-  - [ ] 2. <Cohesive capability> — <scope + done>
-         Satisfies: REQ-2.  Depends on: 1.  Verify: <test / command>.
-  - [ ] 3. <Cohesive capability> [optional] — <scope + done>
-         Satisfies: REQ-3.
+> Each task is a cohesive, independently verifiable slice. Implement a whole task
+> in one pass (it may touch many files). Decompose into sub-steps yourself at
+> execution time — do NOT pre-split tasks here.
+
+- [ ] 1. <Cohesive capability> — <one line: scope + what "done" means>
+     Satisfies: REQ-1 (all criteria). Verify: <test / command>.
+- [ ] 2. <Cohesive capability> — <scope + done>
+     Satisfies: REQ-2. Depends on: 1. Verify: <test / command>.
+- [ ] 3. <Cohesive capability> [optional] — <scope + done>
+     Satisfies: REQ-3.
 
 Rules:
-  - Aim for the FEWEST tasks that keep each one independently verifiable. A typical
-    feature is ~5-10 tasks, not 20-30. If a "task" can't be verified on its own,
-    fold it into the task it serves.
-  - Each task is ONE coherent behavior / vertical slice (e.g. "user registration
-    end-to-end: model → endpoint → validation → tests"), never a horizontal layer
-    ("create the model", "create the repository") that does nothing alone.
-  - Map each task to a whole REQ or a tightly-related group; list the REQ IDs.
-  - Do NOT write 1.1/1.2 sub-tasks — the implementing model handles micro-sequencing
-    internally with its own TODO list.
-  - Order coarsely: shared/foundational tasks first. Note a dependency only when real.
-  - Mark [optional] for non-essential tasks.
+
+- Aim for the FEWEST tasks that keep each one independently verifiable. A typical
+  feature is ~5-10 tasks, not 20-30. If a "task" can't be verified on its own,
+  fold it into the task it serves.
+- Each task is ONE coherent behavior / vertical slice (e.g. "user registration
+  end-to-end: model → endpoint → validation → tests"), never a horizontal layer
+  ("create the model", "create the repository") that does nothing alone.
+- Map each task to a whole REQ or a tightly-related group; list the REQ IDs.
+- Do NOT write 1.1/1.2 sub-tasks — the implementing model handles micro-sequencing
+  internally with its own TODO list.
+- Order coarsely: shared/foundational tasks first. Note a dependency only when real.
+- Mark [optional] for non-essential tasks.
 
 When done: STOP for my review. Then ask whether to implement a specific task
 (`/spec-implement <n>`), a range (`/spec-implement 1-3`), or everything
@@ -448,6 +515,7 @@ When done: STOP for my review. Then ask whether to implement a specific task
 ### `/spec-implement` — ลงมือทำ task
 
 `.claude/skills/spec-implement/SKILL.md`
+
 ```markdown
 ---
 name: spec-implement
@@ -461,6 +529,7 @@ Resolve $ARGUMENTS to the target task(s): a single id (e.g. 2), a range (1-3), o
 all incomplete tasks. For multiple tasks, work in dependency order.
 
 For EACH task:
+
 1. Read the task plus its linked REQ IDs in requirements.md and the relevant parts
    of design.md and @.claude/rules/structure.md.
 2. Plan the task with your own internal TODO list, then implement the WHOLE task in
@@ -473,6 +542,10 @@ For EACH task:
 Pause for my confirmation at each TASK boundary (not after every file). When I
 asked for a range or "all", continue to the next task after reporting, stopping
 early only if a test fails or a requirement turns out to be infeasible.
+
+For unattended runs, do NOT run "all" in one session (context grows per task and a
+session cannot /clear itself). Instead drive one cohesive task per fresh session —
+implement, then `/spec-retro`, then clear — via `scripts/pane-loop.sh` (see §7).
 ```
 
 ### `/spec-bugfix` และ `/spec-pbt` — ดูข้อ 5 และ 6 (มี subagent ช่วย)
@@ -492,6 +565,7 @@ early only if a test fails or a requirement turns out to be infeasible.
 ### `spec-architect` — ออกแบบสถาปัตยกรรมเชิงลึก
 
 `.claude/agents/spec-architect.md`
+
 ```markdown
 ---
 name: spec-architect
@@ -503,6 +577,7 @@ model: opus
 You are a senior software architect. You work from an approved requirements.md.
 
 When invoked:
+
 1. Read the spec's requirements.md and project rules (tech.md, structure.md).
 2. Produce or critique the architecture: components, data flow, interfaces,
    sequence diagrams (Mermaid), error handling, and a testing strategy.
@@ -515,6 +590,7 @@ Return a clear design document. Do not write implementation code.
 ### `bug-investigator` — หา root cause (ใช้กับ `/spec-bugfix`)
 
 `.claude/agents/bug-investigator.md`
+
 ```markdown
 ---
 name: bug-investigator
@@ -526,6 +602,7 @@ model: opus
 You are a debugging specialist. Your ONLY job is root-cause analysis — never fix.
 
 When invoked:
+
 1. Reproduce the reported behavior mentally from the codebase.
 2. Trace the actual cause (not the symptom). Cite specific files and lines.
 3. Identify behaviors that must NOT change while fixing (regression risks).
@@ -536,6 +613,7 @@ Stop after the analysis. Do not edit any file.
 ```
 
 `.claude/skills/spec-bugfix/SKILL.md` (เรียก subagent ข้างบน)
+
 ```markdown
 ---
 name: spec-bugfix
@@ -548,14 +626,14 @@ argument-hint: <bug description>
 Bug: $ARGUMENTS
 
 Phase 1 — Delegate root-cause analysis to the `bug-investigator` subagent.
-  Present its findings to me and STOP. Wait for me to confirm the root cause.
+Present its findings to me and STOP. Wait for me to confirm the root cause.
 
 Phase 2 (after I confirm) — Create `.claude/specs/bugfix-<short>/` with a fix spec
-  that documents the fix AND captures unchanged behavior:
-      WHEN <condition> THEN THE SYSTEM SHALL CONTINUE TO <existing behavior>
+that documents the fix AND captures unchanged behavior:
+WHEN <condition> THEN THE SYSTEM SHALL CONTINUE TO <existing behavior>
 
 Phase 3 — Produce tasks plus regression/property tests that validate BOTH
-  (a) the bug is fixed and (b) the "SHALL CONTINUE TO" behaviors still hold.
+(a) the bug is fixed and (b) the "SHALL CONTINUE TO" behaviors still hold.
 ```
 
 ### `pbt-runner` — ดูข้อ 6
@@ -570,10 +648,10 @@ Phase 3 — Produce tasks plus regression/property tests that validate BOTH
 
 ### ตำแหน่งไฟล์ & กฎพื้นฐาน
 
-| ไฟล์ | ขอบเขต | commit? |
-|---|---|---|
-| `~/.claude/settings.json` | ทุกโปรเจกต์ | ไม่ (ส่วนตัว) |
-| `.claude/settings.json` | โปรเจกต์นี้ | ใช่ (แชร์ทีม) |
+| ไฟล์                          | ขอบเขต      | commit?         |
+| ----------------------------- | ----------- | --------------- |
+| `~/.claude/settings.json`     | ทุกโปรเจกต์ | ไม่ (ส่วนตัว)   |
+| `.claude/settings.json`       | โปรเจกต์นี้ | ใช่ (แชร์ทีม)   |
 | `.claude/settings.local.json` | โปรเจกต์นี้ | ไม่ (gitignore) |
 
 Exit code 2 = block. PreToolUse ที่ exit 2 จะหยุด tool, Stop ที่ exit 2 จะบังคับให้ Claude ทำงานต่อ · ชื่อ tool case-sensitive: "Bash" ใช้ได้ "bash" ไม่ได้ · ดู/ตรวจด้วย `/hooks`
@@ -642,13 +720,13 @@ Exit code 2 = block. PreToolUse ที่ exit 2 จะหยุด tool, Stop �
 
 แต่ละ hook ทำอะไร (เทียบ Kiro):
 
-| Event | ทำงานเมื่อ | ทำอะไร | = Kiro |
-|---|---|---|---|
-| `PostToolUse` (Edit\|Write) | หลังเขียน/แก้ไฟล์ | format ไฟล์ด้วย prettier | File Save → lint |
-| `Stop` | Claude ตอบจบ turn | รันเทสต์ รายงานถ้าพัง | Agent Stop → compile/test |
-| `TaskCompleted` | task ถูก mark เสร็จ | lint + test ตรวจความถูกต้อง | Post Task Execution |
-| `PreToolUse` (Bash) | ก่อนรันคำสั่ง | บล็อก `rm -rf` | Pre Tool Use (block) |
-| `SessionStart` | เปิด session | inject branch + รายชื่อ spec | โหลด dev context |
+| Event                       | ทำงานเมื่อ          | ทำอะไร                       | = Kiro                    |
+| --------------------------- | ------------------- | ---------------------------- | ------------------------- |
+| `PostToolUse` (Edit\|Write) | หลังเขียน/แก้ไฟล์   | format ไฟล์ด้วย prettier     | File Save → lint          |
+| `Stop`                      | Claude ตอบจบ turn   | รันเทสต์ รายงานถ้าพัง        | Agent Stop → compile/test |
+| `TaskCompleted`             | task ถูก mark เสร็จ | lint + test ตรวจความถูกต้อง  | Post Task Execution       |
+| `PreToolUse` (Bash)         | ก่อนรันคำสั่ง       | บล็อก `rm -rf`               | Pre Tool Use (block)      |
+| `SessionStart`              | เปิด session        | inject branch + รายชื่อ spec | โหลด dev context          |
 
 ### ทางเลือก: hook แบบ prompt/agent (ใช้ AI ตัดสิน)
 
@@ -682,18 +760,18 @@ Exit code 2 = block. PreToolUse ที่ exit 2 จะหยุด tool, Stop �
 
 ### คำสั่ง CLI หลักที่ต้องรู้
 
-| คำสั่ง | ทำอะไร |
-|---|---|
-| `claude` | เริ่ม interactive REPL |
-| `claude "query"` | เริ่ม REPL พร้อม prompt แรก |
-| `claude -p "query"` | รันแบบ headless ผ่าน SDK แล้วออก (ใช้กับ CI/สคริปต์) |
-| `cat file \| claude -p "query"` | ประมวลผลเนื้อหาที่ pipe เข้ามา |
-| `claude -c` | ทำงานต่อจากบทสนทนาล่าสุด |
-| `claude -r "<id>" "query"` | resume session ตาม ID |
-| `claude --continue` | โหลดบทสนทนาล่าสุดใน directory ปัจจุบัน |
-| `claude update` | อัปเดตเป็นเวอร์ชันล่าสุด |
-| `claude mcp` | ตั้งค่า MCP server |
-| `claude --output-format json` | output เป็น JSON สำหรับสคริปต์ |
+| คำสั่ง                          | ทำอะไร                                               |
+| ------------------------------- | ---------------------------------------------------- |
+| `claude`                        | เริ่ม interactive REPL                               |
+| `claude "query"`                | เริ่ม REPL พร้อม prompt แรก                          |
+| `claude -p "query"`             | รันแบบ headless ผ่าน SDK แล้วออก (ใช้กับ CI/สคริปต์) |
+| `cat file \| claude -p "query"` | ประมวลผลเนื้อหาที่ pipe เข้ามา                       |
+| `claude -c`                     | ทำงานต่อจากบทสนทนาล่าสุด                             |
+| `claude -r "<id>" "query"`      | resume session ตาม ID                                |
+| `claude --continue`             | โหลดบทสนทนาล่าสุดใน directory ปัจจุบัน               |
+| `claude update`                 | อัปเดตเป็นเวอร์ชันล่าสุด                             |
+| `claude mcp`                    | ตั้งค่า MCP server                                   |
+| `claude --output-format json`   | output เป็น JSON สำหรับสคริปต์                       |
 
 ### ขั้นตอนตั้งค่าโปรเจกต์ (ครั้งเดียว)
 
@@ -731,18 +809,33 @@ claude
 > /spec-pbt                (ตรวจความถูกต้องเชิง property)
 ```
 
-### Flow แบบ headless (อัตโนมัติ / CI)
+### Flow แบบอัตโนมัติ — pane orchestrator (`scripts/pane-loop.sh`)
+
+ตอนแรกออกแบบเป็น headless (`claude -p` แยกครั้งต่อเฟส) แต่ headless = รันแบบมองไม่เห็น: TUI ไม่โชว์
+ความคืบหน้า, `next dev` ที่นี่ hydration พังเงียบ, และเคยเผลอฆ่า process ที่ยังทำงานอยู่เพราะ pane ว่าง.
+ปัจจุบันจึงขับด้วย **iTerm pane จริงที่เห็นได้** — 1 cohesive task = 1 pane interactive สด:
 
 ```bash
-# รันทีละเฟสแบบไม่ interactive แล้วต่อ session เดิม
-claude -p "/spec-new a rate limiter for the public API"
-claude -c -p "/spec-requirements"
-claude -c -p "/spec-design"
-claude -c -p "/spec-tasks"
-
-# ดึง output เป็น JSON ไปประมวลผลต่อในไปป์ไลน์ (รันทั้งชุดตามลำดับ dependency)
-claude -c -p "/spec-implement all" --output-format json > result.json
+scripts/pane-loop.sh insurance-homepage   # ละ feature ได้ถ้ามี spec เดียว
 ```
+
+`pane-loop.sh` วนทำ task ค้างใน `tasks.md` (เรียงตามลำดับในไฟล์ = dependency) ทีละตัว:
+
+1. เปิด iTerm split รัน `claude $CLAUDE_FLAGS` (**interactive ไม่ใช่ `-p`**) — เห็น TUI เต็ม
+2. พิมพ์ `/spec-implement N` เข้า pane → poll จน task N ขึ้น `- [x]` ใน `tasks.md` (timeout `STEP_TIMEOUT`, ดีฟอลต์ 2400s)
+3. พิมพ์ `/spec-retro` → รอจน `git HEAD` เปลี่ยน (retro commit เสมอ → detect แบบไม่ผูก path)
+4. พิมพ์ `/clear` + `/exit` ปิด pane → task ถัดไปเปิด pane **ใหม่สด** = context รีเซ็ตโดยธรรมชาติ
+
+- จบ pane = `/clear` โดยธรรมชาติ ไม่ต้องสั่ง `/clear` ตัวเองกลาง session (ซึ่งทำไม่ได้อยู่แล้ว)
+- `retro` รันใน pane เดียวกับ implement → เห็นงาน task นั้นครบ (ไม่ต้องพึ่ง `-c`)
+- hands-free: `CLAUDE_FLAGS` ดีฟอลต์ `--dangerously-skip-permissions` (สโคปแค่ repo นี้) กัน
+  permission prompt ของ npm/build ค้างเงียบ; อยากกด allow เองตั้ง `CLAUDE_FLAGS=""`
+- task ไหน implement ไม่จบใน `STEP_TIMEOUT` → ลูปหยุด เปิด pane ค้างไว้ให้ตรวจ (ไม่ลุยต่อบน state ที่พัง)
+- เช็กความคืบหน้าที่ **ของจริงบน disk** (`tasks.md` checkbox, `git HEAD`) ไม่ใช่ดู pane ว่าง/ไม่ว่าง
+
+> **ทางเลือก headless ล้วน** (`claude -p "/spec-implement N"`) ยังทำได้และ agentic เต็มรูป (tool/loop/test);
+> **Batch API ใช้ไม่ได้** เพราะไม่มี agent loop/tool use. แต่โปรเจกต์นี้เลือก pane ที่เห็นได้เพื่อเฝ้างาน
+> และกัน false-negative จาก dev hydration — ดู `.claude/rules/lessons.md` (browser-verify ใช้ prod build, headless pane buffers)
 
 > **ปลอดภัยไว้ก่อน:** อย่าใช้ `--dangerously-skip-permissions` โดยไม่มีเหตุผล และอย่าใส่ความลับ (API key) ใน CLAUDE.md หรือ chat — hooks/rules ทั้งหมดอยู่ใน git
 
@@ -775,6 +868,7 @@ claude -c -p "/spec-implement all" --output-format json > result.json
 ## 9. Property-Based Testing (`/spec-pbt`)
 
 `.claude/skills/spec-pbt/SKILL.md`
+
 ```markdown
 ---
 name: spec-pbt
@@ -785,7 +879,7 @@ description: Extract testable properties from requirements and write property-ba
 
 Step 1 — From the active spec's requirements.md, extract PROPERTIES: universal
 statements that must hold for ALL valid inputs. Express each as:
-  "For any <inputs> where <precondition>, THE SYSTEM SHALL <invariant>"
+"For any <inputs> where <precondition>, THE SYSTEM SHALL <invariant>"
 Link each to its REQ ID and note the input space / generators needed. Present the
 list and let me choose which to test.
 
@@ -800,6 +894,7 @@ For heavy generation/execution, consider delegating to the `pbt-runner` subagent
 ```
 
 `.claude/agents/pbt-runner.md`
+
 ```markdown
 ---
 name: pbt-runner
@@ -828,27 +923,31 @@ Do not change requirements without surfacing it for approval.
 
 ### สามระดับของการประหยัด
 
-| ระดับ | คืออะไร | เงื่อนไข |
-|---|---|---|
-| 🟢 ทำได้เลย | ประหยัด **และ** แม่นขึ้น | ไม่ต้องระวังเป็นพิเศษ |
+| ระดับ                   | คืออะไร                   | เงื่อนไข                 |
+| ----------------------- | ------------------------- | ------------------------ |
+| 🟢 ทำได้เลย             | ประหยัด **และ** แม่นขึ้น  | ไม่ต้องระวังเป็นพิเศษ    |
 | 🟡 ทำได้แต่มี guardrail | ประหยัดแต่เสี่ยงข้อมูลหาย | ต้องทำตามเงื่อนไขกันพลาด |
-| 🔴 ห้ามแลกกับ token | จะทำให้ AI พลาด | ห้ามทำเด็ดขาด |
+| 🔴 ห้ามแลกกับ token     | จะทำให้ AI พลาด           | ห้ามทำเด็ดขาด            |
 
 **🟢 ทำได้เลย**
+
 - `/clear` ระหว่างงานคนละเรื่อง หรือเมื่อจบ task หนึ่ง — รีเซ็ต context ทั้งหมด (เซฟ spec ไว้แล้ว resume ทีหลังได้)
 - **1 cohesive task = 1 session** ทำ task ให้จบเป็นก้อน → `/clear` → task ถัดไป โหลดบริบทกลับด้วย `@.claude/specs/<feature>/`
 - ใช้ subagents (`spec-architect`, `bug-investigator`, `pbt-runner`) กับงานที่ต้องอ่านไฟล์เยอะ — มันทำในคอนเทกซ์แยกแล้วส่งกลับแค่สรุป main context จึงสะอาด
 - ใช้ rules แบบ `paths:` (fileMatch) แทน `always` เท่าที่ปลอดภัย — โหลดเฉพาะตอนแตะไฟล์ที่เกี่ยว
 - ดู `/context` ว่าอะไรกินที่ + เฝ้า % ใน status line · ใช้ `/btw` ถามคำถามแทรกที่ไม่อยากให้เข้า context
 - ใช้ CLI (`gh`, `aws`, …) แทน MCP ที่ schema ใหญ่ — กิน context น้อยกว่า
+- **1 task = 1 pane/session สด** ผ่าน `scripts/pane-loop.sh` (ดู §7) — จบ pane = context รีเซ็ตโดยธรรมชาติ ไม่แบกประวัติ task ก่อนหน้า → ตัด cache read ที่สะสม; แต่ละ session `@` อ่าน spec จากไฟล์เอง ราคา **standard ปกติ (ไม่ลด)** ยัง agentic เต็มรูป (tool/loop/test). headless `claude -p` แยกครั้งให้ผลแบบเดียวกันแต่มองไม่เห็นงาน
 
 **🟡 ทำได้แต่ต้องมี guardrail**
+
 - **Compaction** — ตั้ง instruction ให้เก็บ state สำคัญไว้ก่อน (ดู block ด้านล่าง) และ **ห้าม compact กลาง task ที่ยังไม่เสร็จ**
 - **ตัด CLAUDE.md ให้สั้น** — ตัดได้เฉพาะสิ่งที่ "ลบแล้วไม่ทำให้พลาด" เท่านั้น กฎที่กันความผิดพลาด (รวม EARS และ approval gates) ต้องอยู่ต่อ
 - **ย้ายเนื้อหาไป skill** — ย้ายได้เฉพาะของที่ใช้เป็นครั้งคราว (คู่มือเฉพาะกิจ) ไม่ใช่กฎหลักของ workflow เช่น EARS reference ฉบับเต็มเก็บไว้ใน skill `/spec-requirements` ได้ (โหลดตอนสร้าง requirements พอดี) โดยคง EARS ฉบับย่อไว้ใน CLAUDE.md
-- **Batch API / headless `claude -p`** — ใช้กับงานที่ไม่ต้องโต้ตอบเท่านั้น (เช่น `/spec-implement all` ใน CI)
+- **Batch API** — ลด **50%** ทั้ง input/output (ซ้อน prompt caching ได้ ~90%) แต่เป็น endpoint แยก (`/v1/messages/batches`), async (poll เอง, ภายใน 24 ชม.), **ไม่มี agent loop = ไม่มี tool use** และต้องเป็น **API key** (แผน Pro/Max ใช้ไม่ได้) → **รัน `/spec-implement` ไม่ได้** (มันต้องอ่าน/เขียนไฟล์ + รันเทสต์ + วนแก้). คุ้มเฉพาะงาน bulk N prompt อิสระที่ไม่ใช้ tool และรอได้ เช่น ร่าง requirements/design หลาย feature พร้อมกัน, triage บั๊กจำนวนมาก, สกัด property list จาก requirements หลายไฟล์
 
 **🔴 ห้ามแลกกับ token เด็ดขาด**
+
 - ห้าม `/clear` หรือ `/compact` กลาง task ที่ยังไม่เสร็จและ state อยู่แค่ในแชต — **เขียนลง tasks.md/design.md ก่อนเสมอ**
 - ห้ามลด **effort** หรือหด **context window 1M** เพื่อประหยัดเงิน — นั่นคือการลดความสามารถ ไม่ใช่ตัด noise
 - ห้ามลบกฎหรือบริบทที่กันความผิดพลาดออกจาก CLAUDE.md/rules
@@ -882,12 +981,12 @@ Do not change requirements without surfacing it for approval.
 
 ### เลือกอย่างไร: clear / compact / ปล่อยให้สะสม
 
-| สถานการณ์ | ทำ |
-|---|---|
-| งานใหม่ ไม่เกี่ยวกับของเดิม | `/clear` (เซฟ spec ก่อน) |
-| ยังอยู่ในงานเดิม แต่ context รก/ใกล้เต็ม (~80-85%) | `/compact <โฟกัส>` พร้อมเก็บ state |
-| กำลังเจาะปัญหาซับซ้อนเดียว ประวัติมีค่า | **ปล่อยให้สะสม** — บางครั้งควรเก็บประวัติไว้ |
-| แก้ผิดซ้ำเกิน 2 ครั้งในเรื่องเดิม | `/clear` แล้วเริ่มใหม่ด้วย prompt ที่ดีกว่า (context เต็มไปด้วยทางที่ผิด) |
+| สถานการณ์                                          | ทำ                                                                        |
+| -------------------------------------------------- | ------------------------------------------------------------------------- |
+| งานใหม่ ไม่เกี่ยวกับของเดิม                        | `/clear` (เซฟ spec ก่อน)                                                  |
+| ยังอยู่ในงานเดิม แต่ context รก/ใกล้เต็ม (~80-85%) | `/compact <โฟกัส>` พร้อมเก็บ state                                        |
+| กำลังเจาะปัญหาซับซ้อนเดียว ประวัติมีค่า            | **ปล่อยให้สะสม** — บางครั้งควรเก็บประวัติไว้                              |
+| แก้ผิดซ้ำเกิน 2 ครั้งในเรื่องเดิม                  | `/clear` แล้วเริ่มใหม่ด้วย prompt ที่ดีกว่า (context เต็มไปด้วยทางที่ผิด) |
 
 > กฎง่าย ๆ: **ถ้ายังไม่แน่ใจว่าล้างแล้วจะเสียอะไรไหม แปลว่ายังไม่ควรล้าง** — เซฟลงไฟล์ให้ครบก่อน
 
@@ -912,231 +1011,37 @@ template ดั้งเดิมสั่ง "append บทเรียนเ�
 - promote เฉพาะบทเรียนที่ "ใช้ซ้ำได้จริงและกันพลาด" เข้า `.claude/rules/lessons.md` แบบ **คัดแล้วและตัดของเก่าที่ไม่เกี่ยวออก** ไม่ใช่ต่อท้ายไม่รู้จบ
 - ถ้า `lessons.md` เริ่มยาว ให้แปลงเป็น rule แบบ `paths:` หรือ skill โหลด on-demand เพื่อไม่ให้กิน context ทุก session
 
-### Skill: `/spec-retro` (ถ้าชอบ `/rrr` ตามดีไซน์เดิม ตั้งชื่อโฟลเดอร์เป็น `rrr` ได้)
+### Skill: `/spec-retro` — สรุป session ก่อนล้าง context
 
-`.claude/skills/spec-retro/SKILL.md` — ใช้ outer fence 4 backtick ครอบเพราะ template ข้างในมี code fence ของตัวเอง:
+`.claude/skills/spec-retro/SKILL.md` คือ source of truth ของ template (ยาว — ไม่ paste ซ้ำที่นี่
+กัน drift). สรุปสิ่งที่เวอร์ชันปัจจุบันทำ:
 
-````markdown
----
-name: spec-retro
-description: Create a detailed session retrospective at the end of a work session. Use when wrapping up, before /clear, while session history is still in context.
-disable-model-invocation: true
-allowed-tools:
-  - Bash
-  - Read
-  - Write
-  - Glob
----
+1. **เก็บข้อมูล session** — `git diff --name-only` / `git log` + timestamp GMT+7 และ **cost จริง
+   ของ session** จาก ledger (authoritative — field `.cost.total_cost_usd` ของ statusline payload
+   ของ Claude Code เอง): `cat ~/.claude/cost-sessions/$CLAUDE_CODE_SESSION_ID.json` แล้ว breakdown
+   ต่อ model/cache-tier ด้วย `python3 scripts/session-cost.py --breakdown-only "$CLAUDE_CODE_SESSION_ID"`
+   (token นับจาก transcript, cost **ปันส่วน** จาก total ของ ledger — ไม่ recompute เอง เพราะ
+   recompute แล้วเพี้ยนเสมอ; subscription ไม่คิดเงินจริงต่อ token)
+2. **เขียนไฟล์** `retrospectives/YYYY-MM/DD/HH.MM_<scope-slug>.md` — **scope-slug บังคับ** (เช่น
+   `task4-header-nav`) ไม่งั้นแยก session จากชื่อไฟล์ไม่ออก. เนื้อหา **เป็นภาษาไทยทั้งหมด** (คง EN
+   เฉพาะ code/path/command/error/technical term) และ **ห้าม emoji** — ใช้ป้ายข้อความในวงเล็บแทน
+   (เช่น `[สมมติ → เรียนรู้]`, `[ไม่เวิร์ก]`), อนุญาตลูกศร `→`. template บังคับครบทุก section:
+   Session Cost, AI Diary (≥150 คำ), What Went Well/Improve, Honest Feedback (≥100 คำ),
+   Co-Creation Map (5 แถวตายตัว), Intent vs Interpretation + adversarial check, Communication
+   Dynamics, Seeds Planted, Teaching Moments, Lessons Learned, Next Steps, และ Pre-Save
+   Validation (HARD STOP ถ้ากรอกช่องไม่ครบ)
+3. **Promote บทเรียน (token-safe — ดู §10)** — ห้าม append เข้า CLAUDE.md; ใส่เฉพาะบทเรียนที่
+   "ใช้ซ้ำได้จริงและกันพลาด" เข้า `.claude/rules/lessons.md` แบบคัด+ตัดของเก่า
+4. **Commit** — `git add retrospectives/ .claude/rules/lessons.md && git commit -m "docs: session retrospective ..."`
 
-# Session Retrospective
+frontmatter: `disable-model-invocation: true` (manual เท่านั้น ผู้ใช้พิมพ์ `/spec-retro` เอง),
+`allowed-tools: Bash, Read, Write, Glob`. (อยากใช้ชื่อ `/rrr` ตามดีไซน์เดิม ตั้งชื่อโฟลเดอร์เป็น `rrr` ได้)
 
-Produce a complete session retrospective. Run at the END of a work session,
-BEFORE /clear or compaction, while the full session history is still in context —
-otherwise the reflection below cannot be accurate.
-
-## Steps
-
-1. **Gather Session Data**:
-   - Run `git diff --name-only main...HEAD` or `git diff --name-only HEAD~10` for changed files
-   - Run `git log --oneline main...HEAD` or `git log --oneline -10` for commits
-   - Get current timestamp: `TZ='Asia/Bangkok' date +"%Y-%m-%d %H:%M"` (GMT+7)
-
-2. **Create Retrospective File**:
-   Create file at `retrospectives/YYYY-MM/DD/HH.MM_retrospective.md`
-   (e.g., `retrospectives/2025-12/06/11.30_retrospective.md`)
-
-   Use this template (ALL sections required):
-   ```markdown
-   # Session Retrospective
-
-   **Session Date**: YYYY-MM-DD
-   **Start Time**: ~HH:MM GMT+7
-   **End Time**: HH:MM GMT+7
-   **Duration**: ~X minutes
-   **Primary Focus**: [Brief description]
-   **Session Type**: [Feature Development | Bug Fix | Research | Refactoring]
-
-   ## Session Summary
-   [2-3 sentence overview of what was accomplished]
-
-   ## Timeline
-   - HH:MM - [Event]
-   - HH:MM - [Event]
-
-   ## Technical Details
-
-   ### Files Modified
-   [List files with line counts: `git diff --stat`]
-
-   ### Key Code Changes
-   For each significant change, show WHAT and WHY:
-   - **[file.ext]** (+X/-Y): [What changed] → [Why]
-
-   Include code snippet for major changes:
-   ```diff
-   + [new code]
-   - [old code]
-   ```
-
-   ### Architecture Decisions
-   - [Decision]: [Rationale]
-
-   ## 📝 AI Diary (REQUIRED - min 150 words)
-   Write first-person narrative. Be VULNERABLE - include doubts and uncertainty.
-
-   **MUST include at least ONE of each (3+ sentences each):**
-   - 🤔 "I assumed X but learned Y when..."
-     → What triggered assumption? What contradicted it? What do I believe now?
-   - 😕 "I was confused about X until..."
-     → What was unclear? What brought clarity? What was the mental shift?
-   - 😮 "I expected X but got Y because..."
-     → What was expectation based on? What happened? What does this teach?
-
-   Bad: "🤔 I assumed you wanted code but learned otherwise." (too short)
-   Good: "🤔 I assumed the user wanted immediate implementation because the issue had specs. But when they said 'just review,' I realized I was pattern-matching to previous sessions. The correction taught me to distinguish 'context' from 'directive.'"
-
-   ## What Went Well
-   Each item needs: WHAT succeeded → WHY it worked → IMPACT
-
-   Bad: "Good use of existing pattern"
-   Good: "Reused agent structure → saved 5 min → focused on logic not boilerplate"
-
-   - [Success]: [Why it worked] → [Measurable impact]
-
-   ## What Could Improve
-   [Session-specific issues - what went wrong THIS session, not future todos]
-   - [Mistake or inefficiency during this session]
-   - [Process that didn't work well today]
-
-   ## Blockers & Resolutions
-   - **Blocker**: [Description]
-     **Resolution**: [How solved]
-
-   ## 💭 Honest Feedback (REQUIRED - min 100 words)
-   **Must include ALL THREE friction points (no exceptions):**
-   - 🔴 What DIDN'T work? (tool limitation, miscommunication, wasted effort)
-   - 🟡 What was FRUSTRATING? (even minor annoyances count)
-   - 🟢 What DELIGHTED you? (unexpected wins)
-
-   **Even smooth sessions have friction. Find it:**
-   - Where did you second-guess yourself?
-   - What took 3 tries when it should've taken 1?
-   - What did you *almost* misunderstand?
-
-   ## 🤝 Co-Creation Map
-   **DO NOT modify rows** - use these exact 5 categories for cross-session comparison:
-
-   | Contribution | Human | AI | Together |
-   |--------------|-------|-----|----------|
-   | Direction/Vision | | | |
-   | Options/Alternatives | | | |
-   | Final Decision | | | |
-   | Execution | | | |
-   | Meaning/Naming | | | |
-
-   Mark ✓ in appropriate column. "Together" = both contributed equally.
-
-   ## ✨ Resonance Moments
-   - [What was suggested] → [What you chose] → [Why it mattered]
-
-   ## 🎯 Intent vs Interpretation
-   Track alignment AND misalignment. **Actively look for gaps.**
-
-   | You Said | I Understood | Gap? | Impact |
-   |----------|--------------|------|--------|
-   | | | ✓/⚠️/❌ | |
-
-   Legend: ✓=aligned, ⚠️=minor gap (self-corrected), ❌=needed clarification
-
-   **ADVERSARIAL CHECK**: If all ✓, answer ALL THREE (min 1 sentence each):
-   1. **Unverified assumption**: "I assumed ___ without checking because ___"
-   2. **Near-miss**: "I almost thought you meant ___ when you said '___'"
-   3. **Over-confidence**: "I was too sure that ___ meant ___"
-
-   Only write "No misalignments" if you genuinely found ZERO gaps after this check.
-
-   ## 💬 Communication Dynamics (REQUIRED)
-   [Reflect on what made collaboration work or struggle]
-
-   ### Clarity
-   | Direction | Clear? | Example |
-   |-----------|--------|---------|
-   | You → Me (instructions) | | |
-   | Me → You (explanations) | | |
-
-   ### Feedback Loop
-   - **Speed**: How quickly were misalignments caught? [Instant/Minutes/Late]
-   - **Recovery**: How smoothly did we correct course?
-   - **Pattern**: Any recurring miscommunication?
-
-   ### Trust & Initiative
-   - **Trust level**: Did you trust my output appropriately? [Too much/Right/Too little]
-   - **Proactivity**: Was I too proactive, too passive, or balanced?
-   - **Assumptions**: What did I assume that I should have asked about?
-
-   ### What Would Make Next Session Better?
-   - **You could**: [Specific action human could take]
-   - **I could**: [Specific action AI could take]
-   - **We could**: [Specific thing to try together]
-
-   ## 🌱 Seeds Planted
-   FUTURE ideas only. Categorize by ambition:
-   - 🌱 **Incremental**: [Idea] → **Trigger**: use when [condition]
-   - 🌿 **Transformative**: [Idea] → **Trigger**: use when [condition]
-   - 🌳 **Moonshot**: [Idea] → **Trigger**: use when [condition]
-
-   Require at least one 🌿 or 🌳. If all incremental, ask: "What's the ambitious version?"
-
-   ## 📚 Teaching Moments
-   Each must include: WHAT learned + HOW discovered + WHY it matters
-
-   - **You → Me**: "[Lesson]" — discovered when [specific moment] — matters because [impact]
-   - **Me → You**: "[Lesson]" — discovered when [specific moment] — matters because [impact]
-   - **Us → Future**: "[Pattern/doc]" — created because [need] — use when [trigger]
-
-   Bad: "You → Me: Background subagents are useful"
-   Good: "You → Me: 'Consult subagents for large analysis' — discovered when sequential reading was slow — matters because parallel = 3x faster"
-
-   **Validation**: Each entry MUST have 3 parts (lesson — discovered — matters). No dashes = incomplete.
-
-   ## Lessons Learned
-   - **Pattern**: [Description] - [Why it matters]
-   - **Discovery**: [What learned] - [How to apply]
-
-   ## Next Steps
-   - [ ] [Task 1]
-   - [ ] [Task 2]
-
-   ---
-   ## ✅ Pre-Save Validation (REQUIRED)
-   Fill in blanks as PROOF (can't save with blanks):
-
-   - [ ] **AI Diary**: 🤔(_) 😕(_) 😮(_) emojis found, _____ words total
-   - [ ] **Honest Feedback**: 🔴"_____" 🟡"_____" 🟢"_____" (first 5 words of each)
-   - [ ] **Communication Dynamics**: Examples filled: You→Me(_) Me→You(_)
-   - [ ] **Co-Creation Map**: Row count = _____ (must be 5)
-   - [ ] **Intent vs Interpretation**: Gaps found: ⚠️(_) ❌(_) — if 0, adversarial check: "_____"
-   - [ ] **Seeds Planted**: 🌿(_) 🌳(_) — if 0, add ambitious version
-   - [ ] **Template cleanup**: No instruction text like "Mark ✓" or "[placeholder]" in final doc
-
-   ⚠️ **HARD STOP**: Can't fill blanks = retrospective incomplete. Fix first.
-   ```
-
-3. **Promote durable lessons (token-safe — see §10)**:
-   Do NOT append lessons to CLAUDE.md (it loads every session and must stay lean;
-   bloating it makes the model ignore real rules). Instead add ONLY genuinely
-   reusable, mistake-preventing lessons to `.claude/rules/lessons.md`, and prune
-   stale ones while you are there. The full record already lives in this file.
-
-4. **Commit**: `git add retrospectives/ .claude/rules/lessons.md && git commit -m "docs: session retrospective YYYY-MM-DD"`
-
-## Critical Requirements
-- **AI Diary**: MUST include detailed first-person narrative
-- **Honest Feedback**: MUST include frank assessment
-- **Communication Dynamics**: MUST reflect on human-AI collaboration quality
-- **Time Zone**: Use GMT+7 (Bangkok) as primary
-- **Sequencing**: Manual skill — run before clearing/compacting, never after.
-````
+> **Cost ledger** ที่ retro อ่าน มาจาก subsystem ใน `scripts/`: `cost_lib.py` (core,
+> `session_breakdown`/`render_breakdown`), `session-cost.py` (standalone), `inject-cost.py` /
+> `backfill-cost.sh` (เขียน ledger ต่อ session ผ่าน statusline). ledger **ต้องมีก่อน session เริ่ม** —
+> session ปิดแล้ว resume จะ reset cost=0 กู้ไม่ได้. อย่าคูณ token จาก transcript เป็น cost (overcount
+> 1.6–3.7x) — ดู `.claude/rules/lessons.md`
 
 ---
 
