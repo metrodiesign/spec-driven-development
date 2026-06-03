@@ -75,9 +75,9 @@ def session_breakdown(sid):
             r = RATES[bm]
             est = inp*r["inp"] + out*r["out"] + cr*r["cr"] + w5*r["w5"] + w1*r["w1"]
             est_total += est
-            m = models.setdefault(bm, dict(inp=0, out=0, cr=0, cw=0, est=0.0))
+            m = models.setdefault(bm, dict(inp=0, out=0, cr=0, cw=0, est=0.0, turns=0))
             m["inp"] += inp; m["out"] += out; m["cr"] += cr
-            m["cw"] += w5 + w1; m["est"] += est
+            m["cw"] += w5 + w1; m["est"] += est; m["turns"] += 1   # 1 dedup'd assistant msg = 1 model turn
     return dict(models=models, est_total=est_total, found=est_total > 0)
 
 
@@ -105,17 +105,20 @@ def render_breakdown(sid, authoritative_total, heading="Breakdown"):
          "token = จริงจาก transcript; cost = ปันส่วน total authoritative (ledger) "
          "ตามสัดส่วน token x rate (ประมาณ, sum = total เป๊ะ)",
          "",
-         "| model | input | output | cache-read | cache-write | cost $ |",
-         "|------|------:|------:|----------:|-----------:|------:|"]
+         "| model | turns | input | output | cache-read | cache-write | cost $ |",
+         "|------|-----:|------:|------:|----------:|-----------:|------:|"]
     cr_cost = 0.0
+    turns_total = 0
     for bm in sorted(b["models"], key=lambda k: -b["models"][k]["est"]):
         m = b["models"][bm]
         c = m["est"] * scale
         cr_cost += m["cr"] * RATES[bm]["cr"] * scale
+        turns_total += m["turns"]
         short = bm.replace("claude-", "")
-        L.append(f"| {short} | {_k(m['inp'])} | {_k(m['out'])} | "
+        L.append(f"| {short} | {m['turns']} | {_k(m['inp'])} | {_k(m['out'])} | "
                  f"{_k(m['cr'])} | {_k(m['cw'])} | {c:.2f} |")
-    L += ["", f"- total (authoritative ledger): **${authoritative_total:.2f}**"]
+    L += ["", f"- total (authoritative ledger): **${authoritative_total:.2f}**"
+          f" | turns (model invocations): {turns_total}"]
     if cr_cost > 0:
         full = cr_cost * _CACHE_READ_DISCOUNT
         L.append(f"- cache-read ปันส่วน ${cr_cost:.2f}; ถ้าไม่มี cache จ่ายเป็น input สด "
@@ -124,21 +127,52 @@ def render_breakdown(sid, authoritative_total, heading="Breakdown"):
 
 _IMPL_RE = re.compile(re.escape(IMPLEMENT_CMD) + r"\s+(" + TASK_ID_RE + r")")
 
+# Real slash-command INVOCATIONS only. Claude Code records a typed command in a user
+# message as: <command-name>/spec-implement</command-name><command-args>N</command-args>.
+# Match that exact shape so we count actual runs — NOT bare mentions of the command in
+# file reads, diffs, skill text, or discussion (those polluted the old full-text scan and
+# misattributed planning sessions to tasks).
+_INVOKE_RE = re.compile(
+    r"<command-name>" + re.escape(IMPLEMENT_CMD) + r"</command-name>\s*"
+    r"<command-args>\s*(" + TASK_ID_RE + r")")
+_RETRO_INVOKE = "<command-name>" + RETRO_CMD + "</command-name>"
+
 
 def _cast(x):
     return int(x) if TASK_ID_NUMERIC else x
 
 
-def task_of(sid):
-    """session id -> task id (เฉพาะ session ที่ทำ task เดียว + มี retro), ไม่งั้น None."""
+def session_tasks(sid):
+    """session id -> (sorted list of ACTUALLY-INVOKED implement task ids, has_retro).
+    Counts only real command invocations (the <command-name> wrapper in a user message),
+    not mentions in file reads / diffs / discussion. Handles all-in-one / batched sessions
+    (one session, several /spec-implement invocations) -> many ids. [] if none."""
     tp = os.path.join(TXDIR, sid + ".jsonl")
     if not os.path.exists(tp):
-        return None
-    txt = open(tp, encoding="utf-8", errors="ignore").read()
-    ids = {_cast(x) for x in _IMPL_RE.findall(txt)}
-    if len(ids) == 1 and RETRO_CMD in txt:
-        return next(iter(ids))
-    return None
+        return ([], False)
+    ids, retro = set(), False
+    for line in open(tp, encoding="utf-8", errors="ignore"):
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        m = d.get("message") or {}
+        if m.get("role") != "user":          # invocations are user messages
+            continue
+        c = m.get("content")
+        if not isinstance(c, str):           # tool_results are lists -> skip mentions
+            continue
+        for x in _INVOKE_RE.findall(c):
+            ids.add(_cast(x))
+        if _RETRO_INVOKE in c:
+            retro = True
+    return (sorted(ids), retro)
+
+
+def task_of(sid):
+    """back-compat: single task id iff session did exactly one implement + retro, else None."""
+    ids, retro = session_tasks(sid)
+    return ids[0] if (len(ids) == 1 and retro) else None
 
 
 def detect_feature():
@@ -203,3 +237,34 @@ def task_costs(exclude_session=""):
             out[t] = (cost, d.get("duration_ms") or 0,
                       d.get("lines_added") or 0, d.get("lines_removed") or 0, sid)
     return out
+
+
+def session_costs(exclude_session=""):
+    """list of session records (one per session) covering >=1 implemented task, with a
+    retro and cost>0. Cost is per-session (the ledger gives one total/session), so
+    all-in-one / batched sessions report as ONE row spanning their task-set — they can't
+    be split per task. dedup by session_id (max cost on resume double-record). Each
+    record: dict(ids=[...], cost, dur, la, lr, sid). Sorted by task range."""
+    by_sid = {}
+    for f in glob.glob(os.path.join(LEDGER, "*.json")):
+        try:
+            d = json.load(open(f))
+        except Exception:
+            continue
+        sid = d.get("session_id", "")
+        if not sid or (exclude_session and exclude_session in sid):
+            continue
+        cost = d.get("cost") or 0
+        if cost <= 0:
+            continue
+        # any session with >=1 REAL implement invocation incurred build cost — count it
+        # (retro is no longer a gate: invocation-matching already excludes planning/mention
+        # sessions, and #7 lets a session legitimately skip the retro commit).
+        ids, _retro = session_tasks(sid)
+        if not ids:
+            continue
+        if sid not in by_sid or cost > by_sid[sid]["cost"]:
+            by_sid[sid] = dict(ids=ids, cost=cost, dur=d.get("duration_ms") or 0,
+                               la=d.get("lines_added") or 0,
+                               lr=d.get("lines_removed") or 0, sid=sid)
+    return sorted(by_sid.values(), key=lambda r: (r["ids"][0], r["ids"][-1]))
