@@ -14,6 +14,9 @@ allowed-tools:
 Produce a SHORT retrospective. Run at the END of a work session, BEFORE /clear or
 compaction, while the full session history is still in context.
 
+**Skip entirely (no file, no commit) if this session changed no files AND produced no
+new durable lesson** — e.g. pure research / conversation. Do not manufacture an empty retro.
+
 Design goal: capture only the durable, reusable signal — **cost, files changed,
 and lessons** — and skip long reflective narrative. Output should be ~6-9k tokens,
 not 20k. The expensive tier is output; do not pad. Every section below is the
@@ -28,6 +31,10 @@ purpose to cut output cost.
      untracked `??`, so `git diff --stat` alone misses real code):
      `git status --short` and `git log --oneline -10`
    - Timestamp: `TZ='Asia/Bangkok' date +"%Y-%m-%d %H:%M"` (GMT+7)
+   - This session's literal id (capture the VALUE, not the env-var name — a retro is
+     a one-session historical record, so the resolved uuid makes the cost reconcilable
+     later even after the env changes): `echo $CLAUDE_CODE_SESSION_ID`
+     → fills **Session ID** in **Session Cost**.
    - This session's real cost from the authoritative ledger (Claude Code's own
      statusline field `.cost.total_cost_usd` — never recompute from transcript):
      `cat ~/.claude/cost-sessions/$CLAUDE_CODE_SESSION_ID.json 2>/dev/null`
@@ -59,9 +66,10 @@ purpose to cut output cost.
 
    ## Session Cost
 
+   - Session ID: `<resolved-uuid>` (ค่า literal จาก `echo $CLAUDE_CODE_SESSION_ID` — ไม่ใช่ชื่อ env var)
    - Total (estimated; subscription bills nothing per token): $X.XX
    - Duration ~Xm / Lines +A / -B (from ledger)
-   - Source: `.cost.total_cost_usd` via `~/.claude/cost-sessions/$CLAUDE_CODE_SESSION_ID.json`
+   - Source: `.cost.total_cost_usd` via `~/.claude/cost-sessions/<resolved-uuid>.json`
 
    <BREAKDOWN>
    (แทนด้วย output ของ `scripts/session-cost.py --breakdown-only` — ตาราง token/model
@@ -90,11 +98,14 @@ purpose to cut output cost.
    ```
 
 3. **Promote durable lessons (token-safe)**:
-   Do NOT append lessons to CLAUDE.md. Add ONLY genuinely reusable,
-   mistake-preventing lessons to `.claude/rules/lessons.md`, and prune stale or
-   duplicate ones (the file is loaded into every turn's prefix — keep it lean).
+   Do NOT append lessons to CLAUDE.md. Add ONLY genuinely reusable, mistake-preventing
+   lessons, and prune stale/duplicate ones. Route by scope:
+   - Universal (process / workflow / git / cost / CC tooling — applies on any task) →
+     `.claude/rules/lessons.md` (always-on prefix — keep it lean).
+   - Stack-specific (Next/React/Tailwind/Playwright/vitest/CSS/SVG/TS) →
+     `.claude/rules/stack-nextjs.md` (path-scoped — loads only when reading matching files).
 
-4. **Commit**: `git add retrospectives/ .claude/rules/lessons.md && git commit -m "docs: session retrospective YYYY-MM-DD"`
+4. **Commit**: `git add retrospectives/ .claude/rules/lessons.md .claude/rules/stack-nextjs.md && git commit -m "docs: session retrospective YYYY-MM-DD"`
 
 ## Critical requirements
 

@@ -8,28 +8,44 @@
 #     /clear              → reset, then quit → pane closes
 # Then the next task opens a brand-new pane. Sequential (tasks share the tree).
 #
-# Usage: scripts/pane-loop.sh [feature-name] [task-ids...]
-#   task-ids: space-separated → each its own pane (fresh session per task).
+# Usage: scripts/pane-loop.sh [feature-name] [all-in-one | task-ids...]
+#   all-in-one: ALL pending tasks in ONE pane/session (implement each in turn, then a
+#               SINGLE /spec-retro + /clear). CHEAPEST when tasks are tightly coupled
+#               (shared primitives/data/lib): context is acquired once and reused via
+#               cache-read (~10x cheaper) instead of re-acquired per session. Measured
+#               (insurance-homepage): whole feature 1 session ~$16 vs 7 sessions ~$21.
+#               Trade-off: a long context can drift (accuracy) — pick by COUPLING.
+#               e.g.:  scripts/pane-loop.sh insurance-homepage all-in-one
+#   task-ids: space-separated → each its own pane (fresh session per task; most accurate).
 #             join with '+' to BATCH several into ONE pane/session → run each
-#             /spec-implement in turn, then a SINGLE /spec-retro + /clear.
-#             Batching amortizes the cold cache-write of the big prompt prefix
-#             across the group (one re-cache instead of one per task) — use it
-#             for tiny polish tasks; keep big tasks one-per-pane for a clean
-#             focused context. e.g.:  scripts/pane-loop.sh insurance-homepage 12+13+14 15
+#             /spec-implement in turn, then a SINGLE /spec-retro + /clear. Few-session
+#             middle ground for coupled-but-distinct slices (e.g. logic+data, assemble+audit).
+#             e.g.:  scripts/pane-loop.sh insurance-homepage 1 2+3 4+5 6+7
+#   (no args): every pending task, auto-grouped by `Batch:` tags in tasks.md.
 #
 # Env:
-#   CLAUDE_FLAGS  flags for the interactive claude. Default:
-#                 "--dangerously-skip-permissions" so the run is hands-free (no
-#                 permission prompts for npm/build). Scope: this repo dir only.
-#                 To approve tools yourself in each pane, set CLAUDE_FLAGS="".
+#   CLAUDE_FLAGS  flags for the interactive claude (default: none).
+#                   claude doesn't support --dangerously-skip-permissions (Claude Code flag).
+#                   Permissions are handled via project config / policies.
+#                   Fallback: CLAUDE_FLAGS (backward compat).
 #   STEP_TIMEOUT  max seconds to wait for one task's implement step (default 2400).
 #
 set -uo pipefail
 
+# macOS /bin/bash is 3.2.57 (no newer system bash); it mis-captures the `$(python3 ...)`
+# group parse below, collapsing the task-id list to a single bogus token -> the orchestrator
+# types `/spec-implement <garbage>` and stalls. Re-exec under zsh with bash-style word-splitting:
+# zsh captures the command-substitution correctly AND `-o shwordsplit` keeps `for x in $GROUPS`
+# splitting on spaces the way this script (written for bash) expects. Idempotent via the flag.
+if [[ -z "${PANELOOP_REEXEC:-}" ]]; then
+  export PANELOOP_REEXEC=1
+  if command -v zsh >/dev/null 2>&1; then exec zsh -o shwordsplit "$0" "$@"; fi
+fi
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FEATURE="${1:-}"
 SPECS_DIR=".claude/specs"
-CLAUDE_FLAGS="${CLAUDE_FLAGS---dangerously-skip-permissions}"
+CLAUDE_FLAGS="${CLAUDE_FLAGS-}"
 STEP_TIMEOUT="${STEP_TIMEOUT:-2400}"
 
 cd "$REPO"
@@ -49,8 +65,28 @@ RETRO_DIR="$SPECS_DIR/$FEATURE/retrospectives"
 # auto-group ตาม `Batch:` tag ใน tasks.md (วิธี 1). 1 group = 1 pane/session. id คั่น
 # ด้วย '+' ในกลุ่มเดียว = batch (1 retro/1 clear). manual args ทับ Batch tag เสมอ.
 shift || true   # ทิ้ง $1 (feature) ถ้ามี — เหลือ group args ใน $@
+
+# โหมดเลือกตาม COUPLING ของ feature (arg ตัวแรกหลัง feature):
+#   all-in-one  → ทุก pending task รวมใน 1 pane/session เดียว (implement ไล่ทุก task แล้ว
+#                 1 retro + 1 clear). ถูกสุดเมื่อ task พึ่งกันหนัก (shared primitives/data/lib):
+#                 ได้ context ครั้งเดียว re-read ผ่าน cache-read (~10x ถูก) ไม่ re-acquire ซ้ำ.
+#                 วัดจริง insurance-homepage: 1 session ~$16 vs แยก 7 session ~$21 (~30% แพงกว่า).
+#                 แลก: context ยาวอาจ drift (accuracy) — ใช้เมื่อ coupled + งานไม่ใหญ่จนล้น context.
+#   (default)   → 1 task = 1 pane (fresh context/task, แม่นกว่า) เว้นแต่ Batch: tag / '+' arg.
+ALLINONE=""
+if [[ "${1:-}" == "all-in-one" || "${1:-}" == "--all-in-one" ]]; then ALLINONE=1; shift; fi
+
 GROUPS=""       # space-separated groups; id ในกลุ่มคั่นด้วย '+'
-if [[ $# -gt 0 ]]; then
+if [[ -n "$ALLINONE" ]]; then
+  # ทุก pending task (เรียงตามไฟล์) → 1 group เดียวคั่นด้วย '+' (ข้าม Batch tag/args อื่น)
+  GROUPS="$(python3 - "$TASKS" <<'PY'
+import re, sys
+ids = [m.group(1) for m in (re.match(r'^- \[ \] (\d+)\.', l) for l in open(sys.argv[1])) if m]
+print('+'.join(ids))
+PY
+)"
+  [[ -n "$GROUPS" ]] && echo "โหมด: all-in-one (1 session สำหรับทุก pending task)"
+elif [[ $# -gt 0 ]]; then
   for grp in "$@"; do                       # แต่ละ arg = 1 group (1 pane)
     members=""
     for id in ${grp//+/ }; do               # แตก group เป็น id ตรวจทีละตัว
@@ -178,7 +214,8 @@ for group in $GROUPS; do
   echo "::: group [$ids] — /spec-retro (รวมทุก task ในกลุ่ม)"
   send_text "$SID" "/spec-retro"
 
-  # retro skill commit เสมอ → detect ด้วย git HEAD เปลี่ยน (robust, ไม่ผูก path)
+  # retro มัก commit ใน pane-loop (implement เปลี่ยนไฟล์ → retro ไม่ใช่ no-op) → detect ด้วย
+  # git HEAD เปลี่ยน. no-op skip (session ไม่มีการเปลี่ยน) จะไม่ commit → timeout แล้วไปต่อ (ไม่ใช่ error)
   wait_for "[[ \$(git rev-parse HEAD 2>/dev/null) != '$head_before' ]]" 360 \
     && echo "::: group [$ids] — retro committed" \
     || echo "::: group [$ids] — retro timeout (ไปต่อ)"
