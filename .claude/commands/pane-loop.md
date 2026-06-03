@@ -1,5 +1,5 @@
 ---
-description: รัน pane-loop orchestrator — 1 task = 1 iTerm pane interactive (รัน /spec-implement → /spec-retro → /clear ต่อ task)
+description: รัน pane-loop orchestrator (/spec-implement → /spec-retro → /clear) ใน iTerm. Default = all-in-one (ทุก task ใน session เดียว) สำหรับ feature ที่ task พึ่งกัน; แยก pane ต่อ task เฉพาะงานอิสระหรือต้อง isolate accuracy
 argument-hint: <feature-name> [task-ids...]
 allowed-tools: Bash, Read
 ---
@@ -19,6 +19,7 @@ allowed-tools: Bash, Read
 
 หมายเหตุข้อจำกัด:
 
+- **เลือกโหมดตาม coupling**: feature ที่ task พึ่งกัน (shared primitives/data/lib) → `all-in-one` (ทุก task ใน session เดียว) เป็น default — ถูกกว่า ~30-40% เพราะไม่ต้อง re-acquire context ต่อ session. แยก pane ต่อ task เฉพาะงานอิสระจริง หรือต้อง isolate CORE domain เพื่อ accuracy.
 - ต้องมี **iTerm2** เปิดอยู่ (script ใช้ AppleScript `current session of current window`).
 - task ids = **space-separated** (`12 13 14`) ไม่รองรับ range (`12-15`). ไม่ใส่ ids = ทำทุก task ค้าง.
 - default `--dangerously-skip-permissions` (hands-free, scope repo นี้). override ได้ด้วย env `CLAUDE_FLAGS=""`.

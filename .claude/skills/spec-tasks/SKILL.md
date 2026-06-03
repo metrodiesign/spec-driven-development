@@ -27,11 +27,15 @@ implement end-to-end in one pass, even if it spans many files.
 
 ## Suggested execution batches
 
-> Optional. Tasks sharing a `Batch:` tag are small, same-type, and share context
-> → run them in ONE session so the cold cache-write of the prompt prefix is paid
-> once, not per task. Feed to the orchestrator with `+`:
-> scripts/pane-loop.sh <feature> 3+4 # B1
-> Tasks with no `Batch:` tag run one-per-session (fresh context = more accurate).
+> DEFAULT for a COUPLED feature (tasks share primitives/data/lib): run ALL tasks in
+> ONE session — `scripts/pane-loop.sh <feature> all-in-one` (or `/spec-implement all`).
+> Separate sessions do NOT share cache, so each one re-pays the cold cache-write to
+> re-acquire shared context — measured ~30-40% more expensive for coupled work.
+> Split into separate sessions/panes ONLY for accuracy: a genuinely INDEPENDENT task
+> (no shared state), or to isolate a CORE domain (e.g. pricing logic) from long-context
+> drift — a conscious accuracy trade, not a cost win.
+> `Batch:` tags still group small same-type tasks for finer control; feed with `+`
+> (`scripts/pane-loop.sh <feature> 3+4`).
 
 Rules:
 
