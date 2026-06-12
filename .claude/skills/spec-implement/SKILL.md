@@ -9,6 +9,25 @@ argument-hint: <task id, range like 1-3, or "all">
 Resolve $ARGUMENTS to the target task(s): a single id (e.g. 2), a range (1-3), or
 all incomplete tasks. For multiple tasks, work in dependency order.
 
+Resolve the active spec first: if `.claude/specs/` holds more than one feature and
+the conversation does not name one, pick the single folder whose tasks.md still has
+the requested task id unchecked (`- [ ]`); for a range or "all", pick the folder
+with any unchecked tasks. If more than one folder qualifies: interactive → list
+them and ask, never guess; unattended (pane-loop/CI) → require the feature name in
+the argument and stop with that message instead of waiting.
+
+If tasks.md is still `> Status: draft`: interactive → warn in Thai and ask for
+confirmation (if I confirm, flip it to `> Status: approved <YYYY-MM-DD>` as part
+of that confirmation); unattended → treat it as a hard stop, state the reason and
+stop immediately — never sit waiting for an answer no one will give.
+
+Once, before the loop: run `scripts/spec-state.sh <feature>` and reconcile tasks.md
+with the filesystem for the target tasks and their dependencies. The filesystem is
+ground truth — checkboxes and git log can lie, and untracked files never appear in
+`git diff --stat`. If a checkbox contradicts reality (marked [x] but artifacts
+missing, or [ ] but already built), fix the checkbox and note the reconciliation
+in tasks.md before implementing.
+
 For EACH task:
 
 1. Read the task plus its linked REQ IDs in requirements.md and the relevant parts
@@ -18,12 +37,21 @@ For EACH task:
    task in context rather than splitting it across turns.
 3. Write or extend tests proving it satisfies its REQ IDs.
 4. Mark the task "- [x]" in tasks.md and state which REQ IDs are now satisfied.
+   Before marking the LAST task (or any assembly task), run
+   `scripts/spec-trace.sh <feature>` — any uncovered REQ it reports is a blocker,
+   never skip it silently.
 5. Give me the exact command to verify (test / build / run).
 
 Pause for my confirmation at each TASK boundary (not after every file). When I
 asked for a range or "all", continue to the next task after reporting, stopping
 early only if a test fails or a requirement turns out to be infeasible.
 
-For unattended / CI runs, do NOT run "all" in one session (context grows per task
-and a session cannot /clear itself). Instead drive one cohesive task per fresh
-session — implement, then `/spec-retro`, then clear — via `scripts/pane-loop.sh`.
+For unattended / CI runs: the DEFAULT for a COUPLED feature (tasks share
+primitives/data/lib) is ALL tasks in ONE session, in dependency order —
+`/spec-implement all` or `scripts/pane-loop.sh <feature> all-in-one`. Separate
+sessions do not share cache, so each re-pays cold context acquisition (measured
+~30-40% more expensive). Split into per-task sessions ONLY for genuinely
+independent tasks (no shared state) or to isolate a CORE domain's accuracy from
+long-context drift — a conscious accuracy trade, not a cost win. If one long
+session risks drift, persist state (active task id, decisions, next step) into
+tasks.md at each task boundary before continuing.

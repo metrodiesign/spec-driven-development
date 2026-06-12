@@ -18,15 +18,29 @@ conflicting requirements, non-trivial architecture choices, or logic/compliance 
 STOP and switch to the gated flow (`/spec-requirements` → `/spec-analyze` →
 `/spec-design` → `/spec-tasks`). It is cheaper to resolve at requirements than in code.
 
-## Steps (no STOP between them)
+## Steps (no approval STOP between steps 1-6 — the step 0 Q&A is the only wait)
 
-1. Create the spec folder `.claude/specs/<kebab-case-name>/`.
+0. If $ARGUMENTS already answers who/what/why/success criteria/edge cases/
+   constraints, skip to step 1. Otherwise ask ALL missing questions in ONE
+   batched message (in Thai), wait for the answers, then run steps 1-6 in one
+   uninterrupted pass — this single Q&A round replaces every approval gate.
+1. Create the spec folder `.claude/specs/<kebab-case-name>/`. Every artifact
+   written below gets the header `> Status: approved <YYYY-MM-DD> (quick, no
+   gates)` immediately — the constitution exempts this flow from gates.
 2. `requirements.md` — EARS notation, atomic/testable, stable IDs (REQ-N). Keep it tight.
+   Then self-check it inline against the FIVE /spec-analyze categories (logical
+   inconsistencies, ambiguities, conflicting constraints, gaps, unstated
+   assumptions) — fix what you find before writing design.md; no separate
+   session, no stop.
 3. `design.md` — minimal architecture only: data shapes, key functions, file list. No padding.
+   Still include a minimal `## Requirement Traceability` table (REQ → file/function) —
+   `scripts/spec-trace.sh` requires it and runs as a blocker in later steps.
 4. `tasks.md` — the FEWEST cohesive, independently verifiable tasks (see `spec-tasks` sizing).
+   Print the task list compactly — one line per task: title + REQ IDs (not the
+   full file) — as a free interrupt point; do NOT stop or wait for approval.
 5. Implement all tasks end-to-end with tests (see `spec-implement` conventions): pure logic
    in `lib/` + unit tests first, then wire UI. Mark each `- [x]` and note REQ IDs satisfied.
-6. Verify: run the project's test / build / lint. Report the verify output, not just "done".
+6. Verify: run the project's test / typecheck / build. Report the verify output, not just "done".
 
 ## When NOT to use
 
