@@ -6,27 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "FILE=$(jq -r '.tool_input.file_path // empty'); [ -n \"$FILE\" ] && npx prettier --write \"$FILE\" 2>/dev/null; true"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npm test --silent 2>&1 | tail -20 || echo 'Tests failed — fix before continuing' >&2; exit 0"
-          }
-        ]
-      }
-    ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npm run lint --silent && npm test --silent || echo 'Verify the completed task: lint/tests not green' >&2"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/task-gate.sh",
+            "timeout": 120
           }
         ]
       }
@@ -37,7 +18,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C=$(jq -r '.tool_input.command'); echo \"$C\" | grep -qE 'rm -rf' && { echo 'Blocked: destructive command' >&2; exit 2; }; exit 0"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/destructive-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/hook-bypass-guard.sh"
           }
         ]
       }
@@ -47,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"SessionStart\\\",\\\"additionalContext\\\":\\\"Branch: $(git branch --show-current 2>/dev/null). Active specs: $(ls .claude/specs 2>/dev/null | tr '\\n' ' ')\\\"}}\""
+            "command": "jq -n --arg b \"$(git branch --show-current 2>/dev/null)\" --arg s \"$(ls .claude/specs 2>/dev/null | tr '\\n' ' ')\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"Branch: \"+$b+\". Active specs: \"+$s)}}'"
           }
         ]
       }

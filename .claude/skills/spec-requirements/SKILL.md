@@ -6,9 +6,15 @@ argument-hint: <feature folder name (optional)>
 
 # Generate requirements.md
 
+Resolve the target spec folder: use $ARGUMENTS if given; otherwise use the
+feature folder created by /spec-new in this conversation. If neither identifies
+one and `.claude/specs/` holds several features, list them and ask — never guess.
+
 Write `.claude/specs/<feature>/requirements.md` with this structure:
 
   # Requirements: <Feature Name>
+  > Status: draft
+
   ## Overview
   <one paragraph tying this to product.md>
 
@@ -29,3 +35,7 @@ path AND error/edge cases (use IF...THEN).
 
 When done: STOP. Show me a summary and ask me to review. Suggest I run
 `/spec-analyze` next for complex or sensitive features, otherwise `/spec-design`.
+
+When I explicitly approve (in a later turn), flip the header line in the artifact
+to `> Status: approved <YYYY-MM-DD>` before starting the next phase — approval
+must live in the file, not only in this conversation.
