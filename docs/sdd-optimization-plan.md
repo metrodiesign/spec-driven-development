@@ -12,7 +12,14 @@
 > core.hooksPath / SECRET_GUARD_SKIP bypass), task-gate กัน vitest no-tests false block,
 > spec_trace.py boundary guards + sub-heading fix + Satisfies continuation,
 > pane-loop pre-flight Status check, flip-on-confirm + amended re-stamp ใน skills.
-> Tier 3, 4, 5 ยังไม่ทำ — รอสั่ง
+> Tier 3 applied แล้ว (2026-06-12, PR แยก): ST2 stack-nextjs.md เหลือ paths app/** +
+> \*.config (33KB) แยก verify recipes 16 ข้อไป spec-implement/references/browser-verify.md
+> (15.9KB, โหลดเฉพาะช่วง verify) — agent ตรวจแล้ว 49/49 bullets ครบ ไม่มี substance หาย;
+> ST4 ถอด @-import ซ้ำใน CLAUDE.md; ST5 ย้าย cost mechanics ไป
+> spec-retro/references/cost-accounting.md เหลือ kernel ใน lessons.md;
+> ST6 sync tech.md (swiper/vitest) + structure.md (ไฟล์จริง) + lessons.md (สถานะ vitest
+> bump) + เพิ่มขั้น Steering sync ใน spec-retro.
+> Tier 4, 5 ยังไม่ทำ — รอสั่ง
 
 ## สรุปการจัดลำดับ
 

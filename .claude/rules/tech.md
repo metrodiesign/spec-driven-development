@@ -11,6 +11,9 @@
 - React 19 — Server Components เป็นค่าเริ่มต้น; ใส่ `"use client"` เฉพาะคอมโพเนนต์ที่ต้องโต้ตอบ
   (เมนู, สไลเดอร์, ตัวกรอง, ฟอร์ม, เครื่องคำนวณ)
 - Tailwind CSS — ตั้งค่าผ่าน `tailwind.config.ts`; design tokens อยู่ใน `theme.extend`
+- Swiper 12.x — hero campaign slider (`HeroCampaignSlider.tsx`); ถูกเพิ่มระหว่าง
+  implementation โดยไม่มีบันทึกอนุมัติ — บันทึกที่นี่ให้ตรง ground truth
+  (การ approve PR ที่บันทึกบรรทัดนี้ = การอนุมัติย้อนหลัง)
 
 ## Data Layer
 
@@ -24,6 +27,8 @@
 - เว็บฟอนต์ไทยจริงผ่าน Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`) —
   IBM Plex Sans Thai / Noto Sans Thai / Sarabun / Prompt / Kanit; ห้ามตกไปใช้ฟอนต์ระบบ
 - ไอคอน = inline SVG (ห้าม icon font / กล่องเปล่า)
+- vitest — unit test runner (`npm test` = `vitest run`); test เฉพาะ pure logic ใน
+  `app/lib/` (`app/lib/**/*.test.ts` ตาม include ของ `vitest.config.ts`)
 
 ## Hard Constraints
 

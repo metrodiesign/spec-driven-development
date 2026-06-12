@@ -42,9 +42,10 @@ Requirements must be atomic, unambiguous, and testable.
 
 ## Project standards
 
-See @.claude/rules/product.md for what we're building and why.
-See @.claude/rules/tech.md for the tech stack you MUST prefer.
-See @.claude/rules/structure.md for file organization and conventions.
+Project standards live in `.claude/rules/` — product.md (what/why), tech.md (the
+stack you MUST prefer), structure.md (file organization), lessons.md (process
+lessons): all auto-loaded every turn by the rules loader; stack-nextjs.md is
+path-scoped. Do not @-import them here — that double-loads the same content.
 
 ## Task sizing (this project runs a large-context, high-effort model)
 
