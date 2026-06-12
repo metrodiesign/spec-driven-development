@@ -45,6 +45,8 @@ purpose to cut output cost.
      `python3 scripts/session-cost.py --breakdown-only "$CLAUDE_CODE_SESSION_ID"`
      Paste its markdown verbatim at `<BREAKDOWN>`. If it prints the
      "breakdown ไม่พร้อม" fallback, paste that line as-is.
+   - รายละเอียด/ข้อห้าม cost (dedup, การปันส่วน, ข้อจำกัด ledger, multi-session) ดู
+     `references/cost-accounting.md` — อ่านเมื่อต้องตีความตัวเลขเกิน template ปกติ.
 
 2. **Write the file** at `retrospectives/YYYY-MM/DD/HH.MM_<scope-slug>.md`
    (`<scope-slug>` = short kebab-case of the primary focus, e.g. `task4-header-nav`;
@@ -100,12 +102,23 @@ purpose to cut output cost.
 3. **Promote durable lessons (token-safe)**:
    Do NOT append lessons to CLAUDE.md. Add ONLY genuinely reusable, mistake-preventing
    lessons, and prune stale/duplicate ones. Route by scope:
-   - Universal (process / workflow / git / cost / CC tooling — applies on any task) →
+   - Universal (process / workflow / git / CC tooling — applies on any task) →
      `.claude/rules/lessons.md` (always-on prefix — keep it lean).
-   - Stack-specific (Next/React/Tailwind/Playwright/vitest/CSS/SVG/TS) →
+   - Stack-specific implementation patterns (Next/React/Tailwind/vitest/CSS/SVG/TS) →
      `.claude/rules/stack-nextjs.md` (path-scoped — loads only when reading matching files).
+   - Browser-verify / probe recipes (Playwright/MCP/viewport/probe methodology) →
+     `.claude/skills/spec-implement/references/browser-verify.md` (loaded only
+     during the verify phase).
+   - Cost-accounting mechanics →
+     `.claude/skills/spec-retro/references/cost-accounting.md` — NOT lessons.md
+     (only the one-line kernel lives there).
 
-4. **Commit**: `git add retrospectives/ .claude/rules/lessons.md .claude/rules/stack-nextjs.md && git commit -m "docs: session retrospective YYYY-MM-DD"`
+4. **Steering sync** (before commit): compare ground truth against steering —
+   dependencies in `package.json` vs `tech.md`, new files in `app/` vs the layout
+   in `structure.md`, and `paths:` frontmatter globs in `.claude/rules/*.md` vs
+   real paths. Fix any drift now, in the same commit.
+
+5. **Commit**: `git add retrospectives/ .claude/rules/ .claude/skills/spec-implement/references/ .claude/skills/spec-retro/references/ && git commit -m "docs: session retrospective YYYY-MM-DD"`
 
 ## Critical requirements
 

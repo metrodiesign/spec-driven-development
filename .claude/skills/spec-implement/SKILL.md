@@ -40,7 +40,9 @@ For EACH task:
    Before marking the LAST task (or any assembly task), run
    `scripts/spec-trace.sh <feature>` — any uncovered REQ it reports is a blocker,
    never skip it silently.
-5. Give me the exact command to verify (test / build / run).
+5. Give me the exact command to verify (test / build / run). Before any
+   browser-based verification, Read
+   `.claude/skills/spec-implement/references/browser-verify.md` first.
 
 Pause for my confirmation at each TASK boundary (not after every file). When I
 asked for a range or "all", continue to the next task after reporting, stopping
