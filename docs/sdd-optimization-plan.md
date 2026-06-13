@@ -32,7 +32,18 @@
 > ผูกกับ approval turn ของ spec-requirements → design-first path ที่รัน /spec-tasks ต่อ ทำให้
 > design.md ไม่มี Requirement Traceability → spec-trace.sh hard-fail. แก้แล้ว (4d0d56c, option b:
 > spec-requirements derive mode backfill ตอน derive ไม่รอ approval — single ownership).
-> Tier 5 ยังไม่ทำ — รอสั่ง
+> Tier 5 (ข้อ 1-6) applied แล้ว (2026-06-13): ข้อ 1 (EARS 5 patterns + atomic/subjective
+> guard) = done อยู่แล้วจาก Tier 4 PR #7 → ข้าม; ข้อ 2 PreCompact hook (precompact-persist.sh
+> inject เตือน persist active-task state ก่อน compact, jq-guard กัน exit non-zero); ข้อ 3
+> spec-edit-guard.sh (PreToolUse Edit, non-blocking warn เมื่อแก้ approved requirements.md ที่ยังมี
+> task ค้าง); ข้อ 4 completion evidence (spec-implement step 4 บังคับ Evidence block + spec-tasks
+> sync คง block + task-gate.sh evidence-presence gate, anchored grep กัน substring-fake, Edit-path;
+> Write = conscious limit เดิม); ข้อ 5 full repurpose spec-architect (default=critique reviewer-primary,
+> producer outline ชี้ spec-design เป็น single source ปิด drift, wire critique pass ใน spec-design +
+> design-first carve-out); ข้อ 6 backfill artifact (Satisfies bare IDs, REQ-15.6 reorder, bugfix
+> placeholder → app/lib/buttonSize.test.ts). ผ่าน adversarial verify 6 agents: baseline เขียว (47/47,
+> trace 70), hook test suite (precompact/spec-guard/task-gate), review arch/impl — พบ 3 hole/finding
+> แก้แล้ว (anchor grep, jq-guard, design-first carve-out) re-verify ผ่าน. Tier 5 ข้อ 7-20 (รอง) ยังไม่ทำ.
 
 ## สรุปการจัดลำดับ
 
