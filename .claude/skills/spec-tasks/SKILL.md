@@ -73,7 +73,8 @@ Rules:
 
 Sync mode: if tasks.md already exists and requirements.md or design.md changed
 after it was written, do NOT regenerate — patch only the affected tasks,
-preserving completed `- [x]` entries and their notes. If tasks.md was already
+preserving completed `- [x]` entries and their notes (including any appended
+`Evidence:` block — never strip it). If tasks.md was already
 approved, re-stamp its header: `> Status: approved <original date>, amended
 <YYYY-MM-DD>`.
 
