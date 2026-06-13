@@ -25,8 +25,13 @@
 > shape (intake batch, bugfix.md + F-ID/B-ID, Status gate, 3-dim validation observable
 > failure mode, spec_trace.py skip bugfix.md-only); A6 harden agent contracts (pbt-runner
 > →opus + vitest path contract, bug-investigator reproduce จริง, spec-architect
-> produce/critique mode, ทั้งหมดรายงานไทย). ผ่าน adversarial review 4-lens — verifier 16/17
-> ตายเพราะ spend-limit จึง re-verify ด้วยมือทุก finding, fold valid findings ครบ.
+> produce/critique mode, ทั้งหมดรายงานไทย). ผ่าน adversarial review 4-lens 2 รอบ: รอบแรก
+> verifier 16/17 ตายเพราะ spend-limit จึง re-verify ด้วยมือ; รอบสอง (harness แก้ partition
+> ให้ verdict ที่หาย = unresolved ไม่ใช่ refuted) รันสะอาด 0 unresolved พบ dead-end เพิ่ม 1 จุด:
+> spec-tasks second gate ดูด requirements approval ไป แต่ design.md traceability backfill
+> ผูกกับ approval turn ของ spec-requirements → design-first path ที่รัน /spec-tasks ต่อ ทำให้
+> design.md ไม่มี Requirement Traceability → spec-trace.sh hard-fail. แก้แล้ว (4d0d56c, option b:
+> spec-requirements derive mode backfill ตอน derive ไม่รอ approval — single ownership).
 > Tier 5 ยังไม่ทำ — รอสั่ง
 
 ## สรุปการจัดลำดับ
