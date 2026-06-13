@@ -12,6 +12,8 @@ in order, with an APPROVAL GATE after each:
   2. design.md        — HOW it will be built (architecture)
   3. tasks.md         — discrete, trackable implementation steps
 
+(Design-First swaps 1 and 2 — same approval gates.)
+
 After producing each artifact, STOP and ask me to review before generating the
 next. Wait for explicit approval ("approved" / "continue"). The only exception is
 when I invoke `/spec-quick`, which runs all phases without gates.

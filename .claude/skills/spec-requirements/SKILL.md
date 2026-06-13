@@ -10,6 +10,19 @@ Resolve the target spec folder: use $ARGUMENTS if given; otherwise use the
 feature folder created by /spec-new in this conversation. If neither identifies
 one and `.claude/specs/` holds several features, list them and ask — never guess.
 
+Derive mode (Design-First): trigger when the folder has a design.md but no
+requirements.md. If that design.md is still `> Status: draft`, warn in Thai and
+ask for confirmation first — and if I confirm, flip it to
+`> Status: approved <YYYY-MM-DD>` before deriving. Then derive the requirements
+FROM the design — each REQ cites the design section it comes from. While
+deriving, sync is one-way: design is upstream; if a derived requirement
+conflicts with the design, fix the requirement — or stop and ask if the design
+itself looks wrong. (Once both artifacts exist, normal two-way sync resumes per
+the constitution.) After I approve the derived requirements, backfill the
+`## Requirement Traceability` table into design.md (design element → REQ-x.y)
+and re-stamp design.md's header:
+`> Status: approved <original date>, amended <YYYY-MM-DD>`.
+
 Write `.claude/specs/<feature>/requirements.md` with this structure:
 
   # Requirements: <Feature Name>
@@ -21,20 +34,27 @@ Write `.claude/specs/<feature>/requirements.md` with this structure:
   ## REQ-1: <Capability, e.g. User Registration>
   **User Story:** As a <role>, I want <goal>, so that <benefit>.
   **Acceptance Criteria (EARS):**
-  - 1.1  WHEN <event> THE SYSTEM SHALL <behavior>
-  - 1.2  IF <error condition> THEN THE SYSTEM SHALL <response>
-  - 1.3  WHILE <state> THE SYSTEM SHALL <behavior>
+  - 1.1  THE SYSTEM SHALL <behavior>                               (ubiquitous)
+  - 1.2  WHEN <event> THE SYSTEM SHALL <behavior>                  (event-driven)
+  - 1.3  WHILE <state> THE SYSTEM SHALL <behavior>                 (state-driven)
+  - 1.4  WHERE <feature is included> THE SYSTEM SHALL <behavior>   (optional)
+  - 1.5  IF <error condition> THEN THE SYSTEM SHALL <response>     (error handling)
 
   (repeat REQ-2, REQ-3, ...)
 
   ## Edge Cases & Open Questions
   <anything ambiguous>
 
-Rules: every requirement is atomic, testable, and has a stable ID. Cover the happy
-path AND error/edge cases (use IF...THEN).
+Rules: every requirement is atomic, testable, and has a stable ID. One observable
+behavior per criterion — split compound criteria joined by "and"; reject
+subjective wording ("fast", "user-friendly", "looks good") unless quantified
+with a measurable threshold. Cover the happy path AND error/edge cases (use
+IF...THEN).
 
-When done: STOP. Show me a summary and ask me to review. Suggest I run
-`/spec-analyze` next for complex or sensitive features, otherwise `/spec-design`.
+When done: STOP. Show me a summary and ask me to review. In derive mode the
+design already exists, so suggest `/spec-tasks` next (or `/spec-analyze` first
+for complex/sensitive features). Otherwise suggest `/spec-analyze` for complex
+or sensitive features, else `/spec-design`.
 
 When I explicitly approve (in a later turn), flip the header line in the artifact
 to `> Status: approved <YYYY-MM-DD>` before starting the next phase — approval
