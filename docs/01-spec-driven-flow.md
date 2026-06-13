@@ -20,6 +20,10 @@ implement         ลงมือทีละ task
 หลังสร้างแต่ละ artifact -> **STOP** ขอ review ก่อนไปขั้นถัดไป. ข้อยกเว้นเดียว: `/spec-quick`
 (รันทุก phase ไม่มี gate — ระบุใน CLAUDE.md).
 
+แต่ละ artifact มี header `> Status: draft|approved <YYYY-MM-DD>` — gate = flip `draft` ->
+`approved` เมื่อได้รับอนุมัติ. Status นี้เป็นสัญญาณที่ `spec-edit-guard` hook และ `/spec-tasks`
+ใช้ตัดสิน (ดู [05-hooks.md](05-hooks.md)).
+
 ## 1.2 EARS notation (บังคับใน requirements)
 
 ทุก functional requirement เขียนด้วยแพตเทิร์นใดแพตเทิร์นหนึ่ง พร้อม id เสถียร (`REQ-1.2`):
@@ -57,11 +61,21 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
 
 นิยามจริงอยู่ `../.claude/skills/spec-*/SKILL.md`.
 
+> `spec-architect` เป็น **agent** (ไม่ใช่ slash command) — fresh-context **adversarial reviewer**
+> (default mode = critique). `/spec-design` delegate ให้ critique `design.md` ก่อน STOP;
+> `/spec-analyze` audit `requirements.md`. produce mode (เขียน architecture จริง) เฉพาะ
+> design-first ที่ขอ explicit. นิยาม: `../.claude/agents/spec-architect.md`.
+
 ## 1.5 working agreements สำคัญ
 
 - spec sync กัน: เปลี่ยน requirements -> propagate ไป design + tasks
 - implement ทั้ง task (อาจหลายไฟล์) รวม test -> mark `- [x]` + ระบุ REQ id ที่ปิด -> pause ที่
-  task boundary (ไม่ใช่หลังทุกไฟล์)
+  task boundary (ไม่ใช่หลังทุกไฟล์). ใน **edit เดียวกัน** กับที่ flip `[x]` ต้อง append
+  `Evidence:` block ใต้ task: test command + result, viewports `375/768/1440` (browser task;
+  ไม่ใช่ -> `n/a — logic-only`), deviations. `task-gate` hook บังคับ typecheck+test เขียว +
+  มี Evidence ก่อนยอมให้ `[x]` ผ่าน (ดู [05-hooks.md](05-hooks.md))
+- ก่อน design STOP: delegate critique ให้ `spec-architect` (adversarial reviewer) — apply หรือ
+  rebut ทุก finding ก่อนขอ approve
 - /spec-analyze ก่อน design คุ้มเสมอสำหรับฟีเจอร์ที่มี logic (จับ conflict ที่ทำให้ test เขียนไม่ได้)
 - pure-logic-first: แยก logic ทดสอบได้ (สูตร/validation) เป็น pure function ใน `lib/` เขียน unit
   test เขียวก่อนแตะ UI
@@ -70,7 +84,9 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
 
 - spec files = source of truth ถาวร; conversation = working memory ชั่วคราว
 - ก่อน `/clear` หรือ compaction: เขียน active task id + decision + rationale + next step ลง
-  tasks.md/design.md — **ห้าม clear/compact กลาง task ที่ state อยู่แต่ในแชต**
+  tasks.md/design.md — **ห้าม clear/compact กลาง task ที่ state อยู่แต่ในแชต**. `precompact-persist`
+  (PreCompact hook) inject เตือน persist state อัตโนมัติก่อน compact — แต่ best-effort เท่านั้น
+  โมเดลยังเป็นคนเขียน (ดู [05-hooks.md](05-hooks.md))
 - prefer fresh session ต่อ task (reload ด้วย `@` อ่าน spec) ดีกว่า session ยาว
 
 ## 1.7 เคสจริงล่าสุด (insurance-homepage)

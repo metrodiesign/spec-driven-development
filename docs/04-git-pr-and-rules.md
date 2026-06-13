@@ -8,7 +8,10 @@
 - **ห้าม force push**, **ห้าม commit ตรงโดยไม่มี review**
 - commit message ลงท้ายด้วย:
   `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
-- ฟีเจอร์ทำบน feature branch (เช่น `feat/insurance-homepage`) -> เปิด PR เข้า main
+- ฟีเจอร์/chore ทำบน branch แยก (เช่น `feat/insurance-homepage`, `docs/...`) -> เปิด PR เข้า
+  **`develop`** (base จริงของ work branch); `develop` -> `main` เป็นอีกชั้น
+- `destructive-guard` hook block `git commit`/`push` ขณะอยู่บน main/develop + force push ให้
+  อัตโนมัติ (ดู [05-hooks.md](05-hooks.md))
 
 ## 4.2 CI gate
 
@@ -23,12 +26,16 @@
 - `.env` / `.env.*` อยู่ใน `.gitignore` เสมอ; commit ได้แค่ `.env.example` (ค่าปลอม)
 - ห้าม hardcode credential — อ่านจาก env / secret manager
 - secret หลุด -> rotate/revoke ทันที (ลบ commit ไม่พอ history ยังมี)
+- บังคับด้วย hook: `secret-guard` (git pre-commit) scan ก่อน commit + `hook-bypass-guard` กัน
+  การข้าม (`--no-verify` / `core.hooksPath` / `SECRET_GUARD_SKIP`) — ดู [05-hooks.md](05-hooks.md)
 
 ## 4.4 Destructive ops
 
 - ห้าม `DROP`/`DELETE`/`TRUNCATE` บน prod โดยไม่มี WHERE + ไม่ยืนยัน
 - ห้าม `rm -rf`, `git reset --hard`, `git clean -fd` โดยไม่ยืนยันเป้าหมาย
 - DB migration ต้องมี rollback + backup ก่อนรัน prod
+- บังคับด้วย hook: `destructive-guard` (PreToolUse Bash) block `rm` recursive+force,
+  `git reset --hard`, `git clean -f`, `find -delete`, force push อัตโนมัติ — ดู [05-hooks.md](05-hooks.md)
 
 ## 4.5 Dependency
 
@@ -58,8 +65,11 @@
 - คุยกับ user + output เป็นภาษาไทยเสมอ (ยกเว้น code/command/path/error/technical term)
 - **ห้าม emoji ในไฟล์ `.md` ทุกชนิด**
 
-## 4.9 Model routing (ระหว่าง execute บน Sonnet)
+## 4.9 Model routing
 
-- เริ่มงานใหญ่/ใกล้ปิด -> เรียก `/advisor` (Opus) ก่อน
-- error เดิมซ้ำ 2 ครั้ง -> หยุด เรียก `/advisor` หรือ Shift+Tab กลับ plan mode
-- งานแตะหลายไฟล์/หลายโมดูล -> Shift+Tab กลับ plan mode ก่อน อย่าด้นสด
+default = **Opus 4.8 (1M context)** (ดู global `~/.claude/CLAUDE.md`):
+
+- งานใหญ่/ใกล้ปิด หรือต้อง reasoning หนัก -> plan mode + ใส่คำว่า `ultrathink` ใน prompt
+  (keyword จริงตัวเดียวที่ CC รู้จัก) หรือยก `/effort` เป็น `xhigh` ชั่วคราว
+- error เดิมซ้ำ 2 ครั้ง -> หยุด Shift+Tab กลับ plan mode (อย่าด้นสด)
+- งานแตะหลายไฟล์/หลายโมดูล -> Shift+Tab กลับ plan mode ก่อน
