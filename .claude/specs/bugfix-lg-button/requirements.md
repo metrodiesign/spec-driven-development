@@ -1,5 +1,7 @@
 # Bugfix: ปุ่ม size="lg" ยุบความสูง (dead `h-13` class)
 
+> Status: approved (closed; retroactively recorded 2026-06-13)
+
 ## Bug
 
 ปุ่มจาก `Button` primitive ที่ `size="lg"` ยุบเหลือ ~26px (ความสูง intrinsic ของ text)

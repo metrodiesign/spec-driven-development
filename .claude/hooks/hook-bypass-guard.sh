@@ -21,7 +21,9 @@ echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
   block 'SECRET_GUARD_SKIP ข้าม secret scan — ถ้าจำเป็นจริงให้ user รันเองนอก session'
 
 # short flag -n (= --no-verify ของ git commit) รวม combined เช่น -nm, -anm
-echo "$C" | grep -qE 'git[[:space:]]+commit[^|;&]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)' &&
+# สแกน flag เฉพาะช่วงก่อน quote แรก (class [^|;&'"]) — กัน false positive เมื่อ ' -n' อยู่ใน commit message
+# (--no-verify ทุกตำแหน่งยังถูกจับโดยบรรทัด 14; residual: -n ที่วางหลัง message ใน quote จะไม่ถูกจับ)
+echo "$C" | grep -qE 'git[[:space:]]+commit[^|;&'\''"]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)' &&
   block 'git commit -n (--no-verify) ข้าม secret-guard — commit ตามปกติ'
 
 exit 0

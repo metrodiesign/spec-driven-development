@@ -1,5 +1,7 @@
 # Requirements: Insurance Homepage
 
+> Status: approved 2026-06-04 (retroactively recorded 2026-06-13)
+
 ## Overview
 
 หน้าแรก (homepage) พอร์ทัลบริษัทประกันภัยแบรนด์วิริยะ (น้ำเงินกรมท่า + เหลืองทอง) — เว็บองค์กร

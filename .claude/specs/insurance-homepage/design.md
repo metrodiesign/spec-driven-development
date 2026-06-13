@@ -1,5 +1,7 @@
 # Design: Insurance Homepage
 
+> Status: approved 2026-06-04 (retroactively recorded 2026-06-13)
+
 ## Architecture Overview
 
 Next.js 16 App Router, single route `/` (homepage). Server Components เป็นค่าเริ่มต้น;
