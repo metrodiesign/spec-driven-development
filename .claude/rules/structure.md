@@ -55,6 +55,8 @@ next.config.ts        # images.remotePatterns
 - design tokens อยู่ที่เดียว (tailwind.config.ts) — เรียกผ่าน semantic utility class
 - ปุ่ม/การ์ด/อินพุต มี state ครบ: default/hover/focus(ring)/active/disabled + transition 150–250ms
 - ใช้ `<Container>` ครอบเนื้อหาทุก section ให้ max-width ~1200–1280px + padding เท่ากัน
+- `.github-sync.json` ใน `.claude/specs/<feature>/` = sidecar manifest ของ `/spec-sync-github`
+  (link map issue<->task) — commit เข้า repo, เฉพาะคำสั่ง sync เขียน; ห้ามแก้มือ, ห้ามใส่ link ลง tasks.md
 
 ## Anti-Patterns
 

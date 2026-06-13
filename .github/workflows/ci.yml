@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: typecheck + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        # npm install (not npm ci): npm ci's strict ideal-tree reconciliation is
+        # sensitive to the node/npm version that authored package-lock.json vs the
+        # runner's, and this repo's lock predates a pinned Node version. npm install
+        # mirrors the actual local workflow (task-gate runs `npm test` on an
+        # npm-install tree) and still installs from the committed lockfile.
+        # Follow-up: add .nvmrc, regenerate the lock with that Node, restore `npm ci`.
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
