@@ -19,7 +19,15 @@
 > spec-retro/references/cost-accounting.md เหลือ kernel ใน lessons.md;
 > ST6 sync tech.md (swiper/vitest) + structure.md (ไฟล์จริง) + lessons.md (สถานะ vitest
 > bump) + เพิ่มขั้น Steering sync ใน spec-retro.
-> Tier 4, 5 ยังไม่ทำ — รอสั่ง
+> Tier 4 applied แล้ว (2026-06-13, PR #7 บน main): W2 design-first ใช้ได้จริง (spec-design
+> 2 โหมด, spec-requirements derive mode + EARS 3→5 patterns + atomic/subjective guard,
+> spec-tasks design-first second gate, CLAUDE.md 1 บรรทัด); W6 rewrite spec-bugfix เต็ม
+> shape (intake batch, bugfix.md + F-ID/B-ID, Status gate, 3-dim validation observable
+> failure mode, spec_trace.py skip bugfix.md-only); A6 harden agent contracts (pbt-runner
+> →opus + vitest path contract, bug-investigator reproduce จริง, spec-architect
+> produce/critique mode, ทั้งหมดรายงานไทย). ผ่าน adversarial review 4-lens — verifier 16/17
+> ตายเพราะ spend-limit จึง re-verify ด้วยมือทุก finding, fold valid findings ครบ.
+> Tier 5 ยังไม่ทำ — รอสั่ง
 
 ## สรุปการจัดลำดับ
 
