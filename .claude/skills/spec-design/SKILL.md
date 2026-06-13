@@ -45,10 +45,15 @@ the changed REQs, preserving approved decisions, and update the traceability
 table to match. If design.md was already approved, re-stamp its header:
 `> Status: approved <original date>, amended <YYYY-MM-DD>`.
 
-Delegate the architectural pass to the `spec-architect` subagent when the design
-touches CORE domain logic (premium calculation / validation in `app/lib/`);
-otherwise design inline. In design-first mode, pass it the /spec-new answers and
-state explicitly that no requirements.md exists yet. When done: STOP for my
-review, then suggest `/spec-tasks` (requirements-first) or `/spec-requirements`
-(design-first). When I explicitly approve, flip the header to
-`> Status: approved <YYYY-MM-DD>` before the next phase.
+Produce design.md inline — this skill owns the section outline above (the single
+source). When the design touches CORE domain logic (premium calculation /
+validation in `app/lib/`), delegate a fresh-context adversarial critique to the
+`spec-architect` subagent (its default mode = critique): it hunts unstated
+assumptions, missing error paths, REQ coverage gaps, and infeasible choices.
+Apply or explicitly rebut each finding before STOP. (For design-first CORE
+production where no requirements.md exists yet, invoke spec-architect with
+`mode=produce` instead, passing the /spec-new answers and stating that no
+requirements.md exists.) When done: STOP for my review, then suggest
+`/spec-tasks` (requirements-first) or `/spec-requirements` (design-first). When I
+explicitly approve, flip the header to `> Status: approved <YYYY-MM-DD>` before
+the next phase.

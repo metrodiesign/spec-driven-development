@@ -38,7 +38,17 @@ For EACH task:
    task in context rather than splitting it across turns.
 3. Write or extend tests proving it satisfies its REQ IDs (or F-IDs/B-IDs for a
    bugfix spec).
-4. Mark the task "- [x]" in tasks.md and state which IDs are now satisfied.
+4. Mark the task "- [x]" in tasks.md, state which IDs are now satisfied, AND in
+   the SAME edit append an `Evidence:` block directly under that task line — the
+   box and the evidence flip together. Record what you actually ran and observed
+   (not the planned `Verify:` line):
+       Evidence:
+         - test: `<exact command>` -> <result, e.g. 47 passed / 0 failed>
+         - viewports: 375 OK | 768 OK | 1440 OK   (browser tasks; else `n/a — logic-only`)
+         - deviations: <none | what differed from design/requirements and why>
+   For a browser task you must have Read references/browser-verify.md and verified
+   `clientWidth === target` at each viewport — record the values, never assert a
+   pass you did not observe; if a check could not be run, say so in `deviations:`.
    Before marking the LAST task (or any assembly task), run
    `scripts/spec-trace.sh <feature>` — any uncovered REQ it reports is a blocker,
    never skip it silently.

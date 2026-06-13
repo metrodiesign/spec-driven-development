@@ -39,4 +39,11 @@ OUT=$(npm test --silent 2>&1) || {
     exit 2
   fi
 }
+
+# evidence-presence gate (Edit path only; Write keeps the FLIPPED-on-content limit above)
+# code-green is checked first (above); only then require an `Evidence:` block in the flip.
+if [ "$TOOL" = "Edit" ] && ! printf '%s\n' "$NEW" | grep -qiE '^[[:space:]]*Evidence:'; then
+  echo 'Task gate: ขาด Evidence block — บันทึก test result + viewports (375/768/1440 หรือ n/a) + deviations ใต้ task ก่อน mark [x]' >&2
+  exit 2
+fi
 exit 0
