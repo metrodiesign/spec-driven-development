@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "feature": "insurance-homepage",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": { "issue": 12, "id": 4654892138, "nodeId": "I_kwDOSt2IyM8AAAABFXQEag", "bodyHash": "" },
+  "tasks": {
+    "1": { "issue": 13, "id": 4654894510, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "2": { "issue": 14, "id": 4654895436, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "3": { "issue": 15, "id": 4654895770, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "4": { "issue": 16, "id": 4654896307, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "5": { "issue": 17, "id": 4654896944, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "6": { "issue": 18, "id": 4654897477, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "7": { "issue": 19, "id": 4654897931, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "8": { "issue": 20, "id": 4654898424, "subIssueLinked": true, "state": "closed", "bodyHash": "" },
+    "9": { "issue": 21, "id": 4654899030, "subIssueLinked": true, "state": "closed", "bodyHash": "" }
+  },
+  "lastSync": "2026-06-13T08:30:00Z",
+  "labelsEnsured": ["spec:insurance-homepage", "spec-epic", "spec-task", "req-spine"]
+}
