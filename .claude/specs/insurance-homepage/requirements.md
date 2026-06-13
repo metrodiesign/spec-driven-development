@@ -223,11 +223,11 @@ UI-only (ไม่แปลทั้งหน้า); รูปการ์ด�
   inline SVG รายละเอียด / รูปจริง / gradient+ลวดลายที่จัดองค์ประกอบ.
 - 15.3 IF รูปจาก remote (picsum.photos) โหลดไม่สำเร็จ THEN THE SYSTEM SHALL แสดง fallback ที่ดู
   "ตั้งใจ" (inline SVG/gradient) ไม่ใช่ภาพแตกหรือกล่องว่าง.
-- 15.6 WHILE รูป remote กำลังโหลด THE SYSTEM SHALL แสดง placeholder ที่ดู "ตั้งใจ" (blur/skeleton
-  SVG/gradient) ไม่ใช่กล่องว่างชั่วคราว.
 - 15.4 THE SYSTEM SHALL กำหนด typographic scale ชัดเจน (h1/h2/h3/body/caption) โดย body line-height
   > = 1.5 และตัวอักษรไทยสระบน-ล่างไม่ตัดกัน.
 - 15.5 THE SYSTEM SHALL ไม่มี dead space ขนาดใหญ่ที่ไม่ได้ตั้งใจในทุก section.
+- 15.6 WHILE รูป remote กำลังโหลด THE SYSTEM SHALL แสดง placeholder ที่ดู "ตั้งใจ" (blur/skeleton
+  SVG/gradient) ไม่ใช่กล่องว่างชั่วคราว.
 
 ## REQ-16: Accessibility
 
