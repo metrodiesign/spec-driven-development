@@ -20,12 +20,14 @@ list and let me choose which to test.
 Step 2 — For the chosen properties, write property-based tests. First check
 package.json: if no PBT framework (fast-check / Hypothesis / jqwik / proptest)
 is installed, do NOT install one silently — either write the properties as
-randomized-input loops on the existing test runner, or propose the framework as
-a devDependency (with license + maintenance status) and wait for approval per
-tech.md's dependency rule. Generate wide input ranges including edge cases
+randomized-input loops on vitest (the runner this project has; tests must live
+in `app/lib/**/*.test.ts`, the only path vitest.config.ts includes), or propose
+the framework as a devDependency (with license + maintenance status) and wait
+for approval per tech.md's dependency rule. Generate wide input ranges including edge cases
 (empty, max, special characters). Each test cites its REQ ID.
 
 Step 3 — When a test finds a counter-example, report the minimal failing ("shrunk")
 input, then ask whether to fix the implementation, the test, or the requirement.
 
-For heavy generation/execution, consider delegating to the `pbt-runner` subagent.
+Delegate to the `pbt-runner` subagent when the properties touch CORE domain
+logic (premium calculation / validation in `app/lib/`); run inline otherwise.

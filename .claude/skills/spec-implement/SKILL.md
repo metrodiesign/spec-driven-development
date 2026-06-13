@@ -30,13 +30,15 @@ in tasks.md before implementing.
 
 For EACH task:
 
-1. Read the task plus its linked REQ IDs in requirements.md and the relevant parts
-   of design.md and @.claude/rules/structure.md.
+1. Read the task plus its linked IDs in requirements.md (or bugfix.md with its
+   F-IDs/B-IDs, for a bugfix spec), the relevant parts of design.md (if present
+   — bugfix specs have none), and @.claude/rules/structure.md.
 2. Plan the task with your own internal TODO list, then implement the WHOLE task in
    one cohesive pass. It may span many files — that is expected; keep the entire
    task in context rather than splitting it across turns.
-3. Write or extend tests proving it satisfies its REQ IDs.
-4. Mark the task "- [x]" in tasks.md and state which REQ IDs are now satisfied.
+3. Write or extend tests proving it satisfies its REQ IDs (or F-IDs/B-IDs for a
+   bugfix spec).
+4. Mark the task "- [x]" in tasks.md and state which IDs are now satisfied.
    Before marking the LAST task (or any assembly task), run
    `scripts/spec-trace.sh <feature>` — any uncovered REQ it reports is a blocker,
    never skip it silently.

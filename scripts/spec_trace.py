@@ -165,6 +165,10 @@ def run(feature, specs_dir):
 
     req_path = feature_dir / "requirements.md"
     if not req_path.is_file():
+        if (feature_dir / "bugfix.md").is_file():
+            print(f"'{feature}' เป็น bugfix spec (มี bugfix.md ไม่มี requirements.md) — "
+                  "ข้ามการตรวจ traceability")
+            return 0
         print(f"ไม่พบไฟล์ {req_path}", file=sys.stderr)
         print("ใช้: scripts/spec-trace.sh <feature>", file=sys.stderr)
         return 1
