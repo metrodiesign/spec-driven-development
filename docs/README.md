@@ -15,6 +15,8 @@ cost tracking และ retrospective. อ่านตามลำดับส�
    conventions (structure/tech/product)
 5. [Hooks / guardrails](05-hooks.md) — ชั้น deterministic hook (destructive/secret/spec-edit/
    task-gate/precompact) ที่ block/warn อัตโนมัติรอบ tool call
+6. [GitHub Issues (teammate visibility)](06-github-issues.md) — เชื่อม spec -> GitHub Issues,
+   epic + sub-issue, label, ผูก PR, CI gate
 
 ## แหล่งความจริง (source of truth) — ห้ามขัดกับไฟล์เหล่านี้
 

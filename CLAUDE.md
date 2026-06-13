@@ -30,6 +30,7 @@ Use the project slash commands — do not improvise the structure:
   /spec-bugfix <bug>      root-cause-first bug workflow
   /spec-pbt               extract properties and write property-based tests
   /spec-retro             session retrospective — run at END of session, BEFORE /clear
+  /spec-sync-github <feature>  mirror tasks to GitHub Issues (Epic + sub-issues), idempotent
 
 ## EARS notation (mandatory for requirements)
 
