@@ -1,15 +1,36 @@
 ---
 name: spec-design
-description: Generate the design.md artifact from approved requirements. Use after requirements are approved.
+description: Generate the design.md artifact. Requirements-first (after requirements are approved) or design-first (architecture before requirements).
+argument-hint: <feature folder name (optional)>
 ---
 
 # Generate design.md
 
-First read the active spec's requirements.md and the project rules
-(@.claude/rules/tech.md, @.claude/rules/structure.md). Then write
-`.claude/specs/<feature>/design.md`:
+Resolve the target spec: use $ARGUMENTS if given; if `.claude/specs/` holds more
+than one feature and none was named, list them and ask — never guess.
+
+Mode — requirements-first (default, requirements.md exists): read it plus the
+project rules (@.claude/rules/tech.md, @.claude/rules/structure.md). If it is
+still `> Status: draft`, warn in Thai and ask for confirmation before
+proceeding — and if I confirm, flip requirements.md to
+`> Status: approved <YYYY-MM-DD>` as part of that confirmation.
+
+Mode — design-first (requirements.md does NOT exist and /spec-new chose
+Design-First): inputs are the /spec-new answers plus the project rules. Ask me
+ONE question first: high-level design only (components + flows), or down to
+module/interface level? In this mode there are no REQ IDs yet, so SKIP the
+Requirement Traceability section and, in Testing Strategy, map tests to design
+behaviors/sections instead of REQ IDs (/spec-requirements backfills both after
+deriving). ADD a `## Non-Functional Considerations` section covering the
+constraints that motivated Design-First (latency, compliance, a11y, ...). If
+requirements.md is missing and Design-First was never chosen, stop and ask —
+never guess the mode.
+
+Then write `.claude/specs/<feature>/design.md`:
 
   # Design: <Feature Name>
+  > Status: draft
+
   ## Architecture Overview        — components and responsibilities
   ## Sequence Diagrams            — Mermaid for key flows
   ## Data Models & Interfaces     — schemas, types, API contracts
@@ -18,5 +39,16 @@ First read the active spec's requirements.md and the project rules
   ## Testing Strategy             — unit/integration/property; map to REQ IDs
   ## Requirement Traceability     — table: design element → REQ-x.y it satisfies
 
-For a deeper architectural pass, consider delegating to the `spec-architect`
-subagent. When done: STOP for my review, then suggest `/spec-tasks`.
+Sync mode: if design.md already exists and requirements.md changed after it was
+written, do NOT regenerate the whole file — patch only the sections affected by
+the changed REQs, preserving approved decisions, and update the traceability
+table to match. If design.md was already approved, re-stamp its header:
+`> Status: approved <original date>, amended <YYYY-MM-DD>`.
+
+Delegate the architectural pass to the `spec-architect` subagent when the design
+touches CORE domain logic (premium calculation / validation in `app/lib/`);
+otherwise design inline. In design-first mode, pass it the /spec-new answers and
+state explicitly that no requirements.md exists yet. When done: STOP for my
+review, then suggest `/spec-tasks` (requirements-first) or `/spec-requirements`
+(design-first). When I explicitly approve, flip the header to
+`> Status: approved <YYYY-MM-DD>` before the next phase.

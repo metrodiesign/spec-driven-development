@@ -11,6 +11,7 @@ app/
     UtilityBar.tsx
     Header.tsx
     Hero.tsx
+    HeroCampaignSlider.tsx   # "use client" (swiper)
     InsuranceTypes.tsx
     Services.tsx
     Promotions.tsx
@@ -20,12 +21,18 @@ app/
     Testimonials.tsx         # "use client"
     AppDownload.tsx
     Footer.tsx
-    ui/                # primitive ใช้ซ้ำ: Card, Button, Badge, Icon, Container
-  data/               # mock data + types: insuranceTypes.ts, promotions.ts, articles.ts ...
-  lib/                # logic ล้วน: premium.ts (สูตรคำนวณเบี้ย), validation
+    ui/                # primitive ใช้ซ้ำ: Card, Button, Badge, Icon, Container,
+                       # SectionHeading, SmartImage
+  data/               # mock data + types: types.ts, insuranceTypes.ts, promotions.ts,
+                      # articles.ts, heroCampaigns.ts, navigation.ts, services.ts, ...
+  lib/                # logic ล้วน: premium.ts (สูตรเบี้ย), validatePremium.ts, format.ts
+                      # + unit test co-located (*.test.ts)
 tailwind.config.ts    # design tokens ใน theme.extend
 next.config.ts        # images.remotePatterns
 ```
+
+> layout นี้เป็นตัวแทนหลัก ไม่ exhaustive — ground truth คือ `ls app/` จริง;
+> /spec-retro มีขั้น steering sync คอยเทียบให้ตรง
 
 ## Naming Conventions
 

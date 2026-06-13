@@ -8,7 +8,9 @@ allowed-tools: Bash, Read
 
 ขั้นตอน:
 
-1. ก่อนรัน — ตรวจว่าไม่มี pane-loop ค้างอยู่ (background task ที่ยังรัน). ถ้ามี ให้แจ้งและหยุด อย่ารันซ้ำ (pane จะชนกัน, tasks share tree เดียว).
+1. ก่อนรัน — ตรวจสองอย่าง:
+   - ไม่มี pane-loop ค้างอยู่ (background task ที่ยังรัน). ถ้ามี ให้แจ้งและหยุด อย่ารันซ้ำ (pane จะชนกัน, tasks share tree เดียว).
+   - `> Status:` ใน tasks.md ของ feature ต้องเป็น approved — ถ้ายัง draft ให้ถาม user ใน session นี้ (จุดเดียวที่มีคนตอบ) ว่า approve ไหม; approve = flip header เป็น `> Status: approved <YYYY-MM-DD>` ก่อนเปิด pane. ห้ามเปิด pane ทั้งที่ยัง draft — pane ที่เปิดแล้วไม่มีคนตอบคำถามยืนยัน จะค้างจน timeout.
 2. รัน `bash scripts/pane-loop.sh $ARGUMENTS` ผ่าน Bash tool แบบ `run_in_background: true`.
    - ห้ามใช้ `!`-prefix execution — script เป็น long-running (รอ task ขึ้น `[x]`, timeout ต่อ task default 2400s) ต้องเป็น background.
 3. `sleep ~18s` แล้ว Read ไฟล์ output ของ background task — ยืนยันว่า:

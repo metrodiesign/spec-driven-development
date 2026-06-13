@@ -12,6 +12,8 @@ in order, with an APPROVAL GATE after each:
   2. design.md        — HOW it will be built (architecture)
   3. tasks.md         — discrete, trackable implementation steps
 
+(Design-First swaps 1 and 2 — same approval gates.)
+
 After producing each artifact, STOP and ask me to review before generating the
 next. Wait for explicit approval ("approved" / "continue"). The only exception is
 when I invoke `/spec-quick`, which runs all phases without gates.
@@ -42,9 +44,10 @@ Requirements must be atomic, unambiguous, and testable.
 
 ## Project standards
 
-See @.claude/rules/product.md for what we're building and why.
-See @.claude/rules/tech.md for the tech stack you MUST prefer.
-See @.claude/rules/structure.md for file organization and conventions.
+Project standards live in `.claude/rules/` — product.md (what/why), tech.md (the
+stack you MUST prefer), structure.md (file organization), lessons.md (process
+lessons): all auto-loaded every turn by the rules loader; stack-nextjs.md is
+path-scoped. Do not @-import them here — that double-loads the same content.
 
 ## Task sizing (this project runs a large-context, high-effort model)
 
