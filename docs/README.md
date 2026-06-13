@@ -13,6 +13,8 @@ cost tracking และ retrospective. อ่านตามลำดับส�
    สคริปต์ cost, การทำ retro และ promote บทเรียน
 4. [Git / PR + rules](04-git-pr-and-rules.md) — นโยบาย branch/PR, secrets/CI/destructive,
    conventions (structure/tech/product)
+5. [Hooks / guardrails](05-hooks.md) — ชั้น deterministic hook (destructive/secret/spec-edit/
+   task-gate/precompact) ที่ block/warn อัตโนมัติรอบ tool call
 
 ## แหล่งความจริง (source of truth) — ห้ามขัดกับไฟล์เหล่านี้
 
@@ -23,6 +25,8 @@ cost tracking และ retrospective. อ่านตามลำดับส�
 | บทเรียนสะสม              | `../.claude/rules/lessons.md`                  |
 | spec ของแต่ละฟีเจอร์     | `../.claude/specs/<feature>/`                  |
 | นิยาม skill (slash)      | `../.claude/skills/spec-*/`                    |
+| hooks (guardrails)       | `../.claude/hooks/` + `../.claude/settings.json` |
+| agent definitions        | `../.claude/agents/`                           |
 | อ้างอิง Kiro->CC ละเอียด | `../claude-code-spec-driven-workflow.md`       |
 
 > เอกสารใน `docs/` เป็นคู่มือ "วิธีทำงาน" — เมื่อเนื้อหาขัดกับ `CLAUDE.md` หรือ `.claude/rules/`
