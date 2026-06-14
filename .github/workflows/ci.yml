@@ -30,10 +30,13 @@ jobs:
       - name: Audit dependencies
         # Dependency rules (CLAUDE.md): vulnerability audit is part of CI. Blocking at
         # high/critical so the SECURITY_RULES claim ("CI runs npm audit") is actually true.
-        # --omit=dev: gate the PRODUCTION attack surface only. Dev-tooling advisories (e.g. the
-        # esbuild dev-server SSRF pulled in via vite/vitest) cannot reach prod and would require
-        # breaking downgrades to clear; track those separately rather than block every PR.
-        run: npm audit --omit=dev --audit-level=high
+        # Full tree (no --omit=dev): the dev-tooling advisories that once forced a prod-only
+        # gate (esbuild via vite/vitest, postcss via next) are cleared in #31 — vitest 4 ->
+        # vite 8 (rolldown, no esbuild) + a postcss>=8.5.10 override — so the whole tree now
+        # gates clean and any regression (dev OR prod) reds the build. If a future transitive
+        # DEV-only advisory with no non-breaking fix starts blocking unrelated PRs, scope back
+        # to `--omit=dev` and track it separately (the original #25 rationale).
+        run: npm audit --audit-level=high
       - name: Typecheck
         run: npm run typecheck
       - name: Test
