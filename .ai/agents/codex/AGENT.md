@@ -81,12 +81,10 @@ and current before relying on it.
   `[agents]` in `.codex/config.toml` (`max_threads`, `max_depth`). Invoke via
   `/agent` or "spawn agent". Use them for fresh-context review, root-cause analysis,
   and property-based testing.
-- **MCP (browser-verify)** — external tool servers live under `[mcp_servers.*]`. The
-  browser-verify server (`chrome-devtools`, launched `npx -y
-  chrome-devtools-mcp@latest` — confirm package/version) is staged in
-  `.codex/config.mcp.toml` and **must be merged into `.codex/config.toml`** (kept
-  separate only to avoid a concurrent-write race during generation; see the one-time
-  setup in `../../README.md`). It enables the browser-verify recipes in
+- **MCP (browser-verify)** — external tool servers live under `[mcp_servers.*]` in
+  `.codex/config.toml`. The browser-verify server (`chrome-devtools`, launched `npx -y
+  chrome-devtools-mcp@latest` — confirm package/version) is already wired there and
+  enables the browser-verify recipes in
   `.claude/skills/spec-implement/references/browser-verify.md` for Codex. Add other
   servers (e.g. GitHub for `spec-sync-github`) the same way rather than improvising.
 

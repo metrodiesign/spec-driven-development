@@ -58,7 +58,7 @@ applicable in this setup. Wiring detail is in each `agents/<harness>/AGENT.md`.
 | Subagents (fresh-context personas) | native (Task tool -> `.ai/roles/*`) | native (`.codex/agents/*.toml` + `[agents]`) | native (`.opencode/agents/*`) | floor-only (persona via skill / `APPEND_SYSTEM.md`) |
 | Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/hooks.json` PreToolUse -> `guard.sh`) | native (`.opencode/plugins/ai-guard.js`) | floor-only (run `.ai/bin/check-*` by hand) |
 | Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/hooks.json` PostToolUse -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | floor-only (git pre-commit + CI) |
-| MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`; merge `config.mcp.toml`) | native (`opencode.json` `mcp`) | n/a (no MCP host) |
+| MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`) | native (`opencode.json` `mcp`) | n/a (no MCP host) |
 
 All native task-gate, guard, subagent and skill wiring routes to the same single
 source — `.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
@@ -84,11 +84,9 @@ pushes to `main`/`develop` and force pushes). Claude cannot run this itself (the
 guard blocks `core.hooksPath` edits), so a human runs it once. CI
 (`.github/workflows/ci.yml`) is the server-side floor that applies regardless.
 
-**Codex MCP merge (Codex users only)** — the browser-verify server is staged in
-`.codex/config.mcp.toml` (kept separate to avoid a concurrent-write race during
-generation). Merge its `[mcp_servers.chrome-devtools]` table into `.codex/config.toml`
-once so Codex can launch the browser-verify MCP. OpenCode reads its MCP straight from
-`opencode.json` (no merge step); Pi has no MCP host.
+**Codex MCP (Codex users only)** — the browser-verify server is wired in
+`.codex/config.toml` under `[mcp_servers.chrome-devtools]` (confirm package/version).
+OpenCode reads its MCP straight from `opencode.json`; Pi has no MCP host.
 
 ## Related top-level docs (not moved)
 

@@ -1,6 +1,0 @@
-# merge this into .codex/config.toml; kept separate to avoid concurrent-write race during generation
-
-[mcp_servers.chrome-devtools]
-command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
-# confirm package/version; enables browser-verify recipes (.claude/skills/spec-implement/references/browser-verify.md) for Codex
