@@ -1,9 +1,20 @@
 # .ai/ — the vendor-neutral operating layer
 
-This directory is the single source of truth for how every agent works on this repo.
-It is harness-agnostic: Claude Code, Codex, OpenCode and Pi all read the same knowledge,
-adopt the same roles, and are gated by the same checks. The per-harness `.claude/`,
-`.codex/`, `.opencode/` artifacts are thin adapters that point back here.
+This directory is the single source of truth for the harness-agnostic KNOWLEDGE,
+PROTOCOLS, ROLES and CHECK ENGINE: Claude Code, Codex, OpenCode and Pi all read the
+same `shared/` knowledge, adopt the same `roles/`, and are gated by the same
+`bin/check-*` engine. The per-harness `.claude/`, `.codex/`, `.opencode/` artifacts
+are thin adapters that point back here for all of that.
+
+One deliberate exception to "everything authoritative lives under `.ai/`": the
+detailed, step-by-step procedure text for each spec phase currently lives under
+`.claude/skills/spec-*/SKILL.md` and is treated as the AUTHORITATIVE phase steps,
+SHARED across harnesses. The vendor-neutral `.agents/skills/spec-*/SKILL.md` and the
+`.opencode/commands/*` are thin routers that defer to those `.claude/skills/*` steps
+(plus `.ai/workflows/*` + `.ai/shared/*`); the step text is not duplicated per harness.
+So "single source" holds — each piece of knowledge lives in exactly one place — but
+the spec-phase step text is sourced from `.claude/skills/` rather than `.ai/`. Changing
+a phase's procedure means editing `.claude/skills/<phase>/SKILL.md`, once.
 
 ## System map
 
@@ -30,10 +41,15 @@ adopt the same roles, and are gated by the same checks. The per-harness `.claude
 **Skills standard** — the spec workflow ships once as Agent Skills under
 `/.agents/skills/spec-*/SKILL.md` (frontmatter `name` + `description`, markdown body).
 This one set is auto-read by **Codex**, **OpenCode** (which also reads `.claude/skills/`)
-and **Pi**; the bodies route to the single source (`workflows/*` + `.claude/skills/spec-*`)
-and are never duplicated per harness. Claude reads the same procedure via `.claude/skills/`.
-`spec-retro` and `spec-sync-github` are intentionally NOT in `.agents/skills/` — they are
-Claude-only (Claude cost ledger / GitHub MCP) and are not runnable by Codex/OpenCode/Pi.
+and **Pi**; the bodies route to the authoritative phase steps (`workflows/*` +
+`.claude/skills/spec-*`) and are never duplicated per harness. Claude reads the same
+procedure via `.claude/skills/`. `spec-retro` and `spec-sync-github` now ALSO ship as
+vendor-neutral routers (`.agents/skills/spec-retro`, `.agents/skills/spec-sync-github`
+and the matching `.opencode/commands/*`) that defer to the same authoritative
+`.claude/skills/*` steps. They remain Claude-LEANING — `spec-retro` reads Claude's own
+cost ledger (off Claude, record "cost unavailable"), and `spec-sync-github` needs a
+GitHub MCP server (or the `gh` CLI) — but the procedure is now reachable from every
+harness, not Claude-only.
 
 ## Per-agent entry points
 
@@ -58,8 +74,8 @@ applicable in this setup. Wiring detail is in each `agents/<harness>/AGENT.md`.
 | spec-* workflow as skills | native (`.claude/skills/spec-*`) | native (`.agents/skills/spec-*`) | native (`.agents/skills/` + `.claude/skills/`) | native (`.agents/skills/spec-*`) |
 | Slash commands | native (`.claude/commands/`) | via skills (prompts deprecated) | native (`.opencode/commands/spec-*`) | via skills |
 | Subagents (fresh-context personas) | native (Task tool -> `.ai/roles/*`) | native (`.codex/agents/*.toml` + `[agents]`) | native (`.opencode/agents/*`) | floor-only (persona via skill / `APPEND_SYSTEM.md`) |
-| Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/hooks.json` PreToolUse -> `guard.sh`) | native (`.opencode/plugins/ai-guard.js`) | floor-only (run `.ai/bin/check-*` by hand) |
-| Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/hooks.json` PostToolUse -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | floor-only (git pre-commit + CI) |
+| Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/config.toml` `[hooks].PreToolUse` -> `guard.sh`; NOT `.codex/hooks.json`) | native (`.opencode/plugins/ai-guard.js`) | floor-only (run `.ai/bin/check-*` by hand) |
+| Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/config.toml` `[hooks].PostToolUse` -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | floor-only (git pre-commit + CI) |
 | MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`) | native (`opencode.json` `mcp`) | n/a (no MCP host) |
 
 All native task-gate, guard, subagent and skill wiring routes to the same single
@@ -75,16 +91,26 @@ source — `.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
 
 ## SETUP (one time per clone)
 
-The git hooks are committed but not active until you point git at them:
+The Tier 1 local floor is now wired automatically: `npm install` runs a `prepare`
+script that sets `core.hooksPath=.githooks`, and `.ai/bin/install.sh` actually performs
+the wiring (no longer print-only). After a normal install you should already have:
+
+```sh
+git config core.hooksPath   # -> .githooks
+```
+
+If for some reason it is not set (e.g. an install without scripts), a human runs it
+once — Claude cannot, because the bypass guard blocks `core.hooksPath` edits:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-This enables `pre-commit` (secret scan + Evidence check) and `pre-push` (blocks direct
-pushes to `main`/`develop` and force pushes). Claude cannot run this itself (the bypass
-guard blocks `core.hooksPath` edits), so a human runs it once. CI
-(`.github/workflows/ci.yml`) is the server-side floor that applies regardless.
+This enables `pre-commit` (secret scan + a per-task, scope-aware Evidence check — a
+newly-marked `[x]` task must carry its own `Evidence:` line within its own block and
+cannot borrow a sibling's) and `pre-push` (blocks direct pushes to `main`/`develop` and
+force pushes). CI (`.github/workflows/ci.yml`) is the server-side floor that applies
+regardless.
 
 **Codex MCP (Codex users only)** — the browser-verify server is wired in
 `.codex/config.toml` under `[mcp_servers.chrome-devtools]` (confirm package/version).

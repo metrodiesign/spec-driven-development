@@ -58,22 +58,49 @@ and current before relying on it.
   skill set serves Codex, OpenCode and Pi. Codex prompts are **deprecated and
   user-global only** (`~/.codex/prompts`); this repo deliberately ships no
   `.codex/prompts` — skills replace them.
-- **Pre-tool guard** — `.codex/hooks.json` registers a PreToolUse hook with matcher
-  `"^Bash$"` that runs `.codex/hooks/guard.sh`. That guard reads the Codex hook
-  input, extracts the command, and delegates to the single-source check engine:
-  `../../bin/check-destructive.sh` and `../../bin/check-bypass.sh`. A blocked
-  command stops with the rule it violated. (Note: Codex's hook input format and
-  exit-code/blocking semantics for a Bash matcher differ from Claude's — confirm
-  against the current Codex hooks docs; the guard is written to be easy to re-point
-  if the input shape changes.)
-- **Task-gate** — `.codex/hooks.json` also registers a PostToolUse hook with matcher
-  `"^(apply_patch|Bash|Write|Edit)$"` that runs `.codex/hooks/task-gate.sh`. The
-  script extracts the edited file + new content from the Codex hook payload and
-  delegates to the single-source gate engine `../../bin/gate-task.sh` (`$GATE_FILE` /
-  `$GATE_NEW`). The gate fires only when a `.claude/specs/*/tasks.md` checkbox is
-  flipped to `[x]`: green = silent exit 0, red (typecheck/test fail or missing
-  `Evidence:` block) = exit 2 so you fix before marking the task done. No gate logic
-  lives in the adapter — it is byte-for-byte the same as Claude's via `gate-task.sh`.
+- **Pre-tool guard** — registered in `.codex/config.toml` under `[hooks]` as
+  `[[hooks.PreToolUse]]` with matcher `"^Bash$"`, running `.codex/hooks/guard.sh`.
+  **This is Codex's real mechanism: Codex discovers hooks from `config.toml` (the
+  reported `sourcePath` for a discovered hook is `config.toml`), NOT from a standalone
+  `.codex/hooks.json`** — that legacy file is kept only as a cross-harness reference
+  and is inert under Codex's loader. The guard reads the Codex hook input, extracts the
+  command, and delegates to the single-source check engine: `../../bin/check-destructive.sh`
+  and `../../bin/check-bypass.sh`. A blocked command stops with the rule it violated.
+  The destructive engine now blocks (verified against the live engine, identical exit
+  codes between `.ai/bin` and the Claude adapter): `rm` recursive+force in every
+  spelling (`\rm`, `"rm"`, `'rm'`, and `rm` inside `sh -c '...'` / `eval '...'`), `git
+  reset --hard`, `git clean -f`, `find -delete`, force pushes (incl. `+refspec`,
+  `--mirror`, `--all --force`), direct push/commit on `main`/`develop` (incl.
+  fully-qualified `HEAD:refs/heads/main`), **and the SQL Destructive-Ops set: `DROP
+  TABLE`/`DROP DATABASE`, `TRUNCATE`, `dropdb`, and `DELETE FROM ...` with NO `WHERE`
+  (a `DELETE ... WHERE ...` is allowed).** Known intentionally-unblocked gaps (high
+  false-positive risk): `git checkout`/`restore`, `git branch -D`, `find -exec` — the
+  Tier 1 git hooks + CI are the durable floor for those. The fail-safe trade-off
+  holds: destructive-looking content inside a quoted string may over-block, by design.
+  (Note: Codex's `PreToolUse` hook signals a block via the JSON
+  `hookSpecificOutput.permissionDecision` field, and exit-code/input shape for a Bash
+  matcher differ from Claude's stdin-jq form — confirm against the current Codex hooks
+  docs; the guard is written to be easy to re-point if the input shape changes.)
+- **Task-gate** — registered in `.codex/config.toml` `[hooks]` as `[[hooks.PostToolUse]]`
+  with matcher `"^(apply_patch|Bash|Write|Edit)$"`, running `.codex/hooks/task-gate.sh`
+  (again `config.toml`, not `hooks.json`). The script extracts the edited file + new
+  content from the Codex hook payload and delegates to the single-source gate engine
+  `../../bin/gate-task.sh` (`$GATE_FILE` / `$GATE_NEW`). The gate fires only when a
+  `.claude/specs/*/tasks.md` checkbox is flipped to `[x]`: green = silent exit 0, red
+  (typecheck/test fail or missing/placeholder `Evidence:`) = exit 2 so you fix before
+  marking the task done. The Evidence requirement is **per flipped task** (scoped to
+  each `[x]` region up to the next checkbox or EOF), not per-file, and rejects
+  placeholder Evidence (`TODO`/`TBD`/bare `n/a`); an agent-authored `n/a (<reason>)`
+  with a real reason is accepted. All three adapters (Claude Edit+Write, Codex,
+  OpenCode) yield an IDENTICAL gate verdict for the same flip. No gate logic lives in
+  the adapter — it is the same engine as Claude's via `gate-task.sh`.
+- **Known parity gap — spec-edit-guard.** Claude ships a non-blocking `spec-edit-guard`
+  (`.claude/hooks/spec-edit-guard.sh`) that WARNS when an already-approved
+  `requirements.md` is edited while its sibling `tasks.md` still has open tasks. There
+  is no Codex equivalent yet (it would need its own guard script plus a
+  `[[hooks.PreToolUse]]`/`apply_patch` matcher). This is an advisory-only convenience,
+  not an enforcement gate — the Tier 1 floor and the task-gate are unaffected. Treat
+  the "keep specs in sync" rule as self-enforced under Codex.
 - **Subagents** — native Codex subagents under `.codex/agents/*.toml`
   (`spec-architect`, `bug-investigator`, `pbt-runner`), each a thin `.toml` whose
   `developer_instructions` adopt the persona body from `../../roles/*` (the single
@@ -87,9 +114,12 @@ and current before relying on it.
   enables the browser-verify recipes in
   `.claude/skills/spec-implement/references/browser-verify.md` for Codex. Add other
   MCP servers the same way rather than improvising. (Note: `spec-retro` and
-  `spec-sync-github` are Claude-only skills — not in `.agents/skills/` and written
-  against Claude harness tools — so they are not available to Codex even with an MCP
-  server added.)
+  `spec-sync-github` now ship as vendor-neutral skills in `.agents/skills/`, routing to
+  the same authoritative `.claude/skills/*` steps as the other phases; but they lean on
+  Claude-specific facilities — `spec-retro` reads Claude's own cost ledger, and
+  `spec-sync-github` needs a GitHub MCP server. For Codex, wire a GitHub MCP server in
+  `[mcp_servers]` to run the sync; the retro's cost section is Claude-only and should be
+  recorded as "cost unavailable" off Claude.)
 
 ## How you work a task
 
@@ -117,8 +147,10 @@ and current before relying on it.
 - Do not commit any secret (API key, token, password, private key, connection
   string, credential file); do not hardcode credentials; do not log sensitive data.
 - Do not run destructive commands (`rm -rf`, `git reset --hard`, `git clean -fd`,
-  `DROP`/`DELETE`/`TRUNCATE` without a confirmed target). The guard blocks these;
-  do not attempt to bypass it.
+  `DROP TABLE`/`DROP DATABASE`, `TRUNCATE`, `dropdb`, or `DELETE FROM` without a
+  `WHERE`). The guard blocks exactly these (a `DELETE ... WHERE ...` is allowed); do
+  not attempt to bypass it. `git checkout`/`restore` and `git branch -D` are an
+  intentionally-unblocked gap — the Tier 1 git hooks + CI are the floor there.
 - Do not add a new dependency without reviewing license + maintenance and getting
   approval; always commit the lock file; never pin floating (`*`/`latest`) on prod.
 - Do not edit `app/` outside your assigned task, do not change `scripts/` logic,

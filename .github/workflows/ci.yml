@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [main, develop]
   push:
-    branches: [develop]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -27,15 +27,52 @@ jobs:
         # npm-install tree) and still installs from the committed lockfile.
         # Follow-up: add .nvmrc, regenerate the lock with that Node, restore `npm ci`.
         run: npm install --no-audit --no-fund
+      - name: Audit dependencies
+        # Dependency rules (CLAUDE.md): vulnerability audit is part of CI. Blocking at
+        # high/critical so the SECURITY_RULES claim ("CI runs npm audit") is actually true.
+        # --omit=dev: gate the PRODUCTION attack surface only. Dev-tooling advisories (e.g. the
+        # esbuild dev-server SSRF pulled in via vite/vitest) cannot reach prod and would require
+        # breaking downgrades to clear; track those separately rather than block every PR.
+        run: npm audit --omit=dev --audit-level=high
       - name: Typecheck
         run: npm run typecheck
       - name: Test
         run: npm test
+      - name: Guard regression tests
+        # Tier 1 floor: the single check engine (.ai/bin/check-*.sh) is exercised by its
+        # adversarial test suite here so it cannot drift / be weakened silently — a loosened
+        # guard fails its own paired block/allow case and reds the build. Runs EVERY
+        # *.test.sh under .claude/hooks/tests/ (destructive, hook-bypass, secrets, gate-task).
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tests=( .claude/hooks/tests/*.test.sh )
+          if [ "${#tests[@]}" -eq 0 ]; then
+            echo "No guard tests found under .claude/hooks/tests/ — expected the suite." >&2
+            exit 1
+          fi
+          status=0
+          for t in "${tests[@]}"; do
+            echo "::group::guard-test ${t}"
+            bash "$t" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
       - name: Secret scan
         # Tier 1 floor: full-tree secret scan (single source: .ai/bin/check-secrets.sh).
         # --all scans the whole tree (not just a staged diff) so CI catches anything that
         # slipped past a local pre-commit hook or was committed without core.hooksPath set.
+        # SECRET_GUARD_SKIP is force-cleared here so a stray env value cannot neuter the
+        # CI scan (the local-only human override must not exist in the floor).
+        env:
+          SECRET_GUARD_SKIP: ''
         run: .ai/bin/check-secrets.sh --all
+      - name: Setup Python
+        # Pin the interpreter the REQ-coverage step relies on (spec_trace.py) instead of
+        # whatever python3 the runner image happens to ship.
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Spec trace (REQ coverage)
         # Tier 1 floor: every REQ in each feature's requirements.md must be referenced in
         # design.md and tasks.md. Fails the build on any uncovered REQ. Runs once per

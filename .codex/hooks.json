@@ -1,4 +1,5 @@
 {
+  "_note": "NOT LOADED BY CODEX. Codex discovers hooks from .codex/config.toml under the [hooks] table (sourcePath is always config.toml), not from a standalone hooks.json. This file is kept only as a cross-harness reference mirroring the Claude hook shape; the LIVE, enforced wiring lives in .codex/config.toml [hooks]. Do not rely on this file for enforcement. See .ai/agents/codex/AGENT.md (Pre-tool guard / Task-gate).",
   "hooks": {
     "PreToolUse": [
       {

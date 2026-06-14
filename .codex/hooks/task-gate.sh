@@ -6,8 +6,9 @@
 # actual typecheck/test/Evidence decision to the single-source engine in
 # .ai/bin/gate-task.sh. No gate logic lives here — keep typecheck/test/Evidence
 # policy in .ai/bin/gate-task.sh so Claude, Codex, OpenCode and CI all share one
-# gate policy. (This adapter reduces the patch to its added lines before the check,
-# so the Evidence requirement is scoped to the flipped task like the Claude adapter.)
+# gate policy. (This adapter reduces the patch to its added lines before the check;
+# the engine then scopes the Evidence requirement PER flipped [x] task, so the verdict
+# is identical whether it receives these added lines or the whole file from OpenCode.)
 #
 # !!! Codex PostToolUse input/format per https://developers.openai.com/codex/hooks
 # !!! — confirm tool_input shape for apply_patch; the exact key path for the patch

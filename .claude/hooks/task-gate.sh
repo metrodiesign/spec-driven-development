@@ -21,16 +21,16 @@ if [ "$TOOL" = "Edit" ]; then
   OLD_X=$(printf '%s\n' "$OLD" | grep -ci -- '- \[x\]')
   NEW_X=$(printf '%s\n' "$NEW" | grep -ci -- '- \[x\]')
   [ "$NEW_X" -gt "$OLD_X" ] || exit 0
-  # Edit flip: delegate with the real new_string so the engine's typecheck/test +
-  # Evidence-presence gate apply exactly as before.
+  # Edit flip: delegate with the real new_string. The engine scopes the Evidence check
+  # PER FLIPPED TASK over this hunk, so its verdict matches the other adapters.
   exec "$ENGINE" "$FILE" "$NEW"
 else
   # Write ทับทั้งไฟล์ เทียบ count ก่อน/หลังไม่ได้ — ยอม trigger เมื่อ content มี [x] ใดๆ
   CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty')
   printf '%s\n' "$CONTENT" | grep -qi -- '- \[x\]' || exit 0
-  # Write path keeps its original behavior: run typecheck/test but DO NOT require an
-  # Evidence block. The engine always requires Evidence on GATE_NEW, so pass a flip
-  # token that already carries an Evidence: line to satisfy that gate while preserving
-  # the code-green check.
-  exec "$ENGINE" "$FILE" "$(printf '%s\n%s\n' '- [x]' 'Evidence: n/a (Write path)')"
+  # Write path passes the REAL whole-file content (no synthetic Evidence injection).
+  # The engine scopes Evidence per [x] task over the same whole-file input, so a flip
+  # without its own real Evidence blocks here exactly as it does via OpenCode/Edit —
+  # one gate policy, identical verdict regardless of which tool wrote the file.
+  exec "$ENGINE" "$FILE" "$CONTENT"
 fi
