@@ -113,12 +113,15 @@ purpose to cut output cost.
      `.claude/skills/spec-retro/references/cost-accounting.md` — NOT lessons.md
      (only the one-line kernel lives there).
 
-4. **Steering sync** (before commit): compare ground truth against steering —
-   dependencies in `package.json` vs `tech.md`, new files in `app/` vs the layout
-   in `structure.md`, and `paths:` frontmatter globs in `.claude/rules/*.md` vs
-   real paths. Fix any drift now, in the same commit.
+4. **Steering sync** (before commit): compare ground truth against the canonical
+   steering — dependencies in `package.json` vs `.ai/shared/CODING_STANDARDS.md`,
+   new files in `app/` vs the layout in `.ai/shared/ARCHITECTURE.md`, and the
+   `paths:` frontmatter globs in `.claude/rules/stack-nextjs.md` (the sole stub that
+   keeps a glob) vs real paths. Fix any drift now, in the same commit.
 
-5. **Commit**: `git add retrospectives/ .claude/rules/ .claude/skills/spec-implement/references/ .claude/skills/spec-retro/references/ && git commit -m "docs: session retrospective YYYY-MM-DD"`
+5. **Commit**: `git add retrospectives/ .ai/shared/ .claude/rules/ .claude/skills/spec-implement/references/ .claude/skills/spec-retro/references/ && git commit -m "docs: session retrospective YYYY-MM-DD"`
+   (`.ai/shared/` MUST be staged — promoted lessons in step 3 now land in
+   `.ai/shared/LESSONS.md` / `.ai/shared/stack/nextjs.md`, not the `.claude/rules` stubs.)
 
 ## Critical requirements
 

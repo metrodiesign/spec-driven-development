@@ -4,7 +4,15 @@
 // and delegates the actual typecheck/test/Evidence decision to the single-source
 // engine in .ai/bin/gate-task.sh. No gate logic lives here — keep typecheck/test/
 // Evidence policy in .ai/bin/gate-task.sh so Claude, Codex, OpenCode and CI all
-// enforce byte-for-byte the same rule.
+// share one gate policy.
+//
+// CAVEAT (not byte-for-byte identical to the other adapters): file.edited gives only
+// a path, so this adapter feeds the WHOLE post-edit file as the flip text. The
+// Claude/Codex adapters pass only the flipped hunk, so their Evidence check is scoped
+// to the flipped task; here an `Evidence:` line ANYWHERE in the file can satisfy the
+// check, and any edit to a tasks.md that already contains a `[x]` re-triggers the
+// gate. This is a best-effort in-loop convenience; the git pre-commit Evidence gate +
+// CI are the hard floor that catches a bad `[x]` at commit/push/PR regardless.
 //
 // Runtime: OpenCode runs plugins under Bun and injects a `$` shell tag.
 //

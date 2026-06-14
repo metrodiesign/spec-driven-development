@@ -1,7 +1,8 @@
 # AGENTS.md
 
 The neutral front door for every coding agent on this repo (Codex, OpenCode, Pi all
-auto-load this file; Claude Code loads it too via `.claude/`). Read this, then your adapter.
+auto-load this file. Claude Code's equivalent front door is `CLAUDE.md`, which bootstraps
+the same `.ai/shared/*` read order — Claude does not auto-load this file). Read this, then your adapter.
 
 ## What this repo is
 
@@ -44,7 +45,8 @@ Two tiers apply to every agent and human, regardless of harness:
   (`pre-commit` runs the secret scan + Evidence check; `pre-push` blocks direct
   pushes to `main`/`develop` and force pushes).
 - **CI** — `.github/workflows/ci.yml` runs typecheck, tests, a full-tree secret scan,
-  and spec-trace (every REQ must be covered) on every PR. A failing check blocks merge.
+  and spec-trace (every REQ must be covered) on every PR targeting `develop` (and pushes
+  to `develop`). A failing check blocks merge.
 
 If your harness lacks a pre-tool hook (e.g. Pi), run the checks yourself before any
 risky bash: `.ai/bin/check-destructive.sh '<cmd>'` and `.ai/bin/check-bypass.sh '<cmd>'`

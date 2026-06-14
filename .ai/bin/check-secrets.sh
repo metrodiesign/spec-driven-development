@@ -61,7 +61,7 @@ while IFS= read -r f; do
         reasons+=("forbidden file: $f (should be .example only, real config in user-secrets)")
       fi
       ;;
-    *.env|*.env.local|*.env.production|*.pem|*.key|*.pfx|*.p12|secrets.json|id_rsa|id_ed25519)
+    *.env|*.env.*|*.pem|*.key|*.pfx|*.p12|secrets.json|id_rsa|id_ed25519)
       if [ -z "$(echo "$f" | grep -i 'example\|template\|sample')" ]; then
         fail=1
         reasons+=("forbidden file: $f")
@@ -94,6 +94,12 @@ fi
 if printf '%s' "$CONTENT" | grep -qE 'ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{82}'; then
   fail=1
   reasons+=("GitHub token pattern detected")
+fi
+
+# Private key PEM blocks pasted into any (even innocuously-named) file
+if printf '%s' "$CONTENT" | grep -qE -- '-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----'; then
+  fail=1
+  reasons+=("private key PEM block detected in $MODE content")
 fi
 
 # Generic: key/secret/password assigned to long value (naive entropy check)

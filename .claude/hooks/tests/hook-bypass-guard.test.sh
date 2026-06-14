@@ -44,6 +44,9 @@ check block "combined -nm"              'git commit -nm x'
 check block "combined -anm"             'git commit -anm x'
 check block "-n after other flags"      'git commit -a -n -m "msg"'
 check block "core.hooksPath override"   'git -c core.hooksPath=/dev/null commit -m x'
+# git config keys are case-insensitive: lowercase/upper variants disable hooks too
+check block "core.hookspath lowercase"  'git -c core.hookspath=/dev/null commit -m x'
+check block "CORE.HOOKSPATH upper"       'git -c CORE.HOOKSPATH=/dev/null commit -m x'
 check block "SECRET_GUARD_SKIP env"     'SECRET_GUARD_SKIP=1 git commit -m x'
 
 # --- MUST ALLOW: legit commits / non-commit git ---

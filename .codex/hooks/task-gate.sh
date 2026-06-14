@@ -5,8 +5,9 @@
 # .claude/specs/<feature>/tasks.md checkbox was flipped to [x], delegates the
 # actual typecheck/test/Evidence decision to the single-source engine in
 # .ai/bin/gate-task.sh. No gate logic lives here — keep typecheck/test/Evidence
-# policy in .ai/bin/gate-task.sh so Claude, Codex, OpenCode and CI all enforce
-# byte-for-byte the same rule.
+# policy in .ai/bin/gate-task.sh so Claude, Codex, OpenCode and CI all share one
+# gate policy. (This adapter reduces the patch to its added lines before the check,
+# so the Evidence requirement is scoped to the flipped task like the Claude adapter.)
 #
 # !!! Codex PostToolUse input/format per https://developers.openai.com/codex/hooks
 # !!! — confirm tool_input shape for apply_patch; the exact key path for the patch
@@ -37,6 +38,7 @@ if [ -n "$INPUT" ] && command -v jq >/dev/null 2>&1; then
     .tool_input.content
     // .tool_input.new_string
     // .tool_input.command
+    // .tool_input.input
     // .input.command
     // .command
     // empty

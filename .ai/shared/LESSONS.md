@@ -3,7 +3,9 @@
 
 # Lessons (promoted from retrospectives)
 
-> Universal process / workflow / tooling lessons — ALWAYS loaded (in every turn's prefix).
+> Universal process / workflow / tooling lessons. Loaded for Claude via the always-on
+> `.claude/rules/lessons.md` stub (every turn's prefix); Codex/OpenCode/Pi read this
+> canonical file at session start per their adapter.
 > Keep lean, prune stale. Stack-specific lessons (Next/React/Tailwind/Playwright/CSS/TS)
 > live in `stack-nextjs.md` (path-scoped: loads only when reading matching files).
 > Full record in `retrospectives/`.

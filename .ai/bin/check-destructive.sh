@@ -46,13 +46,18 @@ echo "$C" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*--force(-with-l
 echo "$C" | grep -qE "${POS}git[[:space:]]+push[[:space:]]+([^;&|]*[[:space:]])?-[A-Za-z]*f[A-Za-z]*([[:space:]]|$)" &&
   block 'force push -f (Workflow rules: ห้าม force push)'
 
+# force via leading-'+' refspec (git push origin +feat / +main / +HEAD:main rewrite remote history)
+echo "$C" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*[[:space:]]\+[^[:space:];&|]" &&
+  block 'force push (+refspec rewrite remote history; Workflow rules: ห้าม force push)'
+
 # branch protection: commit/push ขณะอยู่บน main/develop หรือ push ระบุ main/develop
 if echo "$C" | grep -qE "${POS}git[[:space:]]+(commit|push)([[:space:]]|$)"; then
   BR=$(git branch --show-current 2>/dev/null)
   if [ "$BR" = "main" ] || [ "$BR" = "develop" ]; then
     block "git commit/push บน branch $BR — ต้อง branch แยกแล้วผ่าน PR (Workflow rules)"
   fi
-  echo "$C" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*([[:space:]]|:)(main|develop)([[:space:]]|$)" &&
+  # leading '+' included so +main / +develop force pushes are also caught here
+  echo "$C" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*([[:space:]]|:|\+)(main|develop)([[:space:]]|$)" &&
     block 'git push ตรงเข้า main/develop — ต้องผ่าน PR (Workflow rules)'
 fi
 

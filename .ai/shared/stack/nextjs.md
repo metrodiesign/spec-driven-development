@@ -3,7 +3,9 @@
 
 # Stack lessons — Next.js / React / Tailwind / vitest
 
-> Path-scoped: loads only when Claude reads a matching file (app/**, *.config.*).
+> Path-scoping for Claude is provided by the `.claude/rules/stack-nextjs.md` stub
+> frontmatter (`paths: app/**, *.config.*`); other agents read this when touching
+> matching files per their adapter.
 > Stack/UI-specific lessons promoted from retrospectives; universal process lessons
 > live in `lessons.md` (always-on). Browser-verify / Playwright / MCP probe recipes
 > moved to `.claude/skills/spec-implement/references/browser-verify.md` (loaded only

@@ -89,7 +89,7 @@ actually cost time here. Read them before trusting an in-session signal.
 ## General
 
 - No persistent state across sessions beyond what is written to disk. Anything in
-  this conversation that is not in `.ai/specs/<feature>/` (active task ID,
+  this conversation that is not in `.claude/specs/<feature>/` (active task ID,
   decisions and rationale, modified files, exact build/test/run commands) is lost
   on `/clear` or compaction. Persist it first; never clear or compact in the middle
   of an unfinished task whose state lives only in the conversation.

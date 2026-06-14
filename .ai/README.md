@@ -32,6 +32,8 @@ adopt the same roles, and are gated by the same checks. The per-harness `.claude
 This one set is auto-read by **Codex**, **OpenCode** (which also reads `.claude/skills/`)
 and **Pi**; the bodies route to the single source (`workflows/*` + `.claude/skills/spec-*`)
 and are never duplicated per harness. Claude reads the same procedure via `.claude/skills/`.
+`spec-retro` and `spec-sync-github` are intentionally NOT in `.agents/skills/` — they are
+Claude-only (Claude cost ledger / GitHub MCP) and are not runnable by Codex/OpenCode/Pi.
 
 ## Per-agent entry points
 
@@ -40,7 +42,7 @@ and are never duplicated per harness. Claude reads the same procedure via `.clau
 | Claude | `.claude/` (`CLAUDE.md`, `rules/`) | `.claude/skills/spec-*` | `.ai/agents/claude/AGENT.md` |
 | Codex | `AGENTS.md` (root) | `.agents/skills/spec-*` | `.ai/agents/codex/AGENT.md` |
 | OpenCode | `AGENTS.md` (root) | `.agents/skills/` + `.claude/skills/` | `.ai/agents/opencode/AGENT.md` |
-| Pi | `AGENTS.md` + `SYSTEM.md` | `.agents/skills/spec-*` | `.ai/agents/pi/AGENT.md` |
+| Pi | `AGENTS.md` (+ `SYSTEM.md` if present) | `.agents/skills/spec-*` | `.ai/agents/pi/AGENT.md` |
 
 All agents read `.ai/shared/*` in the order listed in the root `AGENTS.md` before acting.
 

@@ -86,7 +86,10 @@ and current before relying on it.
   chrome-devtools-mcp@latest` — confirm package/version) is already wired there and
   enables the browser-verify recipes in
   `.claude/skills/spec-implement/references/browser-verify.md` for Codex. Add other
-  servers (e.g. GitHub for `spec-sync-github`) the same way rather than improvising.
+  MCP servers the same way rather than improvising. (Note: `spec-retro` and
+  `spec-sync-github` are Claude-only skills — not in `.agents/skills/` and written
+  against Claude harness tools — so they are not available to Codex even with an MCP
+  server added.)
 
 ## How you work a task
 

@@ -14,7 +14,9 @@ block() {
 echo "$C" | grep -qE -- '--no-verify' &&
   block '--no-verify ข้าม secret-guard pre-commit hook — commit ตามปกติเพื่อให้ scan ทำงาน'
 
-echo "$C" | grep -q 'core\.hooksPath' &&
+# case-insensitive: git config section.key names are case-insensitive, so
+# `core.hookspath` / `CORE.HOOKSPATH` disable hooks identically and must also block
+echo "$C" | grep -qi 'core\.hookspath' &&
   block 'core.hooksPath ปิด git hooks ทั้งหมดรวม secret-guard — ห้ามใช้'
 
 echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
