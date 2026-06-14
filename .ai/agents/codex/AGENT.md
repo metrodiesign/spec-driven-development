@@ -117,6 +117,10 @@ and current before relying on it.
   ONCE in this repo to review + trust `guard.sh`, `task-gate.sh`, `spec-edit-guard.sh` —
   per-machine human setup, like `core.hooksPath`, that cannot be committed. The simulated
   payload tests above prove the adapters enforce correctly once Codex actually invokes them.
+  VERIFIED LIVE (2026-06-14, Codex 0.139): after removing the duplicate `.codex/hooks.json`
+  and trusting the hooks via `/hooks`, an interactive Codex session BLOCKED
+  `SECRET_GUARD_SKIP=1 git status` with the guard's own message — confirming the project
+  config.toml hooks register, parse, and fire end-to-end once trusted.
 - **Subagents** — native Codex subagents under `.codex/agents/*.toml`
   (`spec-architect`, `bug-investigator`, `pbt-runner`), each a thin `.toml` whose
   `developer_instructions` adopt the persona body from `../../roles/*` (the single
