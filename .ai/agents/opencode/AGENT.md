@@ -41,26 +41,49 @@ Treat it as already in context.
 
 ## Mechanism wiring
 
-These point to the live OpenCode config that the project commits (in `.opencode/`
-and `opencode.jsonc`, created and maintained by the team — not by this adapter
-doc). Verify each is present and current before relying on it.
+These point to the live OpenCode config that the project commits (in `.opencode/`,
+`.agents/skills/`, and `opencode.json`, created and maintained by the team — not by
+this adapter doc). Every wire routes to a single source; nothing is duplicated.
+Verify each is present and current before relying on it.
 
 - **Entry / auto-load** — OpenCode reads `AGENTS.md` for instructions. The root
   `AGENTS.md` is your entry point; do not duplicate its content here.
+- **spec-* skills** — OpenCode walks up from the working directory and auto-reads both
+  `.agents/skills/` and `.claude/skills/`, so the spec workflow is available natively
+  as skills (`.agents/skills/spec-*/SKILL.md`, Agent Skills standard: frontmatter
+  `name` + `description`, markdown body). Invoke `/skills`, `$spec-design`, or rely on
+  implicit triggering. The same skill set serves Codex and Pi — bodies route to the
+  single source (`../../workflows/*` + `.claude/skills/spec-*/SKILL.md`), not copied.
+- **Commands** — `.opencode/commands/spec-*.md` expose the spec phases as slash
+  commands (frontmatter `{description, agent, model?, subtask?}`, `$ARGUMENTS`
+  placeholder, invoked `/name`). They are thin entry points that defer to the skills /
+  `../../workflows/*` — run these or the skills instead of improvising the structure.
 - **Pre-tool guard** — `.opencode/plugins/ai-guard.js` registers a
   `tool.execute.before` hook. When the tool is `bash`, it passes the command to the
   single-source check engine (`../../bin/check-destructive.sh`,
   `../../bin/check-bypass.sh`) and **throws to block** when a check exits 2. Confirm
   the bash tool's argument key against the current OpenCode plugin schema and smoke
   test before relying on it.
-- **Commands** — `.opencode/commands/` exposes the project workflows from
-  `../../workflows/*` (feature-development, bug-fix, code-review, test-generation,
-  frontend-task). Run these instead of improvising the phase structure.
-- **Agents** — `.opencode/agents/` declares the fresh-context personas from
-  `../../roles/*` (`spec-architect`, `bug-investigator`, `pbt-runner`). Use them for
-  review, root-cause analysis, and property-based testing.
-- **MCP** — external tool servers are configured in `opencode.jsonc`. Use the
-  configured servers (e.g. GitHub for the sync workflow) rather than improvising.
+- **Task-gate** — `.opencode/plugins/task-gate.js` runs as a side effect on
+  `file.edited` (OpenCode does not guarantee throw-block semantics there). When the
+  edited path is a `.claude/specs/*/tasks.md` flipped to `[x]`, it delegates to the
+  single-source gate engine `../../bin/gate-task.sh` (`$GATE_FILE` / `$GATE_NEW`) and
+  surfaces a red gate (typecheck/test fail or missing `Evidence:`). Because the plugin
+  cannot hard-block a completed edit, the durable enforcement is still Tier 1 (git +
+  CI); the plugin is the in-session reminder. No gate logic lives here — same engine
+  as Claude/Codex.
+- **Agents** — `.opencode/agents/*.md` declare the fresh-context personas as subagents
+  (frontmatter `{description, mode: subagent, model?, temperature?,
+  permission:{edit,bash}}`, body = system prompt, invoked `@name`). Each body adopts a
+  persona from `../../roles/*` (`spec-architect`, `bug-investigator`, `pbt-runner`) —
+  the single source. Use them for review, root-cause analysis, property-based testing.
+- **MCP (browser-verify)** — external tool servers are configured under the `mcp` key
+  in `opencode.json` (with `"$schema": "https://opencode.ai/config.json"`). The
+  browser-verify server is `chrome-devtools`
+  (`{"type":"local","command":["npx","-y","chrome-devtools-mcp@latest"],"enabled":true}`
+  — confirm package/version), which enables the browser-verify recipes in
+  `.claude/skills/spec-implement/references/browser-verify.md`. Use the configured
+  servers (e.g. GitHub for the sync workflow) rather than improvising.
 
 ## How you work a task
 
@@ -99,10 +122,12 @@ doc). Verify each is present and current before relying on it.
 
 ## Capabilities and limitations (honest, generic)
 
-- **Capabilities** — code generation and editing; shell tool use gated by the
-  `tool.execute.before` plugin; project-local commands from `../../workflows/*`;
-  project-local agents from `../../roles/*`; MCP servers via `opencode.jsonc`;
-  auto-loaded `AGENTS.md` for instructions.
+- **Capabilities** — code generation and editing; spec-* skills auto-read from
+  `.agents/skills/` (and `.claude/skills/`); project-local slash commands
+  (`.opencode/commands/spec-*`); shell tool use gated by the `tool.execute.before`
+  guard plus a `file.edited` task-gate plugin; project-local subagents
+  (`.opencode/agents/*`) adopting `../../roles/*`; MCP servers via `opencode.json`
+  including browser-verify (chrome-devtools); auto-loaded `AGENTS.md` for instructions.
 - **Limitations** — the plugin runs on the OpenCode JS/Bun runtime, so the exact
   hook signature and the bash tool's argument key depend on the version — smoke test
   before trusting; a guard is only as good as its adversarial test pass; output may

@@ -32,6 +32,10 @@ You are one of these agents — open your adapter next:
 Your adapter tells you how your harness wires up roles (`.ai/roles/`), workflows
 (`.ai/workflows/`), and the guard hooks for your tool.
 
+The spec-* workflow is also available as Agent Skills under `.agents/skills/spec-*`
+(auto-read by Codex, OpenCode and Pi); invoke `/skills` or `$spec-design`. The skill
+bodies route to the same single source — do not improvise the phase structure.
+
 ## Enforcement floor (you cannot opt out)
 
 Two tiers apply to every agent and human, regardless of harness:

@@ -41,13 +41,23 @@ enforce through git + CI + `.ai/bin/*`. Treat it as already in context.
 
 ## Mechanism wiring
 
-These point to the live Codex config that the project commits (in `.codex/`,
-created and maintained by the team — not by this adapter doc). Verify each is
-present and current before relying on it.
+These point to the live Codex config that the project commits (in `.codex/` and
+`.agents/skills/`, created and maintained by the team — not by this adapter doc).
+Every wire routes to a single source; nothing is duplicated. Verify each is present
+and current before relying on it.
 
 - **Entry / auto-load** — Codex concatenates `AGENTS.md` from the repo root down to
   the working directory. The root `AGENTS.md` is your entry point; do not duplicate
   its content here.
+- **spec-* skills** — the spec workflow is exposed as skills under
+  `.agents/skills/spec-*/SKILL.md` (Agent Skills standard: YAML frontmatter `name` +
+  `description`, markdown body). Codex auto-reads `$REPO_ROOT/.agents/skills`, so
+  `/skills`, `$spec-design`, or implicit triggering all work. The skill bodies do not
+  re-state procedure — they route to the single source: `../../workflows/*` for the
+  phase structure and `.claude/skills/spec-*/SKILL.md` for the detailed step text. One
+  skill set serves Codex, OpenCode and Pi. Codex prompts are **deprecated and
+  user-global only** (`~/.codex/prompts`); this repo deliberately ships no
+  `.codex/prompts` — skills replace them.
 - **Pre-tool guard** — `.codex/hooks.json` registers a PreToolUse hook with matcher
   `"^Bash$"` that runs `.codex/hooks/guard.sh`. That guard reads the Codex hook
   input, extracts the command, and delegates to the single-source check engine:
@@ -56,13 +66,29 @@ present and current before relying on it.
   exit-code/blocking semantics for a Bash matcher differ from Claude's — confirm
   against the current Codex hooks docs; the guard is written to be easy to re-point
   if the input shape changes.)
-- **Subagents** — declared under `[agents]` in `.codex/config.toml`, each mapping a
-  persona body from `../../roles/*` (`spec-architect`, `bug-investigator`,
-  `pbt-runner`). Use them for fresh-context review, root-cause analysis, and
-  property-based testing.
-- **MCP** — external tool servers are configured in `.codex/config.toml` (or via
-  `codex mcp`). Use the configured servers (e.g. GitHub for `spec-sync-github`)
-  rather than improvising.
+- **Task-gate** — `.codex/hooks.json` also registers a PostToolUse hook with matcher
+  `"^(apply_patch|Bash|Write|Edit)$"` that runs `.codex/hooks/task-gate.sh`. The
+  script extracts the edited file + new content from the Codex hook payload and
+  delegates to the single-source gate engine `../../bin/gate-task.sh` (`$GATE_FILE` /
+  `$GATE_NEW`). The gate fires only when a `.claude/specs/*/tasks.md` checkbox is
+  flipped to `[x]`: green = silent exit 0, red (typecheck/test fail or missing
+  `Evidence:` block) = exit 2 so you fix before marking the task done. No gate logic
+  lives in the adapter — it is byte-for-byte the same as Claude's via `gate-task.sh`.
+- **Subagents** — native Codex subagents under `.codex/agents/*.toml`
+  (`spec-architect`, `bug-investigator`, `pbt-runner`), each a thin `.toml` whose
+  `developer_instructions` adopt the persona body from `../../roles/*` (the single
+  source — no persona text is copied into the `.toml`). Concurrency is capped by
+  `[agents]` in `.codex/config.toml` (`max_threads`, `max_depth`). Invoke via
+  `/agent` or "spawn agent". Use them for fresh-context review, root-cause analysis,
+  and property-based testing.
+- **MCP (browser-verify)** — external tool servers live under `[mcp_servers.*]`. The
+  browser-verify server (`chrome-devtools`, launched `npx -y
+  chrome-devtools-mcp@latest` — confirm package/version) is staged in
+  `.codex/config.mcp.toml` and **must be merged into `.codex/config.toml`** (kept
+  separate only to avoid a concurrent-write race during generation; see the one-time
+  setup in `../../README.md`). It enables the browser-verify recipes in
+  `.claude/skills/spec-implement/references/browser-verify.md` for Codex. Add other
+  servers (e.g. GitHub for `spec-sync-github`) the same way rather than improvising.
 
 ## How you work a task
 
@@ -101,10 +127,12 @@ present and current before relying on it.
 
 ## Capabilities and limitations (honest, generic)
 
-- **Capabilities** — strong code generation and editing; shell tool use gated by
-  the `.codex/` pre-tool hook; project-local subagents via `[agents]`; MCP tool
-  servers; auto-loaded `AGENTS.md` chain for instructions. Good at holding a feature
-  in context and implementing it end-to-end.
+- **Capabilities** — strong code generation and editing; spec-* skills auto-read from
+  `.agents/skills/`; shell tool use gated by the `.codex/` pre-tool hook plus a
+  PostToolUse task-gate; native project-local subagents (`.codex/agents/*.toml`)
+  capped by `[agents]`; MCP tool servers including browser-verify (chrome-devtools);
+  auto-loaded `AGENTS.md` chain for instructions. Good at holding a feature in context
+  and implementing it end-to-end.
 - **Limitations** — pre-tool hook coverage and input format depend on the Codex
   version; a guard is only as good as its adversarial test pass; output may be
   buffered, so a quiet run is not necessarily stuck — check disk state, not the

@@ -5,6 +5,13 @@
         "matcher": "^Bash$",
         "command": ".codex/hooks/guard.sh"
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(apply_patch|Bash|Write|Edit)$",
+        "command": ".codex/hooks/task-gate.sh",
+        "timeout": 120
+      }
     ]
   }
 }

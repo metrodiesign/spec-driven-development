@@ -1,0 +1,7 @@
+# Codex project config for spec-driven-development.
+# Wires native Codex subagents (.codex/agents/*.toml -> .ai/roles single source).
+# [mcp_servers.*] added separately
+
+[agents]
+max_threads = 6
+max_depth = 1

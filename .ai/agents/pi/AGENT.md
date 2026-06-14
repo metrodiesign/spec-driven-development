@@ -57,14 +57,25 @@ relying on it.
      when relevant) and obey a non-zero exit. The check engine accepts the command
      as `$1` or on stdin and exits 2 to signal "block". Do not run the risky command
      if the check blocks it.
-- **Skills** — the project workflows are exposed as Pi skills under `.pi/skills/`
-  (Agent Skills standard), sourced from `../../workflows/*` (feature-development,
-  bug-fix, code-review, test-generation, frontend-task). Use these instead of
-  improvising the phase structure.
-- **Personas** — Pi has no built-in subagents. Adopt the personas from
+- **spec-* skills** — Pi auto-reads `.agents/skills/` (Agent Skills standard), so the
+  same `.agents/skills/spec-*/SKILL.md` set that serves Codex and OpenCode works in Pi
+  too — no Pi-specific copy. The skill bodies route to the single source
+  (`../../workflows/*` + `.claude/skills/spec-*/SKILL.md`); invoke `/skills`,
+  `$spec-design`, or rely on implicit triggering. Use these instead of improvising the
+  phase structure.
+- **Subagents / personas** — Pi has no built-in subagents. Adopt the personas from
   `../../roles/*` (`spec-architect`, `bug-investigator`, `pbt-runner`) inline via
-  `APPEND_SYSTEM.md` or a dedicated skill when you need a fresh-context reviewer or
-  investigator stance.
+  `APPEND_SYSTEM.md` or a dedicated persona skill when you need a fresh-context
+  reviewer or investigator stance. This is the floor-only equivalent of Codex's
+  `.codex/agents/*.toml` and OpenCode's `.opencode/agents/*` native subagents.
+- **Task-gate** — Pi has no PostToolUse / `file.edited` hook, so there is no native,
+  in-session task-gate. The gate is enforced by the Tier 1 floor only: the committed
+  `pre-commit` git hook + CI run the same typecheck / test / `Evidence:` checks that
+  `../../bin/gate-task.sh` carries, blocking a `[x]` flip that is not green at commit
+  and PR. Optionally run `../../bin/gate-task.sh` yourself before marking a task done.
+- **MCP / browser-verify** — not applicable: Pi does not host MCP servers in this
+  setup, so the chrome-devtools browser-verify recipe is not available natively.
+  Verify UI changes manually or defer browser-verify to a Codex/OpenCode session.
 
 ## How you work a task
 
@@ -104,16 +115,18 @@ relying on it.
 
 ## Capabilities and limitations (honest, generic)
 
-- **Capabilities** — code generation and editing; shell tool use; Agent-Skills
-  standard for workflows; layered system prompt (`SYSTEM.md` / `APPEND_SYSTEM.md`)
-  for personas and standing instructions; auto-loaded `AGENTS.md`.
+- **Capabilities** — code generation and editing; shell tool use; spec-* skills
+  auto-read from `.agents/skills/` (Agent-Skills standard, same set as Codex/OpenCode);
+  layered system prompt (`SYSTEM.md` / `APPEND_SYSTEM.md`) for personas and standing
+  instructions; auto-loaded `AGENTS.md`.
 - **Limitations** — **no core pre-tool hook**, so destructive-command interception
   is advisory (you run `../../bin/check-*` by hand); a hard gate would require a Pi
-  extension (`pi.on("tool_call")`) — a follow-up, not in place today. No built-in
-  subagents (personas are adopted inline). Output may be buffered, so a quiet run is
-  not necessarily stuck — check disk state, not the terminal; untracked files are
-  invisible to `git diff --stat`, so cross-check `git status`; no persistent memory
-  beyond what is written to disk.
+  extension (`pi.on("tool_call")`) — a follow-up, not in place today. **No native
+  task-gate** either (floor-only via git + CI). No built-in subagents (personas are
+  adopted inline). **No MCP**, so browser-verify is not available natively. Output may
+  be buffered, so a quiet run is not necessarily stuck — check disk state, not the
+  terminal; untracked files are invisible to `git diff --stat`, so cross-check
+  `git status`; no persistent memory beyond what is written to disk.
 - The durable enforcement floor is Tier 1 (committed git hooks via `core.hooksPath`
   + CI), which gates every agent and human at commit and PR. For Pi this is the
   primary safety net, with the manual `.ai/bin/check-*` run as the in-session layer.

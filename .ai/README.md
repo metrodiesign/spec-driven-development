@@ -27,16 +27,42 @@ adopt the same roles, and are gated by the same checks. The per-harness `.claude
 | `agents/` | One `AGENT.md` per harness explaining its read order and live hook/role wiring |
 | `templates/` | Fill-in-the-blank artifacts for briefs, plans, reviews, handoffs, changelog |
 
+**Skills standard** — the spec workflow ships once as Agent Skills under
+`/.agents/skills/spec-*/SKILL.md` (frontmatter `name` + `description`, markdown body).
+This one set is auto-read by **Codex**, **OpenCode** (which also reads `.claude/skills/`)
+and **Pi**; the bodies route to the single source (`workflows/*` + `.claude/skills/spec-*`)
+and are never duplicated per harness. Claude reads the same procedure via `.claude/skills/`.
+
 ## Per-agent entry points
 
-| Agent | Auto-loads | Then read |
-|---|---|---|
-| Claude | `.claude/` (`CLAUDE.md`, `rules/`) | `.ai/agents/claude/AGENT.md` |
-| Codex | `AGENTS.md` (root) | `.ai/agents/codex/AGENT.md` |
-| OpenCode | `AGENTS.md` (root) | `.ai/agents/opencode/AGENT.md` |
-| Pi | `AGENTS.md` + `SYSTEM.md` | `.ai/agents/pi/AGENT.md` |
+| Agent | Auto-loads | spec-* skills | Then read |
+|---|---|---|---|
+| Claude | `.claude/` (`CLAUDE.md`, `rules/`) | `.claude/skills/spec-*` | `.ai/agents/claude/AGENT.md` |
+| Codex | `AGENTS.md` (root) | `.agents/skills/spec-*` | `.ai/agents/codex/AGENT.md` |
+| OpenCode | `AGENTS.md` (root) | `.agents/skills/` + `.claude/skills/` | `.ai/agents/opencode/AGENT.md` |
+| Pi | `AGENTS.md` + `SYSTEM.md` | `.agents/skills/spec-*` | `.ai/agents/pi/AGENT.md` |
 
 All agents read `.ai/shared/*` in the order listed in the root `AGENTS.md` before acting.
+
+## Parity matrix
+
+How each spec-driven capability lands per harness. **native** = the harness provides
+it as a first-class mechanism wired to the single source; **floor-only** = no native
+mechanism, enforced by the Tier 1 git + CI floor (and self-discipline); **n/a** = not
+applicable in this setup. Wiring detail is in each `agents/<harness>/AGENT.md`.
+
+| Capability | Claude | Codex | OpenCode | Pi |
+|---|---|---|---|---|
+| spec-* workflow as skills | native (`.claude/skills/spec-*`) | native (`.agents/skills/spec-*`) | native (`.agents/skills/` + `.claude/skills/`) | native (`.agents/skills/spec-*`) |
+| Slash commands | native (`.claude/commands/`) | via skills (prompts deprecated) | native (`.opencode/commands/spec-*`) | via skills |
+| Subagents (fresh-context personas) | native (Task tool -> `.ai/roles/*`) | native (`.codex/agents/*.toml` + `[agents]`) | native (`.opencode/agents/*`) | floor-only (persona via skill / `APPEND_SYSTEM.md`) |
+| Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/hooks.json` PreToolUse -> `guard.sh`) | native (`.opencode/plugins/ai-guard.js`) | floor-only (run `.ai/bin/check-*` by hand) |
+| Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/hooks.json` PostToolUse -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | floor-only (git pre-commit + CI) |
+| MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`; merge `config.mcp.toml`) | native (`opencode.json` `mcp`) | n/a (no MCP host) |
+
+All native task-gate, guard, subagent and skill wiring routes to the same single
+source — `.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
+`.claude/skills/*` — so every harness enforces byte-for-byte identical rules.
 
 ## Golden rules
 
@@ -57,6 +83,12 @@ This enables `pre-commit` (secret scan + Evidence check) and `pre-push` (blocks 
 pushes to `main`/`develop` and force pushes). Claude cannot run this itself (the bypass
 guard blocks `core.hooksPath` edits), so a human runs it once. CI
 (`.github/workflows/ci.yml`) is the server-side floor that applies regardless.
+
+**Codex MCP merge (Codex users only)** — the browser-verify server is staged in
+`.codex/config.mcp.toml` (kept separate to avoid a concurrent-write race during
+generation). Merge its `[mcp_servers.chrome-devtools]` table into `.codex/config.toml`
+once so Codex can launch the browser-verify MCP. OpenCode reads its MCP straight from
+`opencode.json` (no merge step); Pi has no MCP host.
 
 ## Related top-level docs (not moved)
 
