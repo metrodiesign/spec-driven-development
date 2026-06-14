@@ -25,6 +25,9 @@ Convention ร่วม: **exit 2 = block, exit 0 = ผ่าน** (เงีย
 | Claude hook (`.claude/hooks/task-gate.sh`) | `gate-task.sh` | adapter `jq` stdin -> `$1`=tasks.md path, `$2`/`$GATE_NEW`=new_string | exit 2 |
 | Codex hook (`.codex/hooks/guard.sh`) | `check-destructive.sh` + `check-bypass.sh` | adapter อ่าน Codex hook input -> ส่ง command เป็น argv | exit 2 |
 | OpenCode plugin (`.opencode/plugins/ai-guard.js`) | `check-destructive.sh` + `check-bypass.sh` | `$\`./.ai/bin/<c>.sh ${cmd}\`` (argv) -> `throw` เมื่อ exitCode === 2 | exit 2 -> throw |
+| Claude hook (`.claude/hooks/spec-edit-guard.sh`) | `check-spec-edit.sh` | adapter `jq` stdin -> `$1`=file path; stdout -> `additionalContext` JSON | exit 0 (advisory) |
+| Codex hook (`.codex/hooks/spec-edit-guard.sh`) | `check-spec-edit.sh` | adapter อ่าน Codex input -> `$1`=file path; stdout -> stderr warn | exit 0 (advisory) |
+| OpenCode plugin (`.opencode/plugins/spec-edit-guard.js`) | `check-spec-edit.sh` | `$\`./.ai/bin/check-spec-edit.sh ${file}\`` -> `console.error` เมื่อ stdout ไม่ว่าง | exit 0 (advisory) |
 | git hook (`.githooks/pre-commit`) | `check-secrets.sh` (default = staged) + `gate-task.sh` | ไม่มี argv (สแกน `git diff --cached`); pre-commit เรียกเอง | exit 2 |
 | git hook (`.githooks/pre-push`) | branch/force ref check (ใน hook เอง ผ่าน stdin refs) | stdin refs | non-zero |
 | CI (`.github/workflows/ci.yml`) | `check-secrets.sh --all` | `--all` = สแกนทั้ง tree (tracked files) | exit 2 |
@@ -45,6 +48,10 @@ Convention ร่วม: **exit 2 = block, exit 0 = ผ่าน** (เงีย
 - **gate-task.sh** — task-boundary gate: เมื่อ flip checkbox เป็น `[x]` ใน `tasks.md`
   ต้อง `npm run typecheck` + `npm test` (tolerate "No test files found") เขียว และมี
   `Evidence:` block. port จาก `.claude/hooks/task-gate.sh`.
+- **check-spec-edit.sh** — advisory (NON-blocking): รับ file path (`$1`); ถ้าเป็น
+  requirements.md ที่ `> Status: approved` แล้วทั้งที่ sibling tasks.md ยังมี `- [ ]` ->
+  print เตือนออก stdout (adapter ห่อเป็น `additionalContext` / stderr / `console.error`).
+  exit 0 เสมอ — เตือน ไม่เคย block. ใช้ร่วม Claude/Codex/OpenCode (parity, issue #29).
 - **install.sh** — PRINT คำสั่ง setup ครั้งเดียว (`git config core.hooksPath .githooks`,
   `chmod +x`) ให้คนรันเอง. ไม่ mutate อะไร — guard block token `core.hooksPath`.
 

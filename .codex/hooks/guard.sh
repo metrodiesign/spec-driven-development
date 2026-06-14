@@ -6,22 +6,25 @@
 # guard logic of its own — keep all regex/policy in .ai/bin/check-*.sh so Claude, Codex,
 # OpenCode and CI all enforce byte-for-byte the same rules.
 #
-# !!! Codex hook input format is not fully documented; confirm against
-# !!! https://developers.openai.com/codex/hooks and adjust the CMD extraction line below.
-# !!! The git+CI floor (Tier 1: .githooks/ + .github/workflows/ci.yml) still applies if
-# !!! this needs tuning — i.e. even if CMD extraction is imperfect, destructive ops are
-# !!! still caught at commit/push/PR. Treat that as the hard guarantee; this hook is the
-# !!! fast in-loop convenience layer.
+# Codex PreToolUse(Bash) payload is DOC-CONFIRMED (developers.openai.com/codex/hooks):
+#   {"tool_name":"Bash","tool_input":{"command":"..."},"tool_use_id":...,"session_id":...}
+# so tool_input.command (the first jq path below) is the documented shape; the remaining
+# paths + the argv fallback are kept as defense against schema drift. The git+CI floor
+# (Tier 1: .githooks/ + .github/workflows/ci.yml) is the hard guarantee regardless — this
+# hook is the fast in-loop convenience layer. Parsing is exercised by
+# .claude/hooks/tests/codex-adapters.test.sh. FIRING: discovered project hooks run only in
+# INTERACTIVE Codex after a one-time `/hooks` trust; headless `codex exec` did NOT fire them
+# (Codex 0.135/0.139, even with trust override + --dangerously-bypass-hook-trust) — see
+# .ai/agents/codex/AGENT.md "Hook firing requires trust" (issue #26).
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 BIN="$REPO_ROOT/.ai/bin"
 
-# --- CMD extraction (CONFIRM AGAINST CODEX DOCS) -----------------------------------------
-# Codex is expected to provide the tool invocation as JSON on stdin. The exact key path for
-# a Bash tool's command string is not yet pinned in the public docs, so we read stdin once
-# and try the most likely shapes, then fall back to argv. Adjust the jq path here once the
-# real schema is confirmed at https://developers.openai.com/codex/hooks .
+# --- CMD extraction (Codex PreToolUse Bash shape — doc-confirmed) -------------------------
+# tool_input.command is the documented key (issue #26). The remaining jq paths
+# (.input.command / .arguments.command / .command) and the argv fallback below stay as
+# defensive fallbacks against schema drift across Codex versions.
 INPUT="$(cat 2>/dev/null || true)"
 CMD=""
 if [ -n "$INPUT" ] && command -v jq >/dev/null 2>&1; then
