@@ -6,7 +6,7 @@ the same `.ai/shared/*` read order — Claude does not auto-load this file). Rea
 
 ## What this repo is
 
-A spec-driven Next.js insurance-portal homepage. One line of truth, full context here:
+A spec-driven development framework. One line of truth, full context here:
 `.ai/shared/PROJECT_CONTEXT.md`.
 
 ## Read order (do this before you act)

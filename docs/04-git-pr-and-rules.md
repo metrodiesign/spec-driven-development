@@ -8,7 +8,7 @@
 - **ห้าม force push**, **ห้าม commit ตรงโดยไม่มี review**
 - commit message ลงท้ายด้วย:
   `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
-- ฟีเจอร์/chore ทำบน branch แยก (เช่น `feat/insurance-homepage`, `docs/...`) -> เปิด PR เข้า
+- ฟีเจอร์/chore ทำบน branch แยก (เช่น `feat/<feature-name>`, `docs/...`) -> เปิด PR เข้า
   **`develop`** (base จริงของ work branch); `develop` -> `main` เป็นอีกชั้น
 - `destructive-guard` hook block `git commit`/`push` ขณะอยู่บน main/develop + force push ให้
   อัตโนมัติ (ดู [05-hooks.md](05-hooks.md))
@@ -40,10 +40,10 @@
 ## 4.5 Dependency
 
 - ห้ามเพิ่ม dependency ใหม่โดยไม่ review license + maintenance + ขออนุมัติ
-- lock file (`package-lock.json` ฯลฯ) commit เสมอ
+- lock file ของ project (เช่น `package-lock.json`) commit เสมอ
 - ห้าม pin floating (`*` / `latest`) บน prod dep
-- `npm audit` เป็นส่วนหนึ่งของ CI; **ห้าม `npm audit fix --force`** (เคย downgrade core dep
-  เป็น breaking)
+- audit ช่องโหว่ของ dependency เป็นนโยบาย; ใช้ audit ของ ecosystem นั้น และ **ห้าม
+  รัน auto-fix แบบ force** ที่ยอม downgrade/แก้ breaking ให้อัตโนมัติ
 
 ## 4.6 Deploy / release
 
@@ -53,12 +53,12 @@
 
 ## 4.7 Conventions ของโค้ด (ดู rules เต็ม)
 
-| ด้าน            | สรุป                                                                  | ไฟล์                            |
-| --------------- | --------------------------------------------------------------------- | ------------------------------- |
-| โครงไฟล์/naming | `app/{components,data,lib}`, PascalCase component, camelCase data/lib | `../.claude/rules/structure.md` |
-| tech stack      | Next.js 16 App Router, React 19 RSC default, TS strict, Tailwind v3.4 | `../.claude/rules/tech.md`      |
-| product         | หน้าแรกพอร์ทัลประกัน, mock data, rubric                               | `../.claude/rules/product.md`   |
-| บทเรียนสะสม     | กับดักจริงที่เจอแล้ว (อ่านก่อนงานคล้ายกัน)                            | `../.claude/rules/lessons.md`   |
+| ด้าน            | สรุป                                                            | ไฟล์                            |
+| --------------- | --------------------------------------------------------------- | ------------------------------- |
+| โครงไฟล์/naming | โครงไฟล์ + convention การตั้งชื่อตามที่ project กำหนด           | `../.claude/rules/structure.md` |
+| tech stack      | stack + hard constraints ที่ project เลือก                     | `../.claude/rules/tech.md`      |
+| product         | ตัวผลิตภัณฑ์คืออะไรและทำไม                                      | `../.claude/rules/product.md`   |
+| บทเรียนสะสม     | กับดักจริงที่เจอแล้ว (อ่านก่อนงานคล้ายกัน)                     | `../.claude/rules/lessons.md`   |
 
 ## 4.8 Language / markdown
 

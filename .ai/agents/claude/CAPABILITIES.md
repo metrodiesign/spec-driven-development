@@ -54,9 +54,10 @@ shared workflow. Honest and specific; nothing here is speculative.
 
 - Verify UI behavior against a real browser through the Chrome DevTools / Playwright
   MCP servers: navigate, snapshot the accessibility tree, click/type, read console
-  and network, run a Lighthouse/a11y audit, resize to the required breakpoints
-  (375 / 768 / 1440). Verify against a production build (`next start`), because dev
-  hydration is unreliable here; rebuild after edits before re-checking.
+  and network, run a Lighthouse/a11y audit, resize to the required breakpoints. If
+  the project ships a UI, verify it in the project target runtime (see the project
+  UI-verify reference), not a dev server, because dev hydration can be unreliable;
+  rebuild after edits before re-checking.
 
 ## Built-in tooling
 

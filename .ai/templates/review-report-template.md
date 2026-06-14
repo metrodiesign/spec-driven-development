@@ -7,7 +7,7 @@
 ## Scope reviewed
 
 - <ไฟล์ / diff / REQ IDs ที่ตรวจ>
-- Commands run: `<npm run typecheck>`, `<npm test>` -> <ผล>
+- Commands run: `<typecheck command>`, `<test command>` -> <ผล>
 
 ## Verdict
 

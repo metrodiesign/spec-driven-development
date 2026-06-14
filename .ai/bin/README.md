@@ -46,8 +46,11 @@ Convention ร่วม: **exit 2 = block, exit 0 = ผ่าน** (เงีย
   (`.env`/`.env.*`/`*.pem`/`*.key`/`appsettings.*.json` ฯลฯ). port จาก
   `~/.claude/hooks/secret-guard.sh`.
 - **gate-task.sh** — task-boundary gate: เมื่อ flip checkbox เป็น `[x]` ใน `tasks.md`
-  ต้อง `npm run typecheck` + `npm test` (tolerate "No test files found") เขียว และมี
-  `Evidence:` block. port จาก `.claude/hooks/task-gate.sh`.
+  ต้องรัน project typecheck command (`SDD_TYPECHECK_CMD` env หรือ auto-detect
+  `package.json` typecheck script สำหรับ Node) + project test runner (`SDD_TEST_CMD` env
+  หรือ `package.json` test script สำหรับ Node) ให้เขียว และมี `Evidence:` block; ถ้าไม่ได้
+  ประกาศ command ไว้ จะข้าม code-green แต่ยังต้องมี Evidence อยู่. port จาก
+  `.claude/hooks/task-gate.sh`.
 - **check-spec-edit.sh** — advisory (NON-blocking): รับ file path (`$1`); ถ้าเป็น
   requirements.md ที่ `> Status: approved` แล้วทั้งที่ sibling tasks.md ยังมี `- [ ]` ->
   print เตือนออก stdout (adapter ห่อเป็น `additionalContext` / stderr / `console.error`).

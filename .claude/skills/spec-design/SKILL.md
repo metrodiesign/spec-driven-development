@@ -46,8 +46,8 @@ table to match. If design.md was already approved, re-stamp its header:
 `> Status: approved <original date>, amended <YYYY-MM-DD>`.
 
 Produce design.md inline — this skill owns the section outline above (the single
-source). When the design touches CORE domain logic (premium calculation /
-validation in `app/lib/`), delegate a fresh-context adversarial critique to the
+source). When the design touches CORE domain logic (pure logic in the
+project test directory, co-located with the logic under test), delegate a fresh-context adversarial critique to the
 `spec-architect` subagent (its default mode = critique): it hunts unstated
 assumptions, missing error paths, REQ coverage gaps, and infeasible choices.
 Apply or explicitly rebut each finding before STOP. (For design-first CORE

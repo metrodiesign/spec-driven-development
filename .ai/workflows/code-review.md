@@ -22,8 +22,8 @@ priority ด้วย severity ให้คนตัดสินใจได้�
   รูปแบบ report ที่ต้อง apply.
 - [../shared/PROJECT_CONTEXT.md](../shared/PROJECT_CONTEXT.md) — what/why/non-goals (จับ scope creep).
 - [../shared/ARCHITECTURE.md](../shared/ARCHITECTURE.md) — folder layout, naming, patterns, anti-patterns.
-- [../shared/CODING_STANDARDS.md](../shared/CODING_STANDARDS.md) — stack + hard constraints (TS strict,
-  no raw hex, no empty placeholder, no horizontal overflow).
+- [../shared/CODING_STANDARDS.md](../shared/CODING_STANDARDS.md) — stack + hard constraints
+  (type-safety, no empty placeholder, no broken layout).
 - [../shared/LESSONS.md](../shared/LESSONS.md) — failure mode ที่เคยเกิด (เช่น verdict ของ verifier ที่ตาย).
 - [../roles/spec-architect.md](../roles/spec-architect.md) — persona adversarial reviewer (adopt เมื่อ diff
   แตะ CORE domain logic / design decision).
@@ -39,7 +39,7 @@ priority ด้วย severity ให้คนตัดสินใจได้�
 2. **ตรวจ correctness ก่อน.** ไล่หา bug ที่ถูกต้องจริง: off-by-one, race ใน async render, null/edge,
    logic ที่ขัด REQ, error path ที่หาย, regression ของ behavior ที่ควรคงเดิม. แต่ละ finding ต้อง
    reproduce ได้ทางความคิดหรือชี้ input ที่ทำให้พัง อ้าง file:line. เมื่อ diff แตะ CORE domain logic
-   (premium calc / validation ใน `app/lib/`) adopt [../roles/spec-architect.md](../roles/spec-architect.md)
+   (pure logic ใน the project test directory, co-located กับ logic under test) adopt [../roles/spec-architect.md](../roles/spec-architect.md)
    (mode=critique) — หา unstated assumption, missing error path, REQ coverage gap.
    -> verify: ทุก correctness finding อ้าง file:line + อธิบายว่าพังเมื่อ input/condition ใด.
 
@@ -48,14 +48,16 @@ priority ด้วย severity ให้คนตัดสินใจได้�
    match existing style; ห้ามเสนอ "improve" โค้ดข้างเคียงที่ไม่เกี่ยว diff.
    -> verify: quality finding แยกออกจาก correctness; ไม่ปนกับ scope creep.
 
-4. **ตรวจ standards + constraints.** เทียบกับ `ARCHITECTURE.md` (naming, import order, Server vs
-   Client component, logic แยกใน `lib/`) และ `CODING_STANDARDS.md` (TS strict ไม่มี `any`,
-   ไม่มี raw hex ซ้ำ, ไม่มีกล่องว่างเป็น placeholder, ทุก `<img>` มี alt, ไม่มี horizontal overflow).
+4. **ตรวจ standards + constraints.** เทียบกับ `ARCHITECTURE.md` (naming, import order,
+   layer boundaries, logic แยกออกจาก UI) และ `CODING_STANDARDS.md` (type-safety,
+   ไม่มีกล่องว่างเป็น placeholder, accessibility ของ UI ถ้ามี, ไม่มี broken layout).
    ถ้าเป็นโค้ด spec-driven เช็ก REQ coverage ด้วย `scripts/spec-trace.sh <feature>`.
    -> verify: รัน `scripts/spec-trace.sh <feature>` (ถ้ามี spec); ระบุ anti-pattern ที่ละเมิด.
 
-5. **ยืนยันว่าเขียวจริงก่อนสรุป.** อย่าเชื่อ "ผ่าน" ที่ไม่ได้เห็นผล: รัน `npm run typecheck` และ
-   `npm test`; บันทึกผลจริงในreport. ถ้าผลของ verifier/subagent ใดมี failure ให้ re-verify
+5. **ยืนยันว่าเขียวจริงก่อนสรุป.** อย่าเชื่อ "ผ่าน" ที่ไม่ได้เห็นผล: รัน `.ai/bin/gate-task.sh`
+   ซึ่งรัน the project typecheck command (via `SDD_TYPECHECK_CMD`, หรือ package.json typecheck script
+   สำหรับ Node project) + the project test runner (via `SDD_TEST_CMD`, หรือ package.json test script);
+   บันทึกผลจริงในreport. ถ้าผลของ verifier/subagent ใดมี failure ให้ re-verify
    finding นั้นด้วยมือ — verdict ที่หายไป = "ยังไม่ตัดสิน" ไม่ใช่ "ผ่าน" (บทเรียน LESSONS.md).
    -> verify: typecheck + test output จริงแนบใน report; ไม่มี finding ที่อ้าง "rejected" ทั้งที่ไม่เคยถูกตรวจ.
 
@@ -75,7 +77,7 @@ priority ด้วย severity ให้คนตัดสินใจได้�
 - [ ] ทุกไฟล์ที่เปลี่ยนจริง (รวม untracked) ถูก review — ไม่พึ่ง `git diff --stat` อย่างเดียว.
 - [ ] ทุก finding มี severity + location (file:line) + problem + concrete fix/question.
 - [ ] correctness finding แต่ละข้อชี้ input/condition ที่ทำให้พัง (reproducible ทางความคิด).
-- [ ] `npm run typecheck` + `npm test` ถูกรันจริง + ผลแนบใน report.
+- [ ] `.ai/bin/gate-task.sh` (the project typecheck + test commands) ถูกรันจริง + ผลแนบใน report.
 - [ ] REQ coverage เช็กด้วย `scripts/spec-trace.sh <feature>` (ถ้า diff เป็นงาน spec-driven).
 - [ ] report ปิดด้วย overall verdict (approve / request changes).
 
@@ -83,7 +85,7 @@ priority ด้วย severity ให้คนตัดสินใจได้�
 
 - เชื่อ `git diff --stat` อย่างเดียว — untracked `??` ไม่โผล่ -> review ตกหล่นโค้ดจริง
   (`scripts/spec-state.sh` / `git status` เห็น `??`).
-- สรุป "ไม่มีปัญหา" โดยไม่รัน typecheck/test จริง — assertion ก่อน evidence.
+- สรุป "ไม่มีปัญหา" โดยไม่รัน the project typecheck/test (ผ่าน `.ai/bin/gate-task.sh`) จริง — assertion ก่อน evidence.
 - ตี verdict ที่หายไป/verifier ที่ตาย เป็น "rejected/ผ่าน" — ต้องถือเป็น "ยังไม่ตัดสิน" + re-verify มือ.
 - ปน quality nit กับ correctness blocker ใน severity เดียวกัน — คนอ่านจัด priority ไม่ได้.
 - เสนอ refactor โค้ดข้างเคียงที่ diff ไม่ได้แตะ (scope creep) — ตรงตาม REVIEW_PROTOCOL surgical rule.

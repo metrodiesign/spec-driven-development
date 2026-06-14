@@ -9,22 +9,22 @@
 > สถานะ: Tier 1+2 applied แล้ว (2026-06-12) ผ่าน adversarial review (4 reviewers, 25 findings)
 > และแก้ findings สำคัญครบ: destructive-guard restructure (span-based rm check, anchor ครอบ
 > indent/xargs/sudo/path-prefix), hook-bypass-guard.sh แยกไฟล์ (ปิด -nm combined /
-> core.hooksPath / SECRET_GUARD_SKIP bypass), task-gate กัน vitest no-tests false block,
+> core.hooksPath / SECRET_GUARD_SKIP bypass), task-gate กัน test-runner no-tests false block,
 > spec_trace.py boundary guards + sub-heading fix + Satisfies continuation,
 > pane-loop pre-flight Status check, flip-on-confirm + amended re-stamp ใน skills.
-> Tier 3 applied แล้ว (2026-06-12, PR แยก): ST2 stack-nextjs.md เหลือ paths app/** +
+> Tier 3 applied แล้ว (2026-06-12, PR แยก): ST2 stack rule เหลือ paths ของ UI source directory +
 > \*.config (33KB) แยก verify recipes 16 ข้อไป spec-implement/references/browser-verify.md
 > (15.9KB, โหลดเฉพาะช่วง verify) — agent ตรวจแล้ว 49/49 bullets ครบ ไม่มี substance หาย;
 > ST4 ถอด @-import ซ้ำใน CLAUDE.md; ST5 ย้าย cost mechanics ไป
 > spec-retro/references/cost-accounting.md เหลือ kernel ใน lessons.md;
-> ST6 sync tech.md (swiper/vitest) + structure.md (ไฟล์จริง) + lessons.md (สถานะ vitest
+> ST6 sync tech.md (dependency/test-runner ที่หลุดบันทึก) + structure.md (ไฟล์จริง) + lessons.md (สถานะ test-runner
 > bump) + เพิ่มขั้น Steering sync ใน spec-retro.
 > Tier 4 applied แล้ว (2026-06-13, PR #7 บน main): W2 design-first ใช้ได้จริง (spec-design
 > 2 โหมด, spec-requirements derive mode + EARS 3→5 patterns + atomic/subjective guard,
 > spec-tasks design-first second gate, CLAUDE.md 1 บรรทัด); W6 rewrite spec-bugfix เต็ม
 > shape (intake batch, bugfix.md + F-ID/B-ID, Status gate, 3-dim validation observable
 > failure mode, spec_trace.py skip bugfix.md-only); A6 harden agent contracts (pbt-runner
-> →opus + vitest path contract, bug-investigator reproduce จริง, spec-architect
+> →opus + test-runner path contract, bug-investigator reproduce จริง, spec-architect
 > produce/critique mode, ทั้งหมดรายงานไทย). ผ่าน adversarial review 4-lens 2 รอบ: รอบแรก
 > verifier 16/17 ตายเพราะ spend-limit จึง re-verify ด้วยมือ; รอบสอง (harness แก้ partition
 > ให้ verdict ที่หาย = unresolved ไม่ใช่ refuted) รันสะอาด 0 unresolved พบ dead-end เพิ่ม 1 จุด:
@@ -41,7 +41,7 @@
 > Write = conscious limit เดิม); ข้อ 5 full repurpose spec-architect (default=critique reviewer-primary,
 > producer outline ชี้ spec-design เป็น single source ปิด drift, wire critique pass ใน spec-design +
 > design-first carve-out); ข้อ 6 backfill artifact (Satisfies bare IDs, REQ-15.6 reorder, bugfix
-> placeholder → app/lib/buttonSize.test.ts). ผ่าน adversarial verify 6 agents: baseline เขียว (47/47,
+> placeholder → a real test file co-located with the logic under test). ผ่าน adversarial verify 6 agents: baseline เขียว (47/47,
 > trace 70), hook test suite (precompact/spec-guard/task-gate), review arch/impl — พบ 3 hole/finding
 > แก้แล้ว (anchor grep, jq-guard, design-first carve-out) re-verify ผ่าน. Tier 5 ข้อ 7-20 (รอง) ยังไม่ทำ.
 
@@ -68,8 +68,8 @@
 
 ไฟล์: `.claude/settings.json`, `.claude/hooks/task-gate.sh` (ใหม่)
 
-- พิสูจน์แล้ว: Stop hook exit code เป็นของ `tail` + `exit 0` ปิดท้าย = โมเดลไม่เคยเห็นผล test; TaskCompleted ตายสองชั้น (`npm run lint` = `next lint` ถูกถอดใน Next 16 → exit 1 เสมอ, event ยิงเฉพาะ Task tools ที่ workflow นี้ไม่ใช้)
-- ทำ: ลบ Stop + TaskCompleted hooks; เพิ่ม PostToolUse (matcher `Edit|Write`, timeout 120) → `.claude/hooks/task-gate.sh`: อ่าน stdin JSON ด้วย jq, early-exit ถ้า file ไม่ใช่ `.claude/specs/*/tasks.md`, ตรวจว่า edit flip `- [ ]` → `- [x]` (เทียบ old_string/new_string; Write ดู content), ถ้าใช่รัน `npm run typecheck && npm test` — เขียว = เงียบ exit 0, แดง = exit 2 + stderr ไทยสั้น "ห้าม mark [x] จนกว่าเขียว" ยิงแค่ 5-10 ครั้ง/feature
+- พิสูจน์แล้ว: Stop hook exit code เป็นของ `tail` + `exit 0` ปิดท้าย = โมเดลไม่เคยเห็นผล test; TaskCompleted ตายสองชั้น (lint script ที่ผูกกับ tool ซึ่งถูกถอดออกใน toolchain เวอร์ชันที่ใช้ → exit 1 เสมอ, event ยิงเฉพาะ Task tools ที่ workflow นี้ไม่ใช้)
+- ทำ: ลบ Stop + TaskCompleted hooks; เพิ่ม PostToolUse (matcher `Edit|Write`, timeout 120) → `.claude/hooks/task-gate.sh`: อ่าน stdin JSON ด้วย jq, early-exit ถ้า file ไม่ใช่ `.claude/specs/*/tasks.md`, ตรวจว่า edit flip `- [ ]` → `- [x]` (เทียบ old_string/new_string; Write ดู content), ถ้าใช่รัน gate ที่ขับด้วย env (`.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD` — auto-detect package.json scripts ของ Node ถ้ามี) — เขียว = เงียบ exit 0, แดง = exit 2 + stderr ไทยสั้น "ห้าม mark [x] จนกว่าเขียว" ยิงแค่ 5-10 ครั้ง/feature
 
 ### S1. ซ่อม feedback loop ของ Stop hook (ถ้าเลือกเก็บ Stop ไว้แทน A1) [adjust, high/low]
 
@@ -77,8 +77,8 @@
 
 - A1 กับ S1 เลือกแนวเดียว: A1 = gate ที่ task boundary (แนะนำ), S1 = ซ่อม Stop ให้ทำงานจริง
 - ถ้าทำ S1: Stop hook ต้องมี guard `stop_hook_active` กัน infinite loop:
-  `INPUT=$(cat); [ "$(echo "$INPUT" | jq -r '.stop_hook_active // false')" = "true" ] && exit 0; OUT=$(npm test --silent 2>&1); ST=$?; if [ $ST -ne 0 ]; then echo 'Tests failing:' >&2; echo "$OUT" | tail -20 >&2; exit 2; fi; exit 0`
-- ทั้งสองแนว: TaskCompleted เปลี่ยนเป็น `npm run typecheck --silent && npm test --silent || { echo 'Task not green' >&2; exit 2; }` หรือลบทิ้ง; ลบ script `"lint": "next lint"` ออกจาก package.json (ตายแล้วบน Next 16, ไม่มี eslint ติดตั้ง)
+  `INPUT=$(cat); [ "$(echo "$INPUT" | jq -r '.stop_hook_active // false')" = "true" ] && exit 0; OUT=$("$SDD_TEST_CMD" 2>&1); ST=$?; if [ $ST -ne 0 ]; then echo 'Tests failing:' >&2; echo "$OUT" | tail -20 >&2; exit 2; fi; exit 0` (`$SDD_TEST_CMD` = the project test runner ผ่าน env หรือ package.json test script สำหรับ Node)
+- ทั้งสองแนว: TaskCompleted เปลี่ยนเป็น gate code-green ที่ขับด้วย env (`.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` แล้ว `SDD_TEST_CMD` — auto-detect package.json scripts ของ Node) `|| { echo 'Task not green' >&2; exit 2; }` หรือลบทิ้ง; ถอด lint script ที่ตายออกจาก manifest (ผูกกับ tool ที่ถูกถอดใน toolchain เวอร์ชันที่ใช้, ไม่มี linter ติดตั้ง)
 
 ### A4. ถอด prettier hook + ซ่อม SessionStart JSON [adjust, medium/low]
 
@@ -115,7 +115,7 @@
 
 ไฟล์: `.claude/rules/api-design.md`, `.claude/rules/components.md`
 
-- ทั้งคู่ frontmatter `paths: src/**` ที่ไม่มีจริง (โครงคือ `app/`) = ไม่เคยถูกโหลดตั้งแต่ commit แรก; api-design.md ขัด Non-Goals (ไม่มี backend); components.md มี placeholder ค้าง + เนื้อหาซ้ำ tech.md
+- ทั้งคู่ frontmatter `paths:` ชี้ไป directory ที่โปรเจกต์ไม่ได้ใช้จริง = ไม่เคยถูกโหลดตั้งแต่ commit แรก; api-design.md ขัด Non-Goals (ไม่มี backend); components.md มี placeholder ค้าง + เนื้อหาซ้ำ tech.md
 - ทำ: ลบทั้งคู่ (stack-nextjs.md ครอบ domain component อยู่แล้ว — one domain per file)
 
 ### W1. ลบย่อหน้า stale ใน spec-implement ที่สั่งกลับด้านกับ default all-in-one [adjust, high/low]
@@ -133,7 +133,7 @@
 
 ไฟล์: skills spec-requirements / spec-design / spec-tasks / spec-implement / spec-analyze / spec-pbt / spec-quick
 
-- ปัญหา: "approved" อยู่ในบทสนทนาเท่านั้น — หลัง /clear หรือ headless session แยกไม่ออกว่า gate ไหนผ่าน; 4 skills อ้าง "the active spec" โดยไม่มี argument-hint ทั้งที่ specs/ มี 2 feature; spec-pbt แนะนำ fast-check ที่ไม่ได้ติดตั้ง (ชนกฎ tech.md)
+- ปัญหา: "approved" อยู่ในบทสนทนาเท่านั้น — หลัง /clear หรือ headless session แยกไม่ออกว่า gate ไหนผ่าน; 4 skills อ้าง "the active spec" โดยไม่มี argument-hint ทั้งที่ specs/ มี 2 feature; spec-pbt แนะนำ dedicated PBT framework ที่ไม่ได้ติดตั้ง (ชนกฎ tech.md)
 - ทำ: (ก) template artifact ขึ้นหัว `> Status: draft` → user approve explicit แล้ว flip เป็น `> Status: approved <YYYY-MM-DD>` ก่อน phase ถัดไป; downstream skill เช็ก status ต้นน้ำ ยัง draft = เตือนภาษาไทยแบบ warning (ถามยืนยัน ไม่ hard block); spec-quick เขียน `> Status: approved <date> (quick, no gates)` ทันที
 - (ข) เพิ่ม `argument-hint: <feature-folder (optional)>` ใน spec-analyze/spec-design/spec-tasks/spec-pbt + rule: หลายโฟลเดอร์และไม่ระบุ → list แล้วถาม ห้ามเดา; spec-implement ใช้กติกา headless-safe: เลือกโฟลเดอร์เดียวที่มี task id ที่ขอยังเป็น `[ ]`; เข้าเงื่อนไขมากกว่า 1 → ถาม (รองรับ pane-loop ที่ส่ง `/spec-implement <id>` ไม่แนบ feature)
 - (ค) spec-pbt เพิ่ม guard: เช็ก package.json ก่อน — PBT framework ไม่มี = ขออนุมัติตามกฎ tech.md ก่อนเพิ่ม
@@ -144,14 +144,14 @@
 
 - (ก) spec-tasks เพิ่ม rule (อังกฤษ, หลังบรรทัด "Map each task to a whole REQ..."): ก่อน STOP ทำ reverse coverage check — ทุก REQ-N ต้องอยู่ใน `Satisfies:` ของอย่างน้อย 1 task; uncovered = blocker ประกาศดัง ยกเว้นเฉพาะ declared out-of-scope ที่ approve แล้ว (ปิดช่อง Articles/REQ-13 ตกร่อง)
 - (ข) spec-implement แทรก step 0 ก่อน loop: reconcile tasks.md กับ filesystem — filesystem คือ ground truth (checkbox/git log โกหกได้, untracked ไม่โผล่ใน `git diff --stat`); checkbox ขัดความจริง = แก้ checkbox + จด reconciliation ใน tasks.md ก่อน implement
-- (ค) ตัวรันของ (ข) = `scripts/spec-state.sh <feature>` (วางที่ root scripts/ ตาม convention เดิม — ไม่ใช่ skill-local): พิมพ์ 4 ก้อน [a] ls artifacts ใน specs/<feature>/ [b] checkbox `grep -n '^- \[.\]'` จาก tasks.md [c] `git log --oneline -15` + `git status --short` (เห็น `??`) [d] `ls app/` + `test -f package.json`; เพิ่มหนึ่งบรรทัดใน spec-implement: "Before starting, run `scripts/spec-state.sh <feature>`..."
+- (ค) ตัวรันของ (ข) = `scripts/spec-state.sh <feature>` (วางที่ root scripts/ ตาม convention เดิม — ไม่ใช่ skill-local): พิมพ์ 4 ก้อน [a] ls artifacts ใน specs/<feature>/ [b] checkbox `grep -n '^- \[.\]'` จาก tasks.md [c] `git log --oneline -15` + `git status --short` (เห็น `??`) [d] list the project source/test directories + detect the project manifest; เพิ่มหนึ่งบรรทัดใน spec-implement: "Before starting, run `scripts/spec-state.sh <feature>`..."
 - ไม่ทำ scaffold-spec.sh (ขัด spec-new "Do NOT generate any artifact yet")
 
 ### W5. ปิด loop ของ /spec-analyze: repair เข้า requirements.md + propagate [adjust, high/medium]
 
 ไฟล์: skills spec-analyze / spec-design / spec-tasks
 
-- ปัญหา: spec-analyze เป็น report-only ไม่มีใคร apply fix กลับ; หลักฐานจริง: requirements.md ของ insurance-homepage อ้างรหัส finding L1/A1/C2/G2/A4/A5 ที่ dangle ไปบทสนทนาที่หายแล้ว; working agreement "propagates to design and tasks" ไม่มี skill ไหนทำจริง
+- ปัญหา: spec-analyze เป็น report-only ไม่มีใคร apply fix กลับ; หลักฐานจริง: requirements.md ของ feature spec หนึ่งอ้างรหัส finding L1/A1/C2/G2/A4/A5 ที่ dangle ไปบทสนทนาที่หายแล้ว; working agreement "propagates to design and tasks" ไม่มี skill ไหนทำจริง
 - ทำ: (ก) เพิ่มหมวดที่ 5 "Unstated assumptions" + concurrent/interaction ใน Gaps + reason ข้าม requirement เป็นชุด; (ข) ทุก finding = คำถามมีตัวเลือก fix 2-3 ทาง + "ตอบเอง" + "ข้าม — ambiguity ตั้งใจ" batch ภาษาไทยข้อความเดียว; (ค) หลัง user ตัดสิน: เขียน fix เข้า requirements.md (คง REQ ID) + บันทึกทุก finding รวม dismissed ลง section "Edge Cases & Open Questions" พร้อม anchor commit hash (`git log -1 --format=%h -- <requirements.md>`); (ง) re-run incremental: `git diff <anchor>` หา REQ ที่เปลี่ยน focus เฉพาะนั้น + interaction; ไม่มี anchor = audit เต็ม
 - เพิ่มย่อหน้า "sync mode" ใน spec-design + spec-tasks (requirements เปลี่ยนหลัง artifact มีแล้ว = patch เฉพาะส่วน ไม่ regenerate ทับ [x]/decision)
 - ระวัง: skill 17 บรรทัด อย่าบวมเกิน ~2 เท่า; คง "Do NOT silently edit" โดยขยายว่า edit ได้เฉพาะหลัง user ตัดสิน
@@ -183,7 +183,7 @@
 ไฟล์: `.claude/rules/stack-nextjs.md`, `.claude/skills/spec-implement/SKILL.md` + `references/browser-verify.md` (ใหม่), `.claude/skills/spec-retro/SKILL.md`
 
 - 47.8KB/49 bullets, glob `**/*.{ts,tsx}` = de-facto always-on; ~ครึ่งเป็น verify recipes ที่ใช้เฉพาะช่วง verify; lesson ขัดกันเอง (บรรทัด 19 ชดเชย scrollbar +15 เสมอ vs บรรทัด 45 headless = overlay 0px)
-- ทำ: (1) แคบ paths เหลือ `["app/**", "*.config.{ts,js}"]` + แก้ header ให้ตรง; (2) ย้าย bullets verify-method ล้วน (19+45 merge เป็นข้อเดียว: ยืนยัน `document.documentElement.clientWidth === target` ก่อนเชื่อผล ชดเชยเฉพาะเมื่อไม่ตรง, 21, 26, 27, 41-43, 47, 51-53, 55, 56, 58, 63) → `references/browser-verify.md` (ไทย ไม่มี emoji); คง 44, 46, 54 (implementation patterns) โดยชี้ประโยค verify ไป references; (3) spec-implement เพิ่ม "Before any browser-based verification, Read references/browser-verify.md"; (4) spec-retro routing เพิ่มปลายทางที่สาม browser-verify.md
+- ทำ: (1) แคบ paths เหลือ glob ของ UI source directory + ไฟล์ config ของโปรเจกต์ + แก้ header ให้ตรง; (2) ย้าย bullets verify-method ล้วน (19+45 merge เป็นข้อเดียว: ยืนยัน `document.documentElement.clientWidth === target` ก่อนเชื่อผล ชดเชยเฉพาะเมื่อไม่ตรง, 21, 26, 27, 41-43, 47, 51-53, 55, 56, 58, 63) → `references/browser-verify.md` (ไทย ไม่มี emoji); คง 44, 46, 54 (implementation patterns) โดยชี้ประโยค verify ไป references; (3) spec-implement เพิ่ม "Before any browser-based verification, Read references/browser-verify.md"; (4) spec-retro routing เพิ่มปลายทางที่สาม browser-verify.md
 - ทำระหว่าง session (ไม่แก้กลางงาน) เพื่อรักษา prefix cache
 
 ### ST4. เลิกโหลด product/tech/structure ซ้ำสองทาง [apply, medium/low]
@@ -205,9 +205,9 @@
 
 ไฟล์: `.claude/rules/tech.md`, `structure.md`, `lessons.md`, `.claude/skills/spec-retro/SKILL.md`
 
-- drift จริง 3 จุด: swiper ^12.2.0 ใช้จริงแต่ tech.md ไม่บันทึก (ขัด Rule ของไฟล์เอง); vitest ไม่อยู่ใน Tooling; structure.md ขาดไฟล์จริงหลายตัว; lessons.md:10 บอก bump vitest v4 แล้วแต่ branch ยัง ^2.1.8
-- ทำ: tech.md เพิ่ม swiper (ระบุตรงๆ ว่า "ถูกเพิ่มระหว่าง implementation โดยไม่มีบันทึกอนุมัติ — บันทึกให้ตรง ground truth, approve PR นี้ = อนุมัติย้อนหลัง" ห้ามเขียน "อนุมัติแล้ว" ลอยๆ) + vitest ใต้ Tooling; structure.md เติมไฟล์ขาด (HeroCampaignSlider, SectionHeading/SmartImage, heroCampaigns/navigation/types, validatePremium/format + \*.test.ts) หรือกำกับ "ตัวแทนหลัก ไม่ exhaustive"; lessons.md:10 เติมท้าย "(bump v4 ทำใน scaffold session 06-02 ที่ไม่ถูก commit; branch ปัจจุบัน ^2.1.8 — vuln chain ต้อง audit ใหม่)"
-- institutionalize: spec-retro เพิ่มขั้น "Steering sync" ก่อน Commit — เทียบ package.json กับ tech.md, ไฟล์ใหม่ใน app/ กับ structure.md, glob frontmatter ใน rules ว่ายัง match path จริง
+- drift จริง 3 จุด: มี dependency ที่ใช้จริงแต่ tech.md ไม่บันทึก (ขัด Rule ของไฟล์เอง); test runner ไม่อยู่ใน Tooling; structure.md ขาดไฟล์จริงหลายตัว; lessons.md:10 บอก bump test runner เวอร์ชันใหม่แล้วแต่ branch ยังค้างเวอร์ชันเดิม
+- ทำ: tech.md เพิ่ม dependency ที่หลุดบันทึก (ระบุตรงๆ ว่า "ถูกเพิ่มระหว่าง implementation โดยไม่มีบันทึกอนุมัติ — บันทึกให้ตรง ground truth, approve PR นี้ = อนุมัติย้อนหลัง" ห้ามเขียน "อนุมัติแล้ว" ลอยๆ) + test runner ใต้ Tooling; structure.md เติมไฟล์ขาด (component/module/logic + test ที่ co-located) หรือกำกับ "ตัวแทนหลัก ไม่ exhaustive"; lessons.md:10 เติมท้าย "(bump เวอร์ชันใหม่ทำใน scaffold session ที่ไม่ถูก commit; branch ปัจจุบันยังค้างเวอร์ชันเดิม — vuln chain ต้อง audit ใหม่)"
+- institutionalize: spec-retro เพิ่มขั้น "Steering sync" ก่อน Commit — เทียบ manifest ของโปรเจกต์กับ tech.md, ไฟล์ใหม่ใน source directory กับ structure.md, glob frontmatter ใน rules ว่ายัง match path จริง
 
 ---
 
@@ -224,19 +224,19 @@
 
 ไฟล์: `.claude/skills/spec-bugfix/SKILL.md`, `.claude/skills/spec-implement/SKILL.md` (1 บรรทัด)
 
-- ความเสียหายเกิดแล้วใน bugfix-lg-button: requirements ประกาศ "ไม่แตะ Button.tsx" แต่ tasks แก้ Button.tsx, placeholder `?` ถูก commit, B2.4/B2.5 ไม่มี assertion, regression test จับ implementation ไม่จับ failure mode
-- ทำ: rewrite skill — (ก) intake batch ถามไทย 4 ข้อ (repro steps / current / expected / constraints รวม do-not-modify เป็น hard scope); (ข) Phase 2 เขียน `bugfix.md` 3 sections: "Current Behavior (Defect)" รูป WHEN...THEN พร้อม repro steps ที่รันได้จริง (หน้า/viewport/คำสั่ง/ค่าที่วัด), "Expected Behavior" ใช้ SHALL, "Unchanged Behavior" ใช้ SHALL CONTINUE TO + B-ID; STOP gate ก่อน Phase 3; (ค) validation 3 มิติ: repro test RED ก่อน fix → GREEN หลัง fix → ทุก B-ID มี assertion 1:1 ที่ observable failure mode (ไม่ใช่ internal implementation — อ้าง bugfix-lg-button เป็น anti-pattern); (ง) อุดรอยต่อ: spec-implement:14 เปลี่ยน "requirements.md" เป็น "requirements.md (หรือ bugfix.md สำหรับ bugfix spec)"
-- ไม่ migrate bugfix-lg-button เดิม (ปิดไปแล้ว)
+- ความเสียหายเกิดแล้วในรอบ bugfix รอบหนึ่ง: requirements ประกาศ do-not-modify scope ชัด แต่ tasks กลับแก้ไฟล์ที่ห้ามแตะ, placeholder `?` ถูก commit, บาง B-ID ไม่มี assertion, regression test จับ implementation ไม่จับ failure mode
+- ทำ: rewrite skill — (ก) intake batch ถามไทย 4 ข้อ (repro steps / current / expected / constraints รวม do-not-modify เป็น hard scope); (ข) Phase 2 เขียน `bugfix.md` 3 sections: "Current Behavior (Defect)" รูป WHEN...THEN พร้อม repro steps ที่รันได้จริง (หน้า/viewport/คำสั่ง/ค่าที่วัด), "Expected Behavior" ใช้ SHALL, "Unchanged Behavior" ใช้ SHALL CONTINUE TO + B-ID; STOP gate ก่อน Phase 3; (ค) validation 3 มิติ: repro test RED ก่อน fix → GREEN หลัง fix → ทุก B-ID มี assertion 1:1 ที่ observable failure mode (ไม่ใช่ internal implementation — อ้าง regression test ที่จับ implementation แทน failure mode เป็น anti-pattern); (ง) อุดรอยต่อ: spec-implement:14 เปลี่ยน "requirements.md" เป็น "requirements.md (หรือ bugfix.md สำหรับ bugfix spec)"
+- ไม่ migrate bugfix spec เดิมที่ปิดไปแล้ว
 
 ### A6. Harden agent contracts [adjust, medium/low]
 
 ไฟล์: `.claude/agents/pbt-runner.md`, `bug-investigator.md`, `spec-architect.md`, skills spec-design / spec-pbt
 
-- (1) pbt-runner: เปลี่ยน `model: opus` (หรือ inherit) — sonnet กับ CORE domain ขัด memory flow-quality-over-cost; เพิ่ม contract: runner = vitest, test ต้องอยู่ `app/lib/**/*.test.ts` เท่านั้น (นอก path = ไม่ถูกรัน = เขียวปลอม), ทุก test อ้าง REQ ID, fast-check ยังไม่มี — ใช้ randomized-loop บน vitest, จะเพิ่มต้องขออนุมัติ, รายงานไทย
+- (1) pbt-runner: เปลี่ยน `model: opus` (หรือ inherit) — sonnet กับ CORE domain ขัด memory flow-quality-over-cost; เพิ่ม contract: runner = the project test runner (declared via SDD_TEST_CMD env, or a package.json test script for a Node project), test ต้องอยู่ในthe project test directory ที่ co-located กับ logic under test เท่านั้น (นอก path = ไม่ถูกรัน = เขียวปลอม), ทุก test อ้าง REQ ID, dedicated PBT framework ยังไม่มี — ใช้ randomized-loop บน the project test runner, จะเพิ่มต้องขออนุมัติ, รายงานไทย
 - (2) bug-investigator: "reproduce mentally" → "Reproduce จริงด้วย Bash เมื่อรันได้; วิเคราะห์จากโค้ดเฉพาะเมื่อรันไม่ได้ + ระบุใน report ว่าไม่ได้รันจริง" + รายงานไทย
 - (3) spec-architect: เพิ่มโหมด critique (adversarial reviewer ไม่ใช่ producer) + ไทย
 - (4) spec-design:21-22 + spec-pbt:21 แทน "consider delegating" ด้วยเกณฑ์ตัดสิน 1 บรรทัด (delegate เมื่อแตะ CORE logic)
-- (5) ต้นตอจริงอยู่ที่ spec-pbt:14-16 เรียก fast-check ว่า "the project's framework" — แก้เป็น vitest ที่มีอยู่
+- (5) ต้นตอจริงอยู่ที่ spec-pbt:14-16 เรียก dedicated PBT framework ว่า "the project's framework" — แก้เป็น randomized-loop บน the project test runner (declared via SDD_TEST_CMD env, หรือ package.json test script สำหรับ Node) ที่มีอยู่ การเพิ่ม PBT framework แยกต้องขออนุมัติ
 
 ---
 
@@ -253,7 +253,7 @@
 5. spec-architect ซ้ำ outline กับ spec-design (drift risk) — repurpose เป็น design-reviewer/requirements-auditor แบบ fresh-context adversarial (audit ชี้ว่า "คุ้มสุดและถูก")
 6. backfill artifact เดิมที่ commit แล้ว: ID format asymmetry (`1.1` vs `REQ-1.1` — A5 parser รองรับแล้วแต่ artifact ควร normalize), REQ-15.6 แทรกผิดลำดับ, placeholder ใน bugfix tasks.md
 
-รอง (ทำเมื่อแตะไฟล์นั้นอยู่แล้ว): 7. dedup policy สำหรับกฎซ้ำหลายที่ (task-sizing 3 ที่, EARS 2 ที่) — กำหนด single source + pointer 8. นโยบาย prune/merge lesson ที่ขัดกันเองใน stack-nextjs.md (ST2 แก้คู่ 19/45 แล้ว แต่ไม่ได้วางกติกากันเกิดซ้ำ) 9. product.md ทำตัวเป็น mini-spec ของฟีเจอร์เดียว (rubric/จำนวนการ์ดซ้ำ requirements.md) — จะ stale เมื่อมีฟีเจอร์ถัดไป 10. dedup เนื้อหา tech.md Hard Constraints กับ structure.md Anti-Patterns (~4 กฎซ้ำ) 11. per-task history ที่ตรวจสอบได้ (commit ที่ task boundary แทน commit เดียวจบ feature) 12. design sync หลัง implementation decision (เช่น Tailwind v3.4 pin ไม่ถูกบันทึกใน design.md) 13. spec-analyze report เป็นไฟล์ artifact ใน specs/<feature>/ (W5 บันทึกใน requirements.md section — พอใช้ แต่ถ้าอยาก audit trail เต็มค่อยแยกไฟล์) 14. hook verification discipline — smoke-test ว่า hook ยิงจริง (`claude --debug`) — สาเหตุที่ 3 hooks ตายเงียบนาน 15. Bash อ่าน secret (`cat .env`) — deny-Read ไม่ครอบ Bash; A3 ครอบเฉพาะจุด commit 16. cache-ts.sh ใน global settings ยิงทุก PostToolUse ไม่มี matcher (spawn process ทุก tool call) — อย่างน้อยบันทึกเป็น trade-off ที่รู้ตัว 17. pane-loop.md:25 ชี้แหล่ง bypassPermissions ผิดไฟล์ (อยู่ global ไม่ใช่ project) 18. ภาษา output (ไทย) ใน agent definitions — A6 ครอบ 3 ตัว project แล้ว เหลือ global 3 ตัว 19. Kiro agentic hook actions (NL-prompt hook) — ฝั่ง Claude Code ทำได้ผ่าน hook JSON `additionalContext` / UserPromptSubmit injection; ตอนนี้ rec ทั้งหมดเป็น deterministic shell — ตัดสินใจ explicit ว่าจงใจไม่ใช้ 20. Kiro steering manual inclusion mode (`#steering-name`) — map ได้กับ @-mention / skill references/ — ยังไม่ถูกใช้เป็น pattern
+รอง (ทำเมื่อแตะไฟล์นั้นอยู่แล้ว): 7. dedup policy สำหรับกฎซ้ำหลายที่ (task-sizing 3 ที่, EARS 2 ที่) — กำหนด single source + pointer 8. นโยบาย prune/merge lesson ที่ขัดกันเองใน stack-nextjs.md (ST2 แก้คู่ 19/45 แล้ว แต่ไม่ได้วางกติกากันเกิดซ้ำ) 9. product.md ทำตัวเป็น mini-spec ของฟีเจอร์เดียว (rubric/จำนวนการ์ดซ้ำ requirements.md) — จะ stale เมื่อมีฟีเจอร์ถัดไป 10. dedup เนื้อหา tech.md Hard Constraints กับ structure.md Anti-Patterns (~4 กฎซ้ำ) 11. per-task history ที่ตรวจสอบได้ (commit ที่ task boundary แทน commit เดียวจบ feature) 12. design sync หลัง implementation decision (เช่น การ pin เวอร์ชันของ styling system ไม่ถูกบันทึกใน design.md) 13. spec-analyze report เป็นไฟล์ artifact ใน specs/<feature>/ (W5 บันทึกใน requirements.md section — พอใช้ แต่ถ้าอยาก audit trail เต็มค่อยแยกไฟล์) 14. hook verification discipline — smoke-test ว่า hook ยิงจริง (`claude --debug`) — สาเหตุที่ 3 hooks ตายเงียบนาน 15. Bash อ่าน secret (`cat .env`) — deny-Read ไม่ครอบ Bash; A3 ครอบเฉพาะจุด commit 16. cache-ts.sh ใน global settings ยิงทุก PostToolUse ไม่มี matcher (spawn process ทุก tool call) — อย่างน้อยบันทึกเป็น trade-off ที่รู้ตัว 17. pane-loop.md:25 ชี้แหล่ง bypassPermissions ผิดไฟล์ (อยู่ global ไม่ใช่ project) 18. ภาษา output (ไทย) ใน agent definitions — A6 ครอบ 3 ตัว project แล้ว เหลือ global 3 ตัว 19. Kiro agentic hook actions (NL-prompt hook) — ฝั่ง Claude Code ทำได้ผ่าน hook JSON `additionalContext` / UserPromptSubmit injection; ตอนนี้ rec ทั้งหมดเป็น deterministic shell — ตัดสินใจ explicit ว่าจงใจไม่ใช้ 20. Kiro steering manual inclusion mode (`#steering-name`) — map ได้กับ @-mention / skill references/ — ยังไม่ถูกใช้เป็น pattern
 
 ## ลำดับ implement ที่แนะนำ
 

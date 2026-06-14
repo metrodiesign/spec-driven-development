@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # gate-task.sh — harness-agnostic task-boundary quality gate (.ai/bin engine)
-# Ported from .claude/hooks/task-gate.sh; typecheck/test coupling kept verbatim. The
-# Evidence check is now PER TASK (scoped to each flipped [x] region) and requires
-# non-trivial content, so every adapter input shape yields the same verdict (PR #24
-# findings #6/#19/#20/#28).
+# Ported from .claude/hooks/task-gate.sh. The code-green check is STACK-AGNOSTIC: a project
+# declares its typecheck/test commands via $SDD_TYPECHECK_CMD / $SDD_TEST_CMD, and a Node
+# project that ships package.json scripts is auto-detected for backward-compat; when neither
+# is present the check is skipped and only the Evidence gate applies. The Evidence check is
+# PER TASK (scoped to each flipped [x] region) and requires non-trivial content, so every
+# adapter input shape yields the same verdict (PR #24 findings #6/#19/#20/#28).
 #
 # Fires only when a .claude/specs/*/tasks.md checkbox is being flipped to [x].
 # เขียว = เงียบ exit 0, แดง = exit 2 + stderr ให้แก้ก่อน mark เสร็จ
@@ -32,19 +34,40 @@ esac
 # trigger only on a flip to [x] in the new content
 printf '%s\n' "$NEW" | grep -qi -- '- \[x\]' || exit 0
 
-OUT=$(npm run typecheck --silent 2>&1) || {
-  echo 'Task gate: typecheck ไม่ผ่าน — ห้าม mark [x] จนกว่าเขียว' >&2
-  echo "$OUT" | tail -20 >&2
-  exit 2
-}
-OUT=$(npm test --silent 2>&1) || {
-  # vitest exit 1 เมื่อไม่มี test file เลย — ไม่ใช่ test แดง อย่า block task ที่ไม่มี test โดยชอบ
-  if ! echo "$OUT" | grep -q 'No test files found'; then
-    echo 'Task gate: test ไม่ผ่าน — ห้าม mark [x] จนกว่าเขียว' >&2
+# --- code-green check (STACK-AGNOSTIC, optional) ---
+# The framework does not assume Node/npm. A project declares how its code is proven green:
+#   $SDD_TYPECHECK_CMD / $SDD_TEST_CMD  — explicit commands for ANY stack (e.g. "pytest -q").
+# Backward-compat: a Node project that ships package.json with "typecheck"/"test" scripts is
+# auto-detected so it keeps the original npm behavior with no config. When neither a command
+# nor a matching package.json script exists, the check is skipped and only the Evidence gate
+# (below) applies. Commands are operator-provided config, run via eval to honor their quoting.
+TYPECHECK_CMD="${SDD_TYPECHECK_CMD:-}"
+TEST_CMD="${SDD_TEST_CMD:-}"
+if [ -z "$TYPECHECK_CMD" ] && [ -f package.json ] && grep -q '"typecheck"' package.json; then
+  TYPECHECK_CMD='npm run typecheck --silent'
+fi
+if [ -z "$TEST_CMD" ] && [ -f package.json ] && grep -q '"test"' package.json; then
+  TEST_CMD='npm test --silent'
+fi
+
+if [ -n "$TYPECHECK_CMD" ]; then
+  OUT=$(eval "$TYPECHECK_CMD" 2>&1) || {
+    echo 'Task gate: typecheck ไม่ผ่าน — ห้าม mark [x] จนกว่าเขียว' >&2
     echo "$OUT" | tail -20 >&2
     exit 2
-  fi
-}
+  }
+fi
+if [ -n "$TEST_CMD" ]; then
+  OUT=$(eval "$TEST_CMD" 2>&1) || {
+    # a runner that exits non-zero ONLY because it found no tests is not a red test —
+    # don't block a task that legitimately has none (vitest / pytest phrasings).
+    if ! echo "$OUT" | grep -qiE 'no test files found|no tests ran|collected 0 items'; then
+      echo 'Task gate: test ไม่ผ่าน — ห้าม mark [x] จนกว่าเขียว' >&2
+      echo "$OUT" | tail -20 >&2
+      exit 2
+    fi
+  }
+fi
 
 # evidence gate (PER TASK, non-trivial content): code-green is checked first (above);
 # only then require that EACH flipped `- [x]` task carries its own `Evidence:` line —

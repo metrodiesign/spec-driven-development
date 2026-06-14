@@ -53,9 +53,12 @@ silently. Validation is three-dimensional; ALL of:
   (b) every B-ID has a 1:1 assertion;
   (c) every assertion checks the OBSERVABLE failure mode (rendered output,
       computed value, layout measurement) — not internal implementation detail.
-      Anti-pattern: bugfix-lg-button's regression tests asserted implementation
-      (which CSS classes were used) and missed the actual failure mode. Where
-      the observable mode can only be seen in a browser, follow
+      Anti-pattern: a regression test that asserts the implementation detail
+      (e.g. which internal helper or style token was used) instead of the
+      observable result misses the actual failure mode. Where the observable
+      mode can only be seen in a UI, follow
       `.claude/skills/spec-implement/references/browser-verify.md`; tests that
-      can run headless under vitest (`app/lib/**/*.test.ts`) go there.
+      run under the project test runner (declared via `SDD_TEST_CMD`, or a
+      `package.json` test script for a Node project), co-located with the logic
+      under test, go there.
 No placeholder values (`?`) may be committed in any artifact.

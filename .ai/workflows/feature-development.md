@@ -59,9 +59,10 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
 4. **design.md.** เขียน architecture: components + responsibilities, sequence diagrams (Mermaid),
    data models & interfaces, technology decisions (prefer `CODING_STANDARDS.md`), error handling
    strategy, testing strategy (map -> REQ IDs), และ `## Requirement Traceability` table (design
-   element -> REQ-x.y). เมื่อ design แตะ CORE domain logic (premium calc / validation ใน
-   `app/lib/`) ให้ adopt [../roles/spec-architect.md](../roles/spec-architect.md) (mode=critique)
-   เป็น fresh-context reviewer — apply หรือ rebut ทุก finding ก่อน STOP.
+   element -> REQ-x.y). เมื่อ design แตะ CORE domain logic (core algorithm / validation ใน
+   the project test directory, co-located กับ logic under test) ให้ adopt
+   [../roles/spec-architect.md](../roles/spec-architect.md) (mode=critique) เป็น fresh-context
+   reviewer — apply หรือ rebut ทุก finding ก่อน STOP.
    -> verify: ทุก REQ ปรากฏใน traceability table; STOP for review.
 
 5. **tasks.md.** แตกเป็น COHESIVE, independently verifiable slices (vertical slice: model -> API ->
@@ -75,11 +76,13 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
    ก่อน loop เพื่อ reconcile checkbox กับ filesystem (filesystem คือ ground truth — checkbox/git log
    โกหกได้; untracked file ไม่โผล่ใน `git diff --stat`). อ่าน task + linked REQ + ส่วนที่เกี่ยวของ
    design + `ARCHITECTURE.md`. implement ทั้ง task ในรอบเดียว (อาจแตะหลายไฟล์), เขียน/ขยาย test ที่
-   พิสูจน์ REQ IDs. รัน `npm run typecheck` + `npm test`. ก่อน mark task สุดท้าย (หรือ assembly task)
+   พิสูจน์ REQ IDs. รัน the project typecheck command (via `SDD_TYPECHECK_CMD` env, หรือ package.json
+   typecheck script) + the project test runner (declared via `SDD_TEST_CMD` env, หรือ package.json
+   test script สำหรับ Node project). ก่อน mark task สุดท้าย (หรือ assembly task)
    รัน `scripts/spec-trace.sh <feature>` อีกครั้ง. mark `- [x]` + แนบ `Evidence:` block ใน edit
-   เดียวกัน (test command + result, viewports ถ้าเป็น browser task, deviations). pause ที่ TASK
+   เดียวกัน (test command + result, ผล UI-verify ถ้าโปรเจ็กต์ ship UI, deviations). pause ที่ TASK
    boundary.
-   -> verify: typecheck เขียว, test เขียว, Evidence block ครบทุก task ที่ done.
+   -> verify: typecheck เขียว, test เขียว (ผ่าน `.ai/bin/gate-task.sh`), Evidence block ครบทุก task ที่ done.
 
 > Coupled feature (tasks แชร์ primitives/data/lib) DEFAULT = implement ทุก task ใน session เดียว
 > (`scripts/pane-loop.sh <feature> all-in-one`). แยก session เฉพาะ task ที่อิสระจริง หรือเพื่อ
@@ -89,18 +92,19 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
 
 - โฟลเดอร์ `.claude/specs/<feature>/` มี requirements.md, design.md, tasks.md ที่ header เป็น
   `> Status: approved <YYYY-MM-DD>`.
-- โค้ดฟีเจอร์ + co-located unit test ใต้ `app/lib/**/*.test.ts` สำหรับ pure logic.
+- โค้ดฟีเจอร์ + co-located unit test ใน the project test directory, co-located กับ logic under test สำหรับ pure logic.
 - tasks.md ทุก task `- [x]` พร้อม Evidence block.
 - typecheck + test เขียว; `scripts/spec-trace.sh <feature>` รายงาน REQ coverage ครบ.
 
 ## Definition of done
 
 - [ ] ทุก REQ ใน requirements.md ถูกครอบโดยอย่างน้อยหนึ่ง task (`scripts/spec-trace.sh` ผ่าน).
-- [ ] `npm run typecheck` ผ่าน (ไม่มี error, `strict: true`).
-- [ ] `npm test` (`vitest run`) เขียวทั้งหมด.
+- [ ] task code-green ผ่าน `.ai/bin/gate-task.sh` ซึ่งรัน typecheck + test ตาม `SDD_TYPECHECK_CMD` /
+      `SDD_TEST_CMD` (auto-detect package.json scripts สำหรับ Node).
 - [ ] ทุก task `- [x]` + Evidence (command จริงที่รัน + ผลที่สังเกต, ไม่ใช่บรรทัด Verify: ที่วางแผน).
 - [ ] artifact ทั้ง 3 header = approved; decision + rationale บันทึกในไฟล์ (ไม่ใช่แค่ในการสนทนา).
-- [ ] ไม่มี horizontal overflow ที่ 375/768/1440 และ a11y/contrast ผ่าน (ถ้าฟีเจอร์มี UI).
+- [ ] ถ้าโปรเจ็กต์ ship UI: verify ใน the project target runtime (ดู the project UI-verify reference)
+      และ accessibility ผ่าน.
 
 ## Common mistakes to avoid
 

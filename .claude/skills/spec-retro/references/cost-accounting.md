@@ -31,7 +31,7 @@
 - cost ของ "multi run" (pane-loop หลาย session) = **sum ของ ledger แต่ละ impl
   session** (คนละ `$CLAUDE_CODE_SESSION_ID`) — ไม่ใช่ ledger ของ session ที่สั่ง
   pane-loop
-- ตัวเลขวัดจริง insurance-homepage: 7-session $22.44 vs all-in-one 1-session $16.16
+- ตัวเลขวัดจริง (ตัวอย่างเชิงวัดผล): 7-session $22.44 vs all-in-one 1-session $16.16
   (multi แพงกว่า ~39%); ต้นทุนจริงของการแยก = re-acquire shared context ทุก session
   (เช่น task5 interactive ที่ wire lib+data+primitives = $6.21 เพราะแบก context
   กลับเข้ามาใหม่) — kernel การตัดสินใจ all-in-one vs แยก pane อยู่ที่

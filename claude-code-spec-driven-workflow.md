@@ -677,7 +677,7 @@ Exit code 2 = block. PreToolUse ที่ exit 2 จะหยุด tool, Stop �
         "hooks": [
           {
             "type": "command",
-            "command": "npm test --silent 2>&1 | tail -20 || echo 'Tests failed — fix before continuing' >&2; exit 0"
+            "command": "<project test command> 2>&1 | tail -20 || echo 'Tests failed — fix before continuing' >&2; exit 0"
           }
         ]
       }
@@ -687,7 +687,7 @@ Exit code 2 = block. PreToolUse ที่ exit 2 จะหยุด tool, Stop �
         "hooks": [
           {
             "type": "command",
-            "command": "npm run lint --silent && npm test --silent || echo 'Verify the completed task: lint/tests not green' >&2"
+            "command": "<project typecheck command> && <project test command> || echo 'Verify the completed task: typecheck/tests not green' >&2"
           }
         ]
       }
@@ -724,7 +724,7 @@ Exit code 2 = block. PreToolUse ที่ exit 2 จะหยุด tool, Stop �
 | --------------------------- | ------------------- | ---------------------------- | ------------------------- |
 | `PostToolUse` (Edit\|Write) | หลังเขียน/แก้ไฟล์   | format ไฟล์ด้วย prettier     | File Save → lint          |
 | `Stop`                      | Claude ตอบจบ turn   | รันเทสต์ รายงานถ้าพัง        | Agent Stop → compile/test |
-| `TaskCompleted`             | task ถูก mark เสร็จ | lint + test ตรวจความถูกต้อง  | Post Task Execution       |
+| `TaskCompleted`             | task ถูก mark เสร็จ | typecheck + test ตรวจความถูกต้อง  | Post Task Execution       |
 | `PreToolUse` (Bash)         | ก่อนรันคำสั่ง       | บล็อก `rm -rf`               | Pre Tool Use (block)      |
 | `SessionStart`              | เปิด session        | inject branch + รายชื่อ spec | โหลด dev context          |
 
@@ -812,11 +812,11 @@ claude
 ### Flow แบบอัตโนมัติ — pane orchestrator (`scripts/pane-loop.sh`)
 
 ตอนแรกออกแบบเป็น headless (`claude -p` แยกครั้งต่อเฟส) แต่ headless = รันแบบมองไม่เห็น: TUI ไม่โชว์
-ความคืบหน้า, `next dev` ที่นี่ hydration พังเงียบ, และเคยเผลอฆ่า process ที่ยังทำงานอยู่เพราะ pane ว่าง.
+ความคืบหน้า, project dev server ที่นี่เคยพังเงียบ, และเคยเผลอฆ่า process ที่ยังทำงานอยู่เพราะ pane ว่าง.
 ปัจจุบันจึงขับด้วย **iTerm pane จริงที่เห็นได้** — 1 cohesive task = 1 pane interactive สด:
 
 ```bash
-scripts/pane-loop.sh insurance-homepage   # ละ feature ได้ถ้ามี spec เดียว
+scripts/pane-loop.sh <feature-name>   # ละ feature ได้ถ้ามี spec เดียว
 ```
 
 `pane-loop.sh` วนทำ task ค้างใน `tasks.md` (เรียงตามลำดับในไฟล์ = dependency) ทีละตัว:
@@ -835,7 +835,7 @@ scripts/pane-loop.sh insurance-homepage   # ละ feature ได้ถ้าม
 
 > **ทางเลือก headless ล้วน** (`claude -p "/spec-implement N"`) ยังทำได้และ agentic เต็มรูป (tool/loop/test);
 > **Batch API ใช้ไม่ได้** เพราะไม่มี agent loop/tool use. แต่โปรเจกต์นี้เลือก pane ที่เห็นได้เพื่อเฝ้างาน
-> และกัน false-negative จาก dev hydration — ดู `.claude/rules/lessons.md` (browser-verify ใช้ prod build, headless pane buffers)
+> และกัน false-negative จาก dev server — ถ้าโปรเจกต์มี UI ให้ verify ใน project target runtime (ดู project UI-verify reference) — ดู `.claude/rules/lessons.md` (headless pane buffers)
 
 > **ปลอดภัยไว้ก่อน:** อย่าใช้ `--dangerously-skip-permissions` โดยไม่มีเหตุผล และอย่าใส่ความลับ (API key) ใน CLAUDE.md หรือ chat — hooks/rules ทั้งหมดอยู่ใน git
 

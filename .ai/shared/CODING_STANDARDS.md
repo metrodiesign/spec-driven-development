@@ -3,46 +3,48 @@
 
 # Technology Stack
 
+> Stack-neutral. This framework does not assume a language, runtime, UI framework, or test
+> runner. The rules below are universal; concrete stack picks come from the project itself.
+
 ## Languages & Runtimes
 
-- TypeScript 5.x — `strict: true`, เลี่ยง `any`, กำหนด type ของ props/data ชัดเจน
-- Node.js 20.9+ (รันด้วย `npm install && npm run dev`)
+- ใช้ภาษาและ runtime ที่โปรเจกต์ตั้งไว้แล้ว — adopt the established stack, อย่าแตกแนว
+- เลือก statically-typed language เมื่อเริ่มใหม่ และเปิด type checking ให้เข้มที่สุดเท่าที่
+  ภาษานั้นมี; กำหนด type ของ data/interface ให้ชัดเจน, เลี่ยง escape hatch แบบ dynamic/`any`
+- ห้ามเพิ่มภาษา/runtime ใหม่เข้าโปรเจกต์โดยไม่มีเหตุผลที่บันทึกไว้ + ขออนุมัติก่อน
 
 ## Frameworks & Core Libraries
 
-- Next.js 16 (App Router) — โครงใน `app/` (`layout.tsx`, `page.tsx`)
-- React 19 — Server Components เป็นค่าเริ่มต้น; ใส่ `"use client"` เฉพาะคอมโพเนนต์ที่ต้องโต้ตอบ
-  (เมนู, สไลเดอร์, ตัวกรอง, ฟอร์ม, เครื่องคำนวณ)
-- Tailwind CSS — ตั้งค่าผ่าน `tailwind.config.ts`; design tokens อยู่ใน `theme.extend`
-- Swiper 12.x — hero campaign slider (`HeroCampaignSlider.tsx`); ถูกเพิ่มระหว่าง
-  implementation โดยไม่มีบันทึกอนุมัติ — บันทึกที่นี่ให้ตรง ground truth
-  (การ approve PR ที่บันทึกบรรทัดนี้ = การอนุมัติย้อนหลัง)
+- ใช้ framework ที่โปรเจกต์ใช้อยู่แล้ว — ทำตาม convention ของ framework นั้น อย่าผสมหลายตัว
+- การเพิ่ม library ใหม่ต้องมีเหตุผลที่บันทึกไว้ + ขออนุมัติก่อน (ดู Dependency rules ด้านล่าง);
+  การ approve PR ที่บันทึกการเพิ่มนั้น = การอนุมัติ
+- stack-specific guidance (UI framework, styling system, test-runner idioms) อยู่ใน profile
+  เสริมแบบ optional ใต้ `.ai/shared/stack/` — เพิ่มไฟล์ของ stack ตัวเองเมื่อต้องการ;
+  framework ไม่ bundle profile ใดมาให้โดย default
 
 ## Data Layer
 
-- ไม่มี DB / backend — ข้อมูล (ประเภทประกัน, โปรโมชั่น, บทความ, testimonials) เป็น mock
-  ในไฟล์ TypeScript แยกต่างหาก พร้อม type ชัดเจน
+- มี DB / backend ก็ต่อเมื่อโปรเจกต์ใช้จริง — ถ้าไม่มี ก็ใช้ข้อมูล mock แบบ typed แยกไฟล์
+  พร้อม type ชัดเจน อย่าฝัง logic ไว้กับข้อมูล
 
 ## Tooling
 
-- `next/image` สำหรับรูป; ตั้ง `images.remotePatterns` ใน `next.config.ts` หากดึงรูปภายนอก
-  (เช่น `picsum.photos`)
-- เว็บฟอนต์ไทยจริงผ่าน Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`) —
-  IBM Plex Sans Thai / Noto Sans Thai / Sarabun / Prompt / Kanit; ห้ามตกไปใช้ฟอนต์ระบบ
-- ไอคอน = inline SVG (ห้าม icon font / กล่องเปล่า)
-- vitest — unit test runner (`npm test` = `vitest run`); test เฉพาะ pure logic ใน
-  `app/lib/` (`app/lib/**/*.test.ts` ตาม include ของ `vitest.config.ts`)
+- โปรเจกต์เป็นผู้ประกาศคำสั่ง typecheck / test / build ของตัวเอง — ไม่มี default ตายตัว
+- task gate (`.ai/bin/gate-task.sh`) อ่านคำสั่งจาก env: `SDD_TYPECHECK_CMD` และ `SDD_TEST_CMD`
+  (สำหรับ stack ใดก็ได้); สำหรับ Node ที่มี `package.json` จะ auto-detect script `typecheck` /
+  `test` ให้เอง — ถ้าไม่มีทั้ง env และ script จะข้าม code-green check แล้วเหลือเพียง Evidence gate
+- ตั้งค่า/รัน dev ด้วยคำสั่ง setup และ dev ของโปรเจกต์เอง
 
 ## Hard Constraints
 
-- ห้ามมีกล่องว่าง / สี่เหลี่ยมสีเดียวเป็น placeholder — ทุกพื้นที่ภาพต้องดู "เสร็จ"
-  (inline SVG มีรายละเอียด / รูปจริง / gradient + ลวดลายที่จัดองค์ประกอบ)
-- ห้าม horizontal overflow ที่ทุก viewport (ยกเว้น slider ที่ตั้งใจ)
-- ห้าม hardcode ค่าสีดิบซ้ำๆ — เรียกผ่าน semantic utility class จาก tokens
-- ทุก `<img>` มี `alt` และโหลดได้จริง; semantic HTML + นำทางด้วยคีย์บอร์ดได้; contrast ผ่านเกณฑ์
-- พาเลตแบรนด์ (วิริยะ): primary กรมท่า ~#13266B, primary-dark ~#0E1C50,
-  accent เหลืองทอง ~#FDB913, bg ~#F5F7FB, surface ขาว, text ~#1A2238 + muted/border
+- ห้าม hardcode secret ทุกชนิด — อ่านจาก environment variable หรือ secret manager เท่านั้น
+  (ดู [SECURITY_RULES.md](SECURITY_RULES.md))
+- ห้าม pin เวอร์ชันแบบ floating (`*` / `latest`) บน prod dependency; commit lock file เสมอ
+  เมื่อใช้ package manager
+- accessibility + semantic markup เป็นหลักการ ไม่ใช่ option: ทุกองค์ประกอบที่สื่อความต้องมี
+  ป้ายกำกับ/`alt`, ใช้ semantic element, นำทางด้วยคีย์บอร์ดได้, contrast ผ่านเกณฑ์
 
 ## Rule
 
-Prefer this stack over alternatives. ห้ามเพิ่ม library ใหม่โดยไม่ระบุเหตุผลและขออนุมัติก่อน.
+ใช้ stack ที่โปรเจกต์ตั้งไว้แล้วก่อนทางเลือกอื่น. ห้ามเพิ่ม library/ภาษา/runtime ใหม่
+โดยไม่ระบุเหตุผลและขออนุมัติก่อน.

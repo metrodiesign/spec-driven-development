@@ -104,8 +104,10 @@ purpose to cut output cost.
    lessons, and prune stale/duplicate ones. Route by scope:
    - Universal (process / workflow / git / CC tooling — applies on any task) →
      `.ai/shared/LESSONS.md` (always-on prefix — keep it lean).
-   - Stack-specific implementation patterns (Next/React/Tailwind/vitest/CSS/SVG/TS) →
-     `.ai/shared/stack/nextjs.md` (path-scoped — loads only when reading matching files).
+   - Stack-specific implementation patterns (the project UI framework / styling system,
+     its test runner, language/type tooling) → a `<stack>.md` profile under
+     `.ai/shared/stack/` (the optional, project-supplied profile extension point — loads
+     only when such a profile exists; empty by default).
    - Browser-verify / probe recipes (Playwright/MCP/viewport/probe methodology) →
      `.claude/skills/spec-implement/references/browser-verify.md` (loaded only
      during the verify phase).
@@ -114,14 +116,16 @@ purpose to cut output cost.
      (only the one-line kernel lives there).
 
 4. **Steering sync** (before commit): compare ground truth against the canonical
-   steering — dependencies in `package.json` vs `.ai/shared/CODING_STANDARDS.md`,
-   new files in `app/` vs the layout in `.ai/shared/ARCHITECTURE.md`, and the
-   `paths:` frontmatter globs in `.claude/rules/stack-nextjs.md` (the sole stub that
-   keeps a glob) vs real paths. Fix any drift now, in the same commit.
+   steering — the project's declared dependencies (e.g. `package.json` for a Node
+   project) vs `.ai/shared/CODING_STANDARDS.md`, new files in the project source tree
+   vs the layout in `.ai/shared/ARCHITECTURE.md`, and the `paths:` frontmatter globs in
+   any path-scoped stack stub under `.claude/rules/` vs real paths. Fix any drift now,
+   in the same commit.
 
 5. **Commit**: `git add retrospectives/ .ai/shared/ .claude/rules/ .claude/skills/spec-implement/references/ .claude/skills/spec-retro/references/ && git commit -m "docs: session retrospective YYYY-MM-DD"`
    (`.ai/shared/` MUST be staged — promoted lessons in step 3 now land in
-   `.ai/shared/LESSONS.md` / `.ai/shared/stack/nextjs.md`, not the `.claude/rules` stubs.)
+   `.ai/shared/LESSONS.md` / a `<stack>.md` profile under `.ai/shared/stack/`, not the
+   `.claude/rules` stubs.)
 
 ## Critical requirements
 
