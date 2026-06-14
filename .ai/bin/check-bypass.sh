@@ -38,20 +38,24 @@ echo "$C" | grep -qE "(cp|ln|install)[[:space:]]+[^[:space:]]+[[:space:]].*$GUAR
 # overwrite an engine, or pipe into .git/config) disables it just the same
 echo "$C" | grep -qE '>[[:space:]]*(\.githooks/|\.ai/bin/check-[^[:space:]]*\.sh|\.ai/bin/gate-task\.sh|[^[:space:]]*\.git/config)' &&
   block 'redirect/overwrite into guard, floor, or .git/config — ห้ามปิดหรือทับ enforcement floor'
-# setting hooksPath via config write (git config / .git/config) points hooks at
-# an empty dir and disables the secret-guard floor regardless of a `git` token
-echo "$C" | grep -qiE '(set|--add|config)[^|;&]*hookspath|hookspath[[:space:]]*=' &&
-  block 'set core.hooksPath / hooksPath ปิด git hooks floor — ห้ามใช้'
+# setting hooksPath via config WRITE points hooks at an empty dir and disables the
+# secret-guard floor regardless of a `git` token. block only WRITES; a read-only
+# query (`git config core.hooksPath`, `git config --get core.hooksPath`) is harmless
+# and must pass (issue #27). case-insensitive: section.key names are case-insensitive.
+# 1) inline `-c core.hooksPath=...` / any `key=value` set form (has '=')
+echo "$C" | grep -qiE 'core\.hookspath[[:space:]]*=' &&
+  block 'set core.hooksPath (inline -c / =value) ปิด git hooks floor — ห้ามใช้'
+# 2) `git config ... core.hooksPath <value>`: a non-flag value token AFTER the key = WRITE
+echo "$C" | grep -qiE 'config[^|;&]*core\.hookspath[[:space:]]+[^-[:space:]]' &&
+  block 'git config core.hooksPath <value> เขียนทับ hooks floor — ห้ามใช้ (read-only query ผ่านได้)'
+# 3) `git config` WRITE flags on hooksPath: --unset / --unset-all / --replace-all / --add
+echo "$C" | grep -qiE 'config[^|;&]*(--unset(-all)?|--replace-all|--add)[^|;&]*core\.hookspath|config[^|;&]*core\.hookspath[^|;&]*(--unset(-all)?|--replace-all|--add)' &&
+  block 'git config --unset/--replace-all/--add core.hooksPath แก้ hooks floor — ห้ามใช้'
 
 echo "$C" | grep -qE '(^|[[:space:]])git([[:space:]]|$)' || exit 0
 
 echo "$C" | grep -qE -- '--no-verify' &&
   block '--no-verify ข้าม secret-guard pre-commit hook — commit ตามปกติเพื่อให้ scan ทำงาน'
-
-# case-insensitive: git config section.key names are case-insensitive, so
-# `core.hookspath` / `CORE.HOOKSPATH` disable hooks identically and must also block
-echo "$C" | grep -qi 'core\.hookspath' &&
-  block 'core.hooksPath ปิด git hooks ทั้งหมดรวม secret-guard — ห้ามใช้'
 
 echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
   block 'SECRET_GUARD_SKIP ข้าม secret scan — ถ้าจำเป็นจริงให้ user รันเองนอก session'
@@ -61,7 +65,10 @@ echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
 # commit message เป็น false positive — แต่ -n จริงที่วางก่อน/หลัง quoted message
 # (และหลัง line continuation) จะยังเหลืออยู่ในสตริงที่สแกน จึงถูกจับทุกตำแหน่ง
 # (--no-verify ทุกตำแหน่งยังถูกจับโดยบรรทัด --no-verify ด้านบนแยกต่างหาก)
-DQ=$(printf '%s' "$C" | sed -e "s/'[^']*'/ /g" -e 's/"[^"]*"/ /g' | tr '\n' ' ')
+# collapse newlines to spaces FIRST so a quoted message spanning a literal newline is
+# a single line when de-quoted — otherwise sed (line-oriented) leaves an in-message -n
+# behind and false-blocks (issue #28). real -n/--no-verify outside quotes still survives.
+DQ=$(printf '%s' "$C" | tr '\n' ' ' | sed -e "s/'[^']*'/ /g" -e 's/"[^"]*"/ /g')
 echo "$DQ" | grep -qE 'git[[:space:]]+commit.*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)' &&
   block 'git commit -n (--no-verify) ข้าม secret-guard — commit ตามปกติ'
 

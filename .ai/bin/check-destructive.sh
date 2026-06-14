@@ -52,6 +52,26 @@ echo "$N" | grep -qE "${POS}git[[:space:]]+clean[[:space:]]([^;&|]*[[:space:]])?
 echo "$N" | grep -qE "${POS}find[[:space:]][^;&|]*[[:space:]]-delete([[:space:]]|$)" &&
   block 'find -delete — ยืนยันเป้าหมายก่อน (Destructive Ops rules)'
 
+# whole-tree working-copy discard (issue #30): `git restore .` / `-W .` / `--worktree .`
+# และ `git checkout -- .` / `git checkout .` ทิ้ง uncommitted ทั้ง tree โดยไม่ผ่าน git
+# history (Tier-1 backstop ไม่ถึง). block เฉพาะ pathspec '.' ทั้ง tree เท่านั้น —
+# single-file (git restore file / git checkout -- file), branch switch (git checkout dev
+# / -b), unstage-only (git restore --staged .) ผ่าน เพื่อกัน false-positive.
+CO_SPANS=$(echo "$N" | grep -oE "${POS}git[[:space:]]+(restore|checkout)[[:space:]][^;&|]*")
+if [ -n "$CO_SPANS" ]; then
+  while IFS= read -r SPAN; do
+    # pathspec '.' standing alone (after ' -- ' or a space, then space/end) = whole tree
+    echo "$SPAN" | grep -qE '([[:space:]]--[[:space:]]|[[:space:]])\.([[:space:]]|$)' || continue
+    # git restore --staged .  (unstage only, no worktree loss) -> allow
+    if echo "$SPAN" | grep -qE '[[:space:]]restore([[:space:]]|$)' &&
+      echo "$SPAN" | grep -qE '[[:space:]](--staged|-[A-Za-z]*S[A-Za-z]*)([[:space:]]|$)' &&
+      ! echo "$SPAN" | grep -qE '[[:space:]](--worktree|-[A-Za-z]*W[A-Za-z]*)([[:space:]]|$)'; then
+      continue
+    fi
+    block 'git restore/checkout ทั้ง working tree (.) — ทิ้ง uncommitted ทั้งหมด ไม่ผ่าน git history; stash/ยืนยันก่อน (Destructive Ops rules)'
+  done <<<"$CO_SPANS"
+fi
+
 # --- SQL destructive (Destructive Ops rules: ห้าม DROP/DELETE/TRUNCATE บน prod) ---
 # case-insensitive; anchor หัวคำที่ separator/whitespace/ต้นบรรทัด เพื่อไม่ชน substring
 # ("backupdb" ไม่ match "dropdb", "select drop from menu" ไม่ match "DROP TABLE")
@@ -110,8 +130,8 @@ if echo "$N" | grep -qE "${POS}git[[:space:]]+(commit|push)([[:space:]]|$)"; the
 fi
 
 # KNOWN, INTENTIONALLY-UNBLOCKED GAP (ยอมรับเพื่อกัน false-positive สูงเกินไป):
-#   git checkout / git restore / git branch -D / find -exec ...
-# คำสั่งเหล่านี้ทำลายข้อมูลได้ แต่ใช้งานปกติบ่อยมาก การ hard-block จะ block งานปกติเกินจริง
-# (FP สูง). enforcement floor จริงอยู่ที่ Tier 1 (git hooks + CI). ถ้าจะเพิ่มในอนาคต
-# ต้องออกแบบ anchor ให้แคบกว่านี้ก่อน.
+#   git branch -D <branch> / find ... -exec rm {} +
+# ลบข้อมูลได้แต่ใช้งานปกติบ่อย + กู้คืนได้ (branch -D ผ่าน reflog) — hard-block จะ FP สูง.
+# enforcement floor จริงอยู่ที่ Tier 1 (git hooks + CI). ถ้าจะเพิ่มในอนาคตต้อง anchor ให้แคบก่อน.
+# (git restore/checkout '.' ทั้ง working tree ถูก block ด้านบนแล้ว — issue #30.)
 exit 0
