@@ -55,8 +55,11 @@ relying on it.
   2. Self-discipline: **before any potentially destructive bash command, run
      `../../bin/check-destructive.sh '<cmd>'` yourself** (and `../../bin/check-bypass.sh`
      when relevant) and obey a non-zero exit. The check engine accepts the command
-     as `$1` or on stdin and exits 2 to signal "block". Do not run the risky command
-     if the check blocks it.
+     as `$1` or on stdin and exits 2 to signal "block". It blocks `rm` recursive+force
+     (every spelling, incl. inside `sh -c`/`eval`), `git reset --hard`, `git clean -f`,
+     `find -delete`, force pushes, direct push/commit on `main`/`develop`, and the SQL
+     Destructive-Ops set (`DROP TABLE`/`DROP DATABASE`, `TRUNCATE`, `dropdb`, `DELETE
+     FROM` with no `WHERE`). Do not run the risky command if the check blocks it.
 - **spec-* skills** — Pi auto-reads `.agents/skills/` (Agent Skills standard), so the
   same `.agents/skills/spec-*/SKILL.md` set that serves Codex and OpenCode works in Pi
   too — no Pi-specific copy. The skill bodies route to the single source
@@ -104,8 +107,11 @@ relying on it.
 - Do not commit any secret (API key, token, password, private key, connection
   string, credential file); do not hardcode credentials; do not log sensitive data.
 - Do not run destructive commands (`rm -rf`, `git reset --hard`, `git clean -fd`,
-  `DROP`/`DELETE`/`TRUNCATE` without a confirmed target). With no core hook, this is
-  on you — run `../../bin/check-destructive.sh '<cmd>'` first and obey it.
+  `DROP TABLE`/`DROP DATABASE`, `TRUNCATE`, `dropdb`, or `DELETE FROM` without a
+  `WHERE`). With no core hook, this is on you — run `../../bin/check-destructive.sh
+  '<cmd>'` first and obey it. That engine blocks exactly the set above (a `DELETE ...
+  WHERE ...` passes); `git checkout`/`restore` and `git branch -D` are an
+  intentionally-unblocked gap, so be extra careful with those yourself.
 - Do not add a new dependency without reviewing license + maintenance and getting
   approval; always commit the lock file; never pin floating (`*`/`latest`) on prod.
 - Do not edit `app/` outside your assigned task, do not change `scripts/` logic,

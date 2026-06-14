@@ -11,7 +11,7 @@ only for harnesses that support pre-tool hooks.
 | Tier | Mechanism | Covers | Notes |
 |---|---|---|---|
 | 1. Git + CI (the floor) | `.githooks/` (enabled via `core.hooksPath`) + `.github/workflows/ci.yml`, both calling `.ai/bin/check-*.sh` | **ALL agents + humans** | Cannot be bypassed by choosing a different agent. This is the real, cross-agent enforcement. |
-| 2. Harness pre-tool hook | Claude: `.claude/hooks/*` -> `.ai/bin/`; Codex: `.codex/hooks.json` -> `.ai/bin/`; OpenCode: `.opencode/plugins/ai-guard.js` -> `.ai/bin/` | Claude, Codex, OpenCode | Pre-execution interception. Pi has no core pre-tool hook, so it falls back to Tier 1 + Tier 3. |
+| 2. Harness pre-tool hook | Claude: `.claude/hooks/*` -> `.ai/bin/`; Codex: `.codex/config.toml` `[hooks]` -> `.codex/hooks/*` -> `.ai/bin/` (Codex loads hooks from `config.toml`, NOT from `.codex/hooks.json`); OpenCode: `.opencode/plugins/ai-guard.js` -> `.ai/bin/` | Claude, Codex, OpenCode | Pre-execution interception. Pi has no core pre-tool hook, so it falls back to Tier 1 + Tier 3. |
 | 3. Procedural | root `AGENTS.md` + `.ai/roles/` + `.ai/workflows/` instruct the agent to run `.ai/bin/check-*` before risky commands | ALL agents (the only AI-side layer Pi has) | Advisory; relies on the agent following instructions. The git+CI floor backstops it. |
 
 **Hooks are Claude/Codex/OpenCode-only. The git + CI floor is the enforcement that
@@ -38,6 +38,21 @@ fork or weaken these checks per harness.
 - **Enforced by:** `.githooks/pre-commit` -> `.ai/bin/check-secrets.sh` and the CI
   secret-scan job, for ALL agents and humans (Tier 1). Claude/Codex/OpenCode also get
   pre-execution interception via their harness hook (Tier 2).
+- **Detection details** (so the rule and the engine agree): the generic detector
+  inspects the matched `key=VALUE` substring, not the whole line — a placeholder word
+  in a trailing comment no longer whitelists a real secret; only a placeholder VALUE
+  passes. It covers secret values containing `@ ! $ # %` punctuation (`.` is excluded so
+  dotted member-access like `process.env.API_TOKEN` is not misread as a secret), `*_SECRET`
+  names (e.g. `JWT_SECRET`), and connection strings with embedded credentials
+  (`scheme://user:<password>@host`, an explicitly forbidden secret). The forbidden
+  dotenv-filename rule matches real dotenv files only (basename `== .env`, starting with
+  `.env.`, or ending in `.env`), not arbitrary names containing `.env.` mid-string. The
+  guard's own adversarial fixtures under `.claude/hooks/tests/` are excluded from the scan.
+  Pre-existing true
+  blocks (AWS `AKIA`, Stripe, GitHub PAT, PEM private-key block, real `.env`,
+  `.pem`/`.key`) remain intact. `SECRET_GUARD_SKIP=1` is a STAGED-path-only escape
+  hatch for the in-session human; it is IGNORED in `--all`/CI mode (a non-bypassable
+  hard gate).
 
 ### Destructive operations
 
@@ -50,6 +65,23 @@ fork or weaken these checks per harness.
 - **Enforced by:** `.ai/bin/check-destructive.sh` (exit 2 = block), invoked by the
   harness pre-tool hook for Claude/Codex/OpenCode (Tier 2). Pi and humans rely on the
   procedural instruction in `AGENTS.md` (Tier 3) plus the git + CI floor (Tier 1).
+- **What the engine actually blocks** (so docs and the engine agree exactly):
+  - `rm` recursive+force in every spelling — `-rf`/`-fr`/`-r -f`/`--recursive --force`,
+    and the same when written `\rm`, `"rm"`, `'rm'`, or wrapped in `sh -c '...'` /
+    `bash -c '...'` / `eval '...'`. It inspects ALL argv, not just the first word.
+  - `git reset --hard`, `git clean -f`, `find -delete`.
+  - SQL Destructive-Ops: `DROP TABLE`, `DROP DATABASE`, `TRUNCATE`, `dropdb`, and
+    `DELETE FROM ...` with NO `WHERE` clause. A `DELETE ... WHERE ...` is allowed.
+  - Branch/force-push protection (see Branch / push discipline below): force push,
+    `+refspec`, `--mirror`, `--all --force`, and direct push/commit to `main`/`develop`
+    including a fully-qualified `HEAD:refs/heads/main`.
+  - **Intentionally NOT blocked** (high false-positive risk; the Tier 1 git hooks + CI
+    are the durable floor for these): `git checkout`/`restore`, `git branch -D`,
+    `find -exec`. Documented gap, not an oversight.
+  - Known fail-safe trade-off: the engine treats the command as a flat string and does
+    not parse shell quoting, so destructive-looking content inside a quoted string may
+    over-block, by design. The `.ai/bin` engine and the Claude adapter are tested for
+    identical exit codes.
 
 ### Bypass prevention
 
@@ -58,15 +90,33 @@ fork or weaken these checks per harness.
   the guards to weaken them).
 - **Enforced by:** `.ai/bin/check-bypass.sh` (exit 2 = block) via the harness pre-tool
   hook (Tier 2); the git + CI floor (Tier 1) re-checks on the server side regardless.
+- **What the bypass engine catches** (expanded — superseding the old "only inspects
+  git commands" description): a `-n`/`--no-verify` skip-verify flag at ANY position in a
+  `git commit`, including after a quoted commit message and after a `\` line
+  continuation (it strips quoted segments and flattens newlines before scanning), while
+  a commit message that merely mentions `-n` still passes. It also independently blocks
+  tamper that disables or overwrites the enforcement floor — `chmod`/`mv`/`rm`/redirect
+  against `.githooks/*`, `.ai/bin/check-*.sh`, `.ai/bin/gate-task.sh`, or pointing
+  git's `core.hooksPath` / `hooksPath` away — even when the command contains no
+  standalone `git` token. The CI guard-regression suite (below) is the backstop for the
+  "do not weaken the guards" rule.
 
 ### CI gate
 
-- A PR may merge only when CI passes (tests + lint) as a required check.
+- A PR may merge only when CI passes as a required check.
 - Never merge past a failing check.
 - Never leave `.only` / `.skip` in committed tests.
 - Coverage must not drop below the project threshold.
 - **Enforced by:** `.github/workflows/ci.yml` as a required check for ALL contributors
-  (Tier 1). Server-side branch protection is the gate that cannot be skipped locally.
+  (Tier 1), triggered on both `pull_request` and `push` to `main` AND `develop`.
+  Server-side branch protection is the gate that cannot be skipped locally.
+- **Checks CI actually runs** (so the doc matches the workflow): `npm audit
+  --audit-level=high` (blocking — vulnerability audit per Dependency rules),
+  `typecheck`, `test`, the guard-regression suite (every `.claude/hooks/tests/*.test.sh`,
+  so the single check engine cannot be weakened silently), the full-tree secret scan
+  (`.ai/bin/check-secrets.sh --all` with `SECRET_GUARD_SKIP` force-cleared), and
+  spec-trace REQ coverage (Python 3.12 pinned). There is **no lint script** in this
+  project, so CI runs no lint step — lint is not-yet-wired, not a silent failure.
 
 ### Deploy / release
 
@@ -89,8 +139,9 @@ fork or weaken these checks per harness.
 - Vulnerability audit (`npm audit` or equivalent) is part of CI. When auditing, separate
   a dev-only chain from prod-core before acting — never `npm audit fix --force` a core
   dependency into a breaking downgrade.
-- **Enforced by:** CI (audit + lockfile presence) (Tier 1) + review approval for new
-  dependencies (Tier 3, see [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md)).
+- **Enforced by:** CI runs a blocking `npm audit --audit-level=high` (Tier 1) +
+  lockfile presence + review approval for new dependencies (Tier 3, see
+  [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md)).
 
 ### Branch / push discipline
 

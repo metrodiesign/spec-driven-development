@@ -58,20 +58,45 @@ Verify each is present and current before relying on it.
   commands (frontmatter `{description, agent, model?, subtask?}`, `$ARGUMENTS`
   placeholder, invoked `/name`). They are thin entry points that defer to the skills /
   `../../workflows/*` — run these or the skills instead of improvising the structure.
+  This now includes `/spec-retro` and `/spec-sync-github` (vendor-neutral parity with
+  Claude); both route to the same authoritative `.claude/skills/*` steps. Note their
+  Claude-specific facilities: `spec-retro`'s cost section reads Claude's own ledger (off
+  Claude, record "cost unavailable"); `spec-sync-github` needs a GitHub MCP server
+  configured in `opencode.json` (the `gh` CLI is the fallback).
 - **Pre-tool guard** — `.opencode/plugins/ai-guard.js` registers a
   `tool.execute.before` hook. When the tool is `bash`, it passes the command to the
   single-source check engine (`../../bin/check-destructive.sh`,
-  `../../bin/check-bypass.sh`) and **throws to block** when a check exits 2. Confirm
-  the bash tool's argument key against the current OpenCode plugin schema and smoke
-  test before relying on it.
+  `../../bin/check-bypass.sh`) and **throws to block** when a check exits 2. The
+  destructive engine now blocks (verified against the live engine): `rm`
+  recursive+force in every spelling (`\rm`, `"rm"`, `'rm'`, `rm` inside `sh -c '...'` /
+  `eval '...'`), `git reset --hard`, `git clean -f`, `find -delete`, force pushes
+  (incl. `+refspec`, `--mirror`, `--all --force`), direct push/commit on
+  `main`/`develop` (incl. `HEAD:refs/heads/main`), and the SQL Destructive-Ops set:
+  `DROP TABLE`/`DROP DATABASE`, `TRUNCATE`, `dropdb`, and `DELETE FROM` with NO `WHERE`
+  (a `DELETE ... WHERE ...` is allowed). `git checkout`/`restore`, `git branch -D` and
+  `find -exec` remain an intentional unblocked gap (Tier 1 is the floor). Confirm the
+  bash tool's argument key against the current OpenCode plugin schema and smoke test
+  before relying on it.
 - **Task-gate** — `.opencode/plugins/task-gate.js` runs as a side effect on
   `file.edited` (OpenCode does not guarantee throw-block semantics there). When the
   edited path is a `.claude/specs/*/tasks.md` flipped to `[x]`, it delegates to the
   single-source gate engine `../../bin/gate-task.sh` (`$GATE_FILE` / `$GATE_NEW`) and
-  surfaces a red gate (typecheck/test fail or missing `Evidence:`). Because the plugin
-  cannot hard-block a completed edit, the durable enforcement is still Tier 1 (git +
-  CI); the plugin is the in-session reminder. No gate logic lives here — same engine
-  as Claude/Codex.
+  surfaces a red gate (typecheck/test fail or missing/placeholder `Evidence:`). The
+  Evidence requirement is **per flipped task** (scoped to each `[x]` region up to the
+  next checkbox or EOF), not per-file. OpenCode passes the whole edited file to the
+  engine, but the engine scopes per-task internally, so OpenCode now yields an
+  IDENTICAL gate verdict to Claude (Edit and Write) and Codex for the same flip — the
+  earlier "not byte-for-byte identical / Evidence anywhere can satisfy" caveat is
+  obsolete. Because the plugin cannot hard-block a completed edit, the durable
+  enforcement is still Tier 1 (git + CI); the plugin is the in-session reminder. No
+  gate logic lives here — same engine as Claude/Codex.
+- **Known parity gap — spec-edit-guard.** Claude ships a non-blocking `spec-edit-guard`
+  (`.claude/hooks/spec-edit-guard.sh`) that WARNS when an already-approved
+  `requirements.md` is edited while its sibling `tasks.md` still has open tasks. There
+  is no OpenCode equivalent yet (it would need its own `file.edited`/`tool.execute`
+  plugin handler). This is an advisory-only convenience, not an enforcement gate — the
+  Tier 1 floor and the task-gate are unaffected. Treat the "keep specs in sync" rule as
+  self-enforced under OpenCode.
 - **Agents** — `.opencode/agents/*.md` declare the fresh-context personas as subagents
   (frontmatter `{description, mode: subagent, model?, temperature?,
   permission:{edit,bash}}`, body = system prompt, invoked `@name`). Each body adopts a
@@ -111,8 +136,10 @@ Verify each is present and current before relying on it.
 - Do not commit any secret (API key, token, password, private key, connection
   string, credential file); do not hardcode credentials; do not log sensitive data.
 - Do not run destructive commands (`rm -rf`, `git reset --hard`, `git clean -fd`,
-  `DROP`/`DELETE`/`TRUNCATE` without a confirmed target). The plugin blocks these;
-  do not attempt to bypass it.
+  `DROP TABLE`/`DROP DATABASE`, `TRUNCATE`, `dropdb`, or `DELETE FROM` without a
+  `WHERE`). The plugin blocks exactly these (a `DELETE ... WHERE ...` is allowed); do
+  not attempt to bypass it. `git checkout`/`restore` and `git branch -D` are an
+  intentionally-unblocked gap — the Tier 1 git hooks + CI are the floor there.
 - Do not add a new dependency without reviewing license + maintenance and getting
   approval; always commit the lock file; never pin floating (`*`/`latest`) on prod.
 - Do not edit `app/` outside your assigned task, do not change `scripts/` logic,

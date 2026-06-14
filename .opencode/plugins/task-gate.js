@@ -6,13 +6,17 @@
 // Evidence policy in .ai/bin/gate-task.sh so Claude, Codex, OpenCode and CI all
 // share one gate policy.
 //
-// CAVEAT (not byte-for-byte identical to the other adapters): file.edited gives only
-// a path, so this adapter feeds the WHOLE post-edit file as the flip text. The
-// Claude/Codex adapters pass only the flipped hunk, so their Evidence check is scoped
-// to the flipped task; here an `Evidence:` line ANYWHERE in the file can satisfy the
-// check, and any edit to a tasks.md that already contains a `[x]` re-triggers the
-// gate. This is a best-effort in-loop convenience; the git pre-commit Evidence gate +
-// CI are the hard floor that catches a bad `[x]` at commit/push/PR regardless.
+// PARITY: file.edited gives only a path, so this adapter feeds the WHOLE post-edit
+// file as the flip text. That is now SAFE and gives the SAME verdict as the Claude/
+// Codex adapters (which pass only the flipped hunk), because the engine
+// (.ai/bin/gate-task.sh) scopes the Evidence check PER [x] TASK: each flipped task
+// must carry its own non-trivial `Evidence:` line inside its OWN region. An
+// `Evidence:` line belonging to a DIFFERENT task therefore can NO LONGER satisfy a
+// freshly-flipped task that has none of its own — the whole-file shape and the
+// scoped-hunk shape converge on one verdict. (Any edit to a tasks.md that already
+// contains a `[x]` still re-triggers the gate; that is intentional and harmless —
+// a green, properly-evidenced file passes.)
+// The git pre-commit Evidence gate + CI remain the hard floor at commit/push/PR.
 //
 // Runtime: OpenCode runs plugins under Bun and injects a `$` shell tag.
 //
@@ -49,7 +53,8 @@ export const TaskGate = async ({ $ }) => ({
     // is handed (arg $2 / $GATE_NEW), not the file on disk — file.edited gives us
     // only the path, so we read the post-edit file and pass its content as the
     // flip text. The engine then re-checks the [x] flip, runs typecheck + test,
-    // and requires an Evidence: block. exit 2 = red gate.
+    // and requires a non-trivial Evidence: line scoped to EACH flipped [x] task's
+    // own region (per-task, not per-file). exit 2 = red gate.
     const r = await $`GATE_NEW="$(cat ${file})" ./.ai/bin/gate-task.sh ${file}`
       .nothrow()
       .quiet();

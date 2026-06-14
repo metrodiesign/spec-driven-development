@@ -1,10 +1,36 @@
 # Codex project config for spec-driven-development.
-# Wires native Codex subagents (.codex/agents/*.toml -> .ai/roles single source)
+# Wires native Codex subagents (.codex/agents/*.toml -> .ai/roles single source),
+# the pre/post-tool guard + task-gate hooks (single source: .ai/bin/check-*.sh, gate-task.sh),
 # and the browser-verify MCP server (single source: .claude/skills/spec-implement/references/browser-verify.md).
 
 [agents]
 max_threads = 6
 max_depth = 1
+
+# Hooks (Codex's REAL mechanism) — Codex loads hooks from config.toml under a
+# `[hooks]` table (event -> array of matcher groups, each with a `hooks` array),
+# NOT from a standalone `.codex/hooks.json`. The legacy `.codex/hooks.json` in this
+# directory is INERT under Codex's loader and is kept only as a cross-harness
+# reference / Claude-shape mirror; THIS block is what Codex actually enforces.
+# Each command delegates to the single-source check engine in `.ai/bin/`, the same
+# logic Claude/OpenCode use. PreToolUse blocks a destructive/bypass command before it
+# runs; PostToolUse re-checks a flipped `[x]` task against the gate engine.
+[hooks]
+
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = ".codex/hooks/guard.sh"
+
+[[hooks.PostToolUse]]
+matcher = "^(apply_patch|Bash|Write|Edit)$"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = ".codex/hooks/task-gate.sh"
+timeout = 120
 
 # Browser-verify MCP (confirm package/version). Enables the browser-verify recipes for Codex.
 [mcp_servers.chrome-devtools]
