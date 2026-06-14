@@ -1,26 +1,57 @@
-# Spec-Driven Development Constitution
+# Spec-Driven Development Constitution (Claude adapter)
 
-This project practices STRICT spec-driven development. Specifications come before
+This project practices STRICT spec-driven development: specifications come before
 code, ALWAYS. Do not jump to implementation for any non-trivial feature.
 
-## The non-negotiable workflow
+The behavior, project standards, and the full workflow are defined ONCE in the
+vendor-neutral `.ai/` operating layer and reused by every agent. This file is the
+thin Claude Code adapter on top of it — it bootstraps the shared layer and maps it
+to real Claude mechanisms. It does NOT restate shared prose.
+
+## Read first, every session (the always-on canon)
+
+Before doing any work, read the canonical shared sources — they are the durable
+source of truth; this conversation is temporary working memory:
+
+- `.ai/shared/PROJECT_CONTEXT.md` — what the product is and why
+- `.ai/shared/CODING_STANDARDS.md` — the stack you MUST prefer + hard constraints
+- `.ai/shared/ARCHITECTURE.md` — folder layout, naming, file organization
+- `.ai/shared/LESSONS.md` — promoted process lessons (read every session)
+
+Then follow `.ai/shared/TASK_PROTOCOL.md` for how a task flows end-to-end (phases,
+task sizing, Definition of Done, prohibitions). EARS notation lives in
+`.ai/shared/EARS.md`; review, testing, security, output, context, and handoff
+protocols are the other `.ai/shared/*.md` files — open the one the task needs.
+
+`.claude/rules/*.md` are still auto-loaded every turn by the rules loader, but they
+are now pointer stubs routing to these canonical `.ai/shared/*` files (and
+`stack-nextjs.md` is path-scoped). Do not @-import them here, and do not edit the
+stubs — read the canonical sources directly and change knowledge there, once.
+
+## Apply your Claude agent profile
+
+Adopt the Claude-specific adapter and honest self-knowledge in:
+
+- `.ai/agents/claude/AGENT.md` — which real Claude mechanisms map to the shared layer
+- `.ai/agents/claude/CAPABILITIES.md`
+- `.ai/agents/claude/LIMITATIONS.md`
+
+## The workflow gates (non-negotiable)
 
 Every feature flows through three artifacts under `.claude/specs/<feature-name>/`,
-in order, with an APPROVAL GATE after each:
+IN ORDER, with an APPROVAL GATE after each (Design-First swaps 1 and 2 — same gates):
 
-  1. requirements.md  — WHAT the system must do (behavior, in EARS notation)
+  1. requirements.md  — WHAT the system must do (EARS notation)
   2. design.md        — HOW it will be built (architecture)
   3. tasks.md         — discrete, trackable implementation steps
 
-(Design-First swaps 1 and 2 — same approval gates.)
-
 After producing each artifact, STOP and ask me to review before generating the
 next. Wait for explicit approval ("approved" / "continue"). The only exception is
-when I invoke `/spec-quick`, which runs all phases without gates.
+`/spec-quick`, which runs all phases without gates. (Full phase detail and the
+"approval lives in the file, not the conversation" rule: `.ai/shared/TASK_PROTOCOL.md`.)
 
-## How to run each phase
+## How to run each phase (project slash commands — do not improvise the structure)
 
-Use the project slash commands — do not improvise the structure:
   /spec-new <idea>        choose a workflow and ask clarifying questions
   /spec-requirements      generate requirements.md (EARS)
   /spec-analyze           audit requirements for gaps/conflicts before design
@@ -32,58 +63,34 @@ Use the project slash commands — do not improvise the structure:
   /spec-retro             session retrospective — run at END of session, BEFORE /clear
   /spec-sync-github <feature>  mirror tasks to GitHub Issues (Epic + sub-issues), idempotent
 
-## EARS notation (mandatory for requirements)
+Each `SKILL.md` owns its phase structure and references the canonical `.ai/shared/*`
+standards — do not re-derive it.
 
-Write every functional requirement using one of these patterns, each with a
-stable ID (REQ-1.2):
-  - THE SYSTEM SHALL <behavior>                                   (ubiquitous)
-  - WHEN <trigger> THE SYSTEM SHALL <behavior>                    (event-driven)
-  - WHILE <state> THE SYSTEM SHALL <behavior>                     (state-driven)
-  - WHERE <feature included> THE SYSTEM SHALL <behavior>          (optional)
-  - IF <unwanted condition> THEN THE SYSTEM SHALL <response>      (error handling)
-Requirements must be atomic, unambiguous, and testable.
+## Claude-specific mechanisms (live, committed config — see AGENT.md for the full map)
 
-## Project standards
+- Subagents (`.claude/agents/*` wrapping `.ai/roles/*`): spawn a fresh-context
+  specialist for review, audit, or isolated investigation — `spec-architect`,
+  `bug-investigator`, `pbt-runner`.
+- Hooks (`.claude/hooks/*` -> `.ai/bin/*`, wired in `.claude/settings.json`):
+  enforcement guards. A blocked command exits non-zero with the rule it violated.
+  Do NOT try to bypass a guard (the bypass guard catches exactly that). When a hook
+  blocks a compound command, the whole command is killed — re-check which parts ran.
+- Command (`.claude/commands/pane-loop.md`): drives /spec-implement -> /spec-retro
+  -> /clear across iTerm panes.
 
-Project standards live in `.claude/rules/` — product.md (what/why), tech.md (the
-stack you MUST prefer), structure.md (file organization), lessons.md (process
-lessons): all auto-loaded every turn by the rules loader; stack-nextjs.md is
-path-scoped. Do not @-import them here — that double-loads the same content.
+The durable enforcement floor is Tier 1 — committed git hooks (`.githooks/`) + CI,
+which gate every agent and human at commit and PR. The Claude hooks are an early,
+in-session convenience on top of that floor.
 
-## Task sizing (this project runs a large-context, high-effort model)
+## Context discipline (Claude-specific — full rules in `.ai/shared/CONTEXT_MANAGEMENT.md`)
 
-Size tasks as cohesive, independently verifiable slices of behavior — NOT micro-steps.
-Assume you can hold the whole feature in context and implement a complete task
-end-to-end in one pass, even when it spans many files. A typical feature is about
-5-10 tasks, not 20-30. Do NOT pre-split a task into 1.1/1.2 sub-steps inside
-tasks.md; decompose into working steps yourself at execution time using your own
-internal TODO list. Prefer vertical slices (model → API → validation → tests) over
-horizontal layers that are useless alone.
-
-## Working agreements
-
-- Keep specs in sync: a change in requirements propagates to design and tasks.
-- Implement a whole task (it may touch many files) end-to-end, including its tests,
-  then mark "- [x]" and state which REQ IDs are now satisfied. Pause for review at
-  TASK boundaries, not after every file. Implement several tasks in one go only when
-  I ask (a range or "all"), proceeding in dependency order.
-- Match the conventions in structure.md exactly.
-- When something is ambiguous, batch your questions and ask before assuming.
-- Be concise and engineering-focused.
-
-## Context discipline (save tokens WITHOUT losing correctness)
-
-- The spec files in `.claude/specs/<feature>/` are the durable source of truth;
-  this conversation is temporary working memory. Before I run /clear, or before
-  compaction triggers, make sure the current state — active task ID, decisions and
-  their rationale, what's done, and the next step — is written into tasks.md /
-  design.md. NEVER clear or compact in the middle of an unfinished task whose state
-  lives only in this conversation.
-- When compaction runs, ALWAYS preserve: the active spec and task ID, the list of
-  modified files, the exact test/build/run commands, and every architectural
-  decision with its rationale. Do not drop these even to save space.
+- The spec files in `.claude/specs/<feature>/` are the durable source of truth; this
+  conversation is temporary working memory. Before I run /clear, or before compaction
+  triggers, write the current state — active task ID, decisions + rationale, what's
+  done, the next step — into tasks.md / design.md. NEVER clear or compact in the
+  middle of an unfinished task whose state lives only in this conversation.
 - Prefer a fresh session per cohesive task (reload context by reading the spec with
-  @) over one long session. A clean, focused context is also more accurate.
+  `@`) over one long session — a clean, focused context is also more accurate.
 - Keep this file lean, but NEVER remove a rule that prevents a real mistake.
-  Correctness outranks token savings: if economizing would risk a wrong result,
-  do not economize — tell me instead.
+  Correctness outranks token savings: if economizing would risk a wrong result, do
+  not economize — tell me instead.

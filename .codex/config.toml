@@ -1,0 +1,12 @@
+# Codex project config for spec-driven-development.
+# Wires native Codex subagents (.codex/agents/*.toml -> .ai/roles single source)
+# and the browser-verify MCP server (single source: .claude/skills/spec-implement/references/browser-verify.md).
+
+[agents]
+max_threads = 6
+max_depth = 1
+
+# Browser-verify MCP (confirm package/version). Enables the browser-verify recipes for Codex.
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]

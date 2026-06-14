@@ -10,7 +10,7 @@ Resolve the target spec: use $ARGUMENTS if given; if `.claude/specs/` holds more
 than one feature and none was named, list them and ask — never guess.
 
 Mode — requirements-first (default, requirements.md exists): read it plus the
-project rules (@.claude/rules/tech.md, @.claude/rules/structure.md). If it is
+project rules (@.ai/shared/CODING_STANDARDS.md, @.ai/shared/ARCHITECTURE.md). If it is
 still `> Status: draft`, warn in Thai and ask for confirmation before
 proceeding — and if I confirm, flip requirements.md to
 `> Status: approved <YYYY-MM-DD>` as part of that confirmation.

@@ -89,7 +89,7 @@ purpose to cut output cost.
    ## Lessons Learned
 
    เพิ่มเฉพาะบทเรียน reusable, mistake-preventing จริง (0 ก็ได้ถ้าไม่มี). รูปแบบเดียวกับ
-   `.claude/rules/lessons.md` เพื่อ promote ตรงในขั้นถัดไป:
+   `.ai/shared/LESSONS.md` เพื่อ promote ตรงในขั้นถัดไป:
 
    - **Pattern**: [สิ่งที่ทำ/กับดัก] — **Why**: [ทำไมถึงสำคัญ/กันพลาดอะไร]
    - **Discovery**: [สิ่งที่เพิ่งรู้] — **Why**: [นำไปใช้อย่างไร]
@@ -103,9 +103,9 @@ purpose to cut output cost.
    Do NOT append lessons to CLAUDE.md. Add ONLY genuinely reusable, mistake-preventing
    lessons, and prune stale/duplicate ones. Route by scope:
    - Universal (process / workflow / git / CC tooling — applies on any task) →
-     `.claude/rules/lessons.md` (always-on prefix — keep it lean).
+     `.ai/shared/LESSONS.md` (always-on prefix — keep it lean).
    - Stack-specific implementation patterns (Next/React/Tailwind/vitest/CSS/SVG/TS) →
-     `.claude/rules/stack-nextjs.md` (path-scoped — loads only when reading matching files).
+     `.ai/shared/stack/nextjs.md` (path-scoped — loads only when reading matching files).
    - Browser-verify / probe recipes (Playwright/MCP/viewport/probe methodology) →
      `.claude/skills/spec-implement/references/browser-verify.md` (loaded only
      during the verify phase).
@@ -113,12 +113,15 @@ purpose to cut output cost.
      `.claude/skills/spec-retro/references/cost-accounting.md` — NOT lessons.md
      (only the one-line kernel lives there).
 
-4. **Steering sync** (before commit): compare ground truth against steering —
-   dependencies in `package.json` vs `tech.md`, new files in `app/` vs the layout
-   in `structure.md`, and `paths:` frontmatter globs in `.claude/rules/*.md` vs
-   real paths. Fix any drift now, in the same commit.
+4. **Steering sync** (before commit): compare ground truth against the canonical
+   steering — dependencies in `package.json` vs `.ai/shared/CODING_STANDARDS.md`,
+   new files in `app/` vs the layout in `.ai/shared/ARCHITECTURE.md`, and the
+   `paths:` frontmatter globs in `.claude/rules/stack-nextjs.md` (the sole stub that
+   keeps a glob) vs real paths. Fix any drift now, in the same commit.
 
-5. **Commit**: `git add retrospectives/ .claude/rules/ .claude/skills/spec-implement/references/ .claude/skills/spec-retro/references/ && git commit -m "docs: session retrospective YYYY-MM-DD"`
+5. **Commit**: `git add retrospectives/ .ai/shared/ .claude/rules/ .claude/skills/spec-implement/references/ .claude/skills/spec-retro/references/ && git commit -m "docs: session retrospective YYYY-MM-DD"`
+   (`.ai/shared/` MUST be staged — promoted lessons in step 3 now land in
+   `.ai/shared/LESSONS.md` / `.ai/shared/stack/nextjs.md`, not the `.claude/rules` stubs.)
 
 ## Critical requirements
 
