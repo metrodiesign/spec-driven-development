@@ -8,8 +8,10 @@ max_threads = 6
 max_depth = 1
 
 # Hooks — Codex DISCOVERS hooks from this project `config.toml` `[hooks]` table (event ->
-# array of matcher groups, each with a `hooks` array), NOT from a standalone
-# `.codex/hooks.json` (that legacy file is inert, kept only as a Claude-shape reference).
+# array of matcher groups, each with a `hooks` array). The legacy `.codex/hooks.json` was
+# REMOVED (issue #26): Codex 0.139 loads it TOO, so keeping it triggered a live "loading
+# hooks from both .codex/hooks.json and .codex/config.toml; prefer a single representation"
+# warning and double-registered guard.sh/task-gate.sh. config.toml is the single source.
 # IMPORTANT (issue #26): discovery != firing. Per the Codex docs these project-local hooks
 # load "only when the project `.codex/` layer is trusted", and each command hook must be
 # reviewed + trusted via the interactive `/hooks` command (recorded against its hash) or it

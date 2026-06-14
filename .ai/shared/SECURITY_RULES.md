@@ -11,7 +11,7 @@ only for harnesses that support pre-tool hooks.
 | Tier | Mechanism | Covers | Notes |
 |---|---|---|---|
 | 1. Git + CI (the floor) | `.githooks/` (enabled via `core.hooksPath`) + `.github/workflows/ci.yml`, both calling `.ai/bin/check-*.sh` | **ALL agents + humans** | Cannot be bypassed by choosing a different agent. This is the real, cross-agent enforcement. |
-| 2. Harness pre-tool hook | Claude: `.claude/hooks/*` -> `.ai/bin/`; Codex: `.codex/config.toml` `[hooks]` -> `.codex/hooks/*` -> `.ai/bin/` (Codex loads hooks from `config.toml`, NOT from `.codex/hooks.json`); OpenCode: `.opencode/plugins/ai-guard.js` -> `.ai/bin/` | Claude, Codex, OpenCode | Pre-execution interception. Pi has no core pre-tool hook, so it falls back to Tier 1 + Tier 3. |
+| 2. Harness pre-tool hook | Claude: `.claude/hooks/*` -> `.ai/bin/`; Codex: `.codex/config.toml` `[hooks]` -> `.codex/hooks/*` -> `.ai/bin/` (single source `config.toml`; the legacy `.codex/hooks.json` was removed — Codex 0.139 loaded both, see issue #26 — and these in-session hooks fire only after interactive `/hooks` trust); OpenCode: `.opencode/plugins/ai-guard.js` -> `.ai/bin/` | Claude, Codex, OpenCode | Pre-execution interception. Pi has no core pre-tool hook, so it falls back to Tier 1 + Tier 3. |
 | 3. Procedural | root `AGENTS.md` + `.ai/roles/` + `.ai/workflows/` instruct the agent to run `.ai/bin/check-*` before risky commands | ALL agents (the only AI-side layer Pi has) | Advisory; relies on the agent following instructions. The git+CI floor backstops it. |
 
 **Hooks are Claude/Codex/OpenCode-only. The git + CI floor is the enforcement that

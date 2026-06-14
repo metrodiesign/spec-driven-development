@@ -60,10 +60,11 @@ and current before relying on it.
   `.codex/prompts` — skills replace them.
 - **Pre-tool guard** — registered in `.codex/config.toml` under `[hooks]` as
   `[[hooks.PreToolUse]]` with matcher `"^Bash$"`, running `.codex/hooks/guard.sh`.
-  **This is Codex's real mechanism: Codex discovers hooks from `config.toml` (the
-  reported `sourcePath` for a discovered hook is `config.toml`), NOT from a standalone
-  `.codex/hooks.json`** — that legacy file is kept only as a cross-harness reference
-  and is inert under Codex's loader. The guard reads the Codex hook input, extracts the
+  **Codex discovers hooks from `config.toml` `[hooks]`.** The legacy `.codex/hooks.json`
+  was REMOVED (issue #26): contrary to the earlier "inert" assumption, Codex 0.139 loads
+  it too — the live `/hooks` panel warned "loading hooks from both .codex/hooks.json and
+  .codex/config.toml; prefer a single representation" and double-registered guard.sh /
+  task-gate.sh. `config.toml` is now the single source. The guard reads the Codex hook input, extracts the
   command, and delegates to the single-source check engine: `../../bin/check-destructive.sh`
   and `../../bin/check-bypass.sh`. A blocked command stops with the rule it violated.
   The destructive engine now blocks (verified against the live engine, identical exit
@@ -84,7 +85,7 @@ and current before relying on it.
   for when these hooks actually run.)
 - **Task-gate** — registered in `.codex/config.toml` `[hooks]` as `[[hooks.PostToolUse]]`
   with matcher `"^(apply_patch|Bash|Write|Edit)$"`, running `.codex/hooks/task-gate.sh`
-  (again `config.toml`, not `hooks.json`). The script extracts the edited file + new
+  (again `config.toml`; `.codex/hooks.json` removed — see Pre-tool guard). The script extracts the edited file + new
   content from the Codex hook payload and delegates to the single-source gate engine
   `../../bin/gate-task.sh` (`$GATE_FILE` / `$GATE_NEW`). The gate fires only when a
   `.claude/specs/*/tasks.md` checkbox is flipped to `[x]`: green = silent exit 0, red
@@ -116,6 +117,10 @@ and current before relying on it.
   ONCE in this repo to review + trust `guard.sh`, `task-gate.sh`, `spec-edit-guard.sh` —
   per-machine human setup, like `core.hooksPath`, that cannot be committed. The simulated
   payload tests above prove the adapters enforce correctly once Codex actually invokes them.
+  VERIFIED LIVE (2026-06-14, Codex 0.139): after removing the duplicate `.codex/hooks.json`
+  and trusting the hooks via `/hooks`, an interactive Codex session BLOCKED
+  `SECRET_GUARD_SKIP=1 git status` with the guard's own message — confirming the project
+  config.toml hooks register, parse, and fire end-to-end once trusted.
 - **Subagents** — native Codex subagents under `.codex/agents/*.toml`
   (`spec-architect`, `bug-investigator`, `pbt-runner`), each a thin `.toml` whose
   `developer_instructions` adopt the persona body from `../../roles/*` (the single
