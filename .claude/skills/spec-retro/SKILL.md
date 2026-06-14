@@ -89,7 +89,7 @@ purpose to cut output cost.
    ## Lessons Learned
 
    เพิ่มเฉพาะบทเรียน reusable, mistake-preventing จริง (0 ก็ได้ถ้าไม่มี). รูปแบบเดียวกับ
-   `.claude/rules/lessons.md` เพื่อ promote ตรงในขั้นถัดไป:
+   `.ai/shared/LESSONS.md` เพื่อ promote ตรงในขั้นถัดไป:
 
    - **Pattern**: [สิ่งที่ทำ/กับดัก] — **Why**: [ทำไมถึงสำคัญ/กันพลาดอะไร]
    - **Discovery**: [สิ่งที่เพิ่งรู้] — **Why**: [นำไปใช้อย่างไร]
@@ -103,9 +103,9 @@ purpose to cut output cost.
    Do NOT append lessons to CLAUDE.md. Add ONLY genuinely reusable, mistake-preventing
    lessons, and prune stale/duplicate ones. Route by scope:
    - Universal (process / workflow / git / CC tooling — applies on any task) →
-     `.claude/rules/lessons.md` (always-on prefix — keep it lean).
+     `.ai/shared/LESSONS.md` (always-on prefix — keep it lean).
    - Stack-specific implementation patterns (Next/React/Tailwind/vitest/CSS/SVG/TS) →
-     `.claude/rules/stack-nextjs.md` (path-scoped — loads only when reading matching files).
+     `.ai/shared/stack/nextjs.md` (path-scoped — loads only when reading matching files).
    - Browser-verify / probe recipes (Playwright/MCP/viewport/probe methodology) →
      `.claude/skills/spec-implement/references/browser-verify.md` (loaded only
      during the verify phase).

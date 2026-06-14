@@ -2,7 +2,7 @@
 
 > โหลดเฉพาะช่วง verify: spec-implement สั่ง Read ไฟล์นี้ก่อนเริ่ม browser-based
 > verification ทุกครั้ง. บทเรียน probe/Playwright/MCP ที่ promote จาก retrospectives —
-> implementation patterns อยู่ `.claude/rules/stack-nextjs.md` (path-scoped).
+> implementation patterns อยู่ `.ai/shared/stack/nextjs.md` (path-scoped).
 > Keep lean, prune stale.
 
 ## Viewport / environment

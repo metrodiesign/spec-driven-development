@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# task-gate.sh — quality gate ที่ task boundary (PostToolUse: Edit|Write)
-# ยิงเฉพาะเมื่อ checkbox ใน .claude/specs/*/tasks.md ถูก flip เป็น [x]
-# เขียว = เงียบ exit 0 (zero token), แดง = exit 2 + stderr ให้โมเดลแก้ก่อน mark เสร็จ
+# task-gate.sh — thin Claude adapter (PostToolUse: Edit|Write)
+# Keeps the Claude stdin-JSON parse + tasks.md path filter + FLIPPED detection here,
+# then delegates typecheck/test/Evidence to .ai/bin/gate-task.sh (GATE_FILE/GATE_NEW).
+# เขียว = เงียบ exit 0, แดง = exit 2 + stderr ให้แก้ก่อน mark เสร็จ
 
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
@@ -11,39 +12,25 @@ case "$FILE" in
   *) exit 0 ;;
 esac
 
+ENGINE="$(dirname "$0")/../../.ai/bin/gate-task.sh"
+
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
-FLIPPED=0
 if [ "$TOOL" = "Edit" ]; then
   OLD=$(echo "$INPUT" | jq -r '.tool_input.old_string // empty')
   NEW=$(echo "$INPUT" | jq -r '.tool_input.new_string // empty')
   OLD_X=$(printf '%s\n' "$OLD" | grep -ci -- '- \[x\]')
   NEW_X=$(printf '%s\n' "$NEW" | grep -ci -- '- \[x\]')
-  [ "$NEW_X" -gt "$OLD_X" ] && FLIPPED=1
+  [ "$NEW_X" -gt "$OLD_X" ] || exit 0
+  # Edit flip: delegate with the real new_string so the engine's typecheck/test +
+  # Evidence-presence gate apply exactly as before.
+  exec "$ENGINE" "$FILE" "$NEW"
 else
   # Write ทับทั้งไฟล์ เทียบ count ก่อน/หลังไม่ได้ — ยอม trigger เมื่อ content มี [x] ใดๆ
   CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty')
-  printf '%s\n' "$CONTENT" | grep -qi -- '- \[x\]' && FLIPPED=1
+  printf '%s\n' "$CONTENT" | grep -qi -- '- \[x\]' || exit 0
+  # Write path keeps its original behavior: run typecheck/test but DO NOT require an
+  # Evidence block. The engine always requires Evidence on GATE_NEW, so pass a flip
+  # token that already carries an Evidence: line to satisfy that gate while preserving
+  # the code-green check.
+  exec "$ENGINE" "$FILE" "$(printf '%s\n%s\n' '- [x]' 'Evidence: n/a (Write path)')"
 fi
-[ "$FLIPPED" -eq 1 ] || exit 0
-
-OUT=$(npm run typecheck --silent 2>&1) || {
-  echo 'Task gate: typecheck ไม่ผ่าน — ห้าม mark [x] จนกว่าเขียว' >&2
-  echo "$OUT" | tail -20 >&2
-  exit 2
-}
-OUT=$(npm test --silent 2>&1) || {
-  # vitest exit 1 เมื่อไม่มี test file เลย — ไม่ใช่ test แดง อย่า block task ที่ไม่มี test โดยชอบ
-  if ! echo "$OUT" | grep -q 'No test files found'; then
-    echo 'Task gate: test ไม่ผ่าน — ห้าม mark [x] จนกว่าเขียว' >&2
-    echo "$OUT" | tail -20 >&2
-    exit 2
-  fi
-}
-
-# evidence-presence gate (Edit path only; Write keeps the FLIPPED-on-content limit above)
-# code-green is checked first (above); only then require an `Evidence:` block in the flip.
-if [ "$TOOL" = "Edit" ] && ! printf '%s\n' "$NEW" | grep -qiE '^[[:space:]]*Evidence:'; then
-  echo 'Task gate: ขาด Evidence block — บันทึก test result + viewports (375/768/1440 หรือ n/a) + deviations ใต้ task ก่อน mark [x]' >&2
-  exit 2
-fi
-exit 0

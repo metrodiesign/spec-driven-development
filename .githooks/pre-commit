@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# pre-commit — Tier 1 enforcement floor (covers EVERY agent + human).
+# Enabled per-clone with: git config core.hooksPath .githooks  (see .ai/README.md SETUP)
+#
+# Runs two fast, deterministic gates. NO tests here (they belong in CI, ci.yml) —
+# pre-commit must stay quick so it does not tempt anyone into --no-verify.
+#   1. Secret scan of the staged change (single source: .ai/bin/check-secrets.sh).
+#   2. If any */tasks.md is staged, require an Evidence: block in the staged content
+#      (presence check only — the real typecheck+test gate runs in CI / task-gate).
+# Any non-zero exit blocks the commit.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+BIN="$REPO_ROOT/.ai/bin"
+
+# 1. Secret scan (staged diff). check-secrets.sh exits non-zero when a secret is found.
+"$BIN/check-secrets.sh"
+
+# 2. Evidence-presence check for staged tasks.md files.
+#    A flipped/added task needs an `Evidence:` line; we cheaply require that any staged
+#    tasks.md whose staged content marks a task done ([x]) also carries an Evidence: block.
+STAGED_TASKS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)tasks\.md$' || true)
+if [ -n "$STAGED_TASKS" ]; then
+  missing=()
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    # Look only at the staged version of the file (index), not the working tree.
+    staged_content=$(git show ":$f" 2>/dev/null || true)
+    # Only enforce when this commit marks a task done.
+    if printf '%s\n' "$staged_content" | grep -qiE '^[[:space:]]*- \[x\]'; then
+      if ! printf '%s\n' "$staged_content" | grep -qiE '^[[:space:]]*Evidence:'; then
+        missing+=("$f")
+      fi
+    fi
+  done <<<"$STAGED_TASKS"
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Blocked: tasks.md marks a task [x] but has no 'Evidence:' block:" >&2
+    for f in "${missing[@]}"; do echo "  - $f" >&2; done
+    echo "Add an Evidence: block (test result + viewports 375/768/1440 or n/a + deviations) before committing." >&2
+    exit 1
+  fi
+fi
+
+exit 0
