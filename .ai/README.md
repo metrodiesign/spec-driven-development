@@ -74,7 +74,7 @@ applicable in this setup. Wiring detail is in each `agents/<harness>/AGENT.md`.
 | spec-* workflow as skills | native (`.claude/skills/spec-*`) | native (`.agents/skills/spec-*`) | native (`.agents/skills/` + `.claude/skills/`) | native (`.agents/skills/spec-*`) |
 | Slash commands | native (`.claude/commands/`) | via skills (prompts deprecated) | native (`.opencode/commands/spec-*`) | via skills |
 | Subagents (fresh-context personas) | native (Task tool -> `.ai/roles/*`) | native (`.codex/agents/*.toml` + `[agents]`) | native (`.opencode/agents/*`) | floor-only (persona via skill / `APPEND_SYSTEM.md`) |
-| Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/config.toml` `[hooks].PreToolUse` -> `guard.sh`; NOT `.codex/hooks.json`) | native (`.opencode/plugins/ai-guard.js`) | floor-only (run `.ai/bin/check-*` by hand) |
+| Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/config.toml` `[hooks].PreToolUse` -> `guard.sh`; needs interactive `/hooks` trust, see issue #26) | native (`.opencode/plugins/ai-guard.js`) | floor-only (run `.ai/bin/check-*` by hand) |
 | Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/config.toml` `[hooks].PostToolUse` -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | floor-only (git pre-commit + CI) |
 | MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`) | native (`opencode.json` `mcp`) | n/a (no MCP host) |
 
