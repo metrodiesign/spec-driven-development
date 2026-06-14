@@ -71,14 +71,16 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
 - spec sync กัน: เปลี่ยน requirements -> propagate ไป design + tasks
 - implement ทั้ง task (อาจหลายไฟล์) รวม test -> mark `- [x]` + ระบุ REQ id ที่ปิด -> pause ที่
   task boundary (ไม่ใช่หลังทุกไฟล์). ใน **edit เดียวกัน** กับที่ flip `[x]` ต้อง append
-  `Evidence:` block ใต้ task: test command + result, viewports `375/768/1440` (browser task;
-  ไม่ใช่ -> `n/a — logic-only`), deviations. `task-gate` hook บังคับ typecheck+test เขียว +
-  มี Evidence ก่อนยอมให้ `[x]` ผ่าน (ดู [05-hooks.md](05-hooks.md))
+  `Evidence:` block ใต้ task: test command + result, UI verify (ถ้าโปรเจกต์ ship UI: verify ใน
+  target runtime ของโปรเจกต์ ดู project UI-verify reference; ไม่ใช่ -> `n/a — logic-only`),
+  deviations. `task-gate` hook บังคับ green + มี Evidence ก่อนยอมให้ `[x]` ผ่าน — โดย green
+  พิสูจน์ผ่าน `.ai/bin/gate-task.sh` ที่อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD`
+  (auto-detect package.json script สำหรับโปรเจกต์ Node) (ดู [05-hooks.md](05-hooks.md))
 - ก่อน design STOP: delegate critique ให้ `spec-architect` (adversarial reviewer) — apply หรือ
   rebut ทุก finding ก่อนขอ approve
 - /spec-analyze ก่อน design คุ้มเสมอสำหรับฟีเจอร์ที่มี logic (จับ conflict ที่ทำให้ test เขียนไม่ได้)
-- pure-logic-first: แยก logic ทดสอบได้ (สูตร/validation) เป็น pure function ใน `lib/` เขียน unit
-  test เขียวก่อนแตะ UI
+- pure-logic-first: แยก logic ทดสอบได้ (สูตร/validation) เป็น pure function วางใน project test
+  directory ที่ co-located กับ logic ที่ทดสอบ เขียน unit test เขียวก่อนแตะ UI
 
 ## 1.6 context discipline
 
@@ -89,10 +91,8 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
   โมเดลยังเป็นคนเขียน (ดู [05-hooks.md](05-hooks.md))
 - prefer fresh session ต่อ task (reload ด้วย `@` อ่าน spec) ดีกว่า session ยาว
 
-## 1.7 เคสจริงล่าสุด (insurance-homepage)
+## 1.7 ตัวอย่าง spec ของจริง
 
-- 9 task แรก = หน้าเว็บประกัน (scaffold -> data -> premium engine -> sections -> calculator
-  -> responsive/a11y pass)
-- รอบ enhancement (Enh-1): task 10 hero campaign slider (4 สไลด์), task 11 store logos +
-  port 3030 — เพิ่มผ่านวงจรเดิม (requirements -> design -> tasks -> implement)
-- ดูตัวอย่าง spec จริงได้ที่ `../.claude/specs/insurance-homepage/`
+- วงจรเดิมรองรับทั้งฟีเจอร์ใหม่และรอบ enhancement: เพิ่ม task ผ่านลำดับเดิม
+  (requirements -> design -> tasks -> implement) เสมอ
+- browse `.claude/specs/<feature>/` เพื่อดูตัวอย่าง spec ของโปรเจกต์เอง (demo spec ถูกถอดออกแล้ว)

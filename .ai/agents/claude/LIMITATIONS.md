@@ -29,15 +29,15 @@ actually cost time here. Read them before trusting an in-session signal.
 
 - A headless `claude -p` run buffers its output until the work finishes. A blank
   pane and low CPU do **not** mean it is hung. Before killing it, check progress on
-  disk (`git status`, new files, `node_modules`) — not the pane. Also,
-  `--permission-mode acceptEdits` covers Edit only, not Bash; npm/scaffold steps
+  disk (`git status`, new files, installed dependencies) — not the pane. Also,
+  `--permission-mode acceptEdits` covers Edit only, not Bash; setup/scaffold steps
   stall silently on a permission prompt in headless mode unless you pass
   `--dangerously-skip-permissions` or an explicit `--allowedTools`.
 
 ## Untracked files are invisible to `git diff --stat`
 
 - `git diff --stat` / `--name-only` do **not** show files in an untracked path
-  (here, the whole `app/` folder can be `??`). A retro or handoff that gathers
+  (a whole new source folder can be `??`). A retro or handoff that gathers
   "Files Modified" from git stat alone will silently drop real code (you see only
   tracked spec/docs). Always cross-check `git status` (which shows `??`) and recall
   what you changed this session.
@@ -47,8 +47,9 @@ actually cost time here. Read them before trusting an in-session signal.
 - `tasks.md` checkboxes can contradict the git log (a commit claims a task is done
   while the box is still `[ ]`), and a retrospective-only commit (docs with no
   code) makes a branch look like progress when it is empty. Before starting, trust
-  the **filesystem**: `ls app/`, `find package.json` to confirm artifacts exist.
-  Do not skip or re-do work based on a report that the code does not back up.
+  the **filesystem**: list the source folder and locate the project manifest to
+  confirm artifacts exist. Do not skip or re-do work based on a report that the
+  code does not back up.
 
 ## After a failure, read the whole output before retrying
 
@@ -61,9 +62,9 @@ actually cost time here. Read them before trusting an in-session signal.
 ## Tool/output filtering can hide the real signal
 
 - The `rtk` hook rewrites command output into a summary ("Errors: 1 | Warnings: 0")
-  that can hide the real log. To see raw output of a long-running server
-  (`next start`), run it through `rtk proxy npx next start` so you see the true
-  "Ready"/error lines.
+  that can hide the real log. To see raw output of a long-running server (the
+  project production-serve command), run it through `rtk proxy <production-serve cmd>`
+  so you see the true "Ready"/error lines.
 
 ## Subagent / workflow verdicts are unreliable when a verifier dies
 
@@ -80,11 +81,11 @@ actually cost time here. Read them before trusting an in-session signal.
   the transcript overcounts (1.6–3.7x). The statusline already computes cost; do not
   re-derive it.
 
-## Browser verification needs a production build
+## Browser verification needs the project target runtime
 
-- Dev-mode hydration is unreliable in this project. Verify UI via `next start` on
-  `127.0.0.1`, and rebuild after edits before re-checking — otherwise you verify
-  stale output.
+- Dev-mode rendering can be unreliable. If the project ships a UI, verify it in the
+  project target runtime (see the project UI-verify reference) rather than dev mode,
+  and rebuild after edits before re-checking — otherwise you verify stale output.
 
 ## General
 

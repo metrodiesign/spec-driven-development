@@ -11,7 +11,7 @@ pane ถัดไป รันแบบ sequential (ทุก task แชร์ 
 
 - เห็นงานจริงใน TUI ตามเวลาจริง ตรวจ/แทรกได้ (ตรงกับ working preference)
 - headless `claude -p` buffer output จน job จบ -> pane ว่าง/CPU ต่ำ แยกไม่ออกว่า "ค้าง" หรือ
-  "กำลังทำ"; และ `--permission-mode acceptEdits` ครอบแค่ Edit ไม่ครอบ Bash -> npm/scaffold
+  "กำลังทำ"; และ `--permission-mode acceptEdits` ครอบแค่ Edit ไม่ครอบ Bash -> setup/scaffold
   ติด permission เงียบ
 - pane จริง + `--dangerously-skip-permissions` (ดู §4) -> hands-free ไม่มี prompt คั่น
 
@@ -37,7 +37,7 @@ scripts/pane-loop.sh [feature-name] [task-id ...]
 
 ```bash
 scripts/pane-loop.sh                    # auto-detect feature (ต้องมี spec เดียวเท่านั้น)
-scripts/pane-loop.sh insurance-homepage # ระบุ feature ตรง ๆ
+scripts/pane-loop.sh <feature-name> # ระบุ feature ตรง ๆ
 ```
 
 - ไม่ส่ง task id -> เลือก **ทุก task ที่เป็น `- [ ]`** ใน `tasks.md` เรียงตามลำดับในไฟล์
@@ -46,16 +46,16 @@ scripts/pane-loop.sh insurance-homepage # ระบุ feature ตรง ๆ
 ### โหมดที่ 2 — รันเฉพาะบาง task (เลือกเอง)
 
 ```bash
-scripts/pane-loop.sh insurance-homepage 11       # เฉพาะ task 11
-scripts/pane-loop.sh insurance-homepage 10 11    # task 10 แล้ว 11
-scripts/pane-loop.sh insurance-homepage 11 10    # ยัง sort เป็น 10 -> 11 ให้อัตโนมัติ
+scripts/pane-loop.sh <feature-name> 11       # เฉพาะ task 11
+scripts/pane-loop.sh <feature-name> 10 11    # task 10 แล้ว 11
+scripts/pane-loop.sh <feature-name> 11 10    # ยัง sort เป็น 10 -> 11 ให้อัตโนมัติ
 ```
 
 กฎของโหมด 2:
 
 - **ต้องใส่ feature เป็น argument แรกเสมอ** เมื่อจะระบุ task id (`$1` ถูกตีเป็น feature เสมอ)
   -> `scripts/pane-loop.sh 11` ผิด (จะหา feature ชื่อ `11`); ต้องเป็น
-  `scripts/pane-loop.sh insurance-homepage 11`
+  `scripts/pane-loop.sh <feature-name> 11`
 - **(a) auto-sort + dedup**: id ที่ส่งมาถูกเรียงเลขน้อย -> มาก และตัดซ้ำ กัน dependency พลาด
 - **(b) guard**: ถ้า id ที่ส่งมาเป็น `- [x]` อยู่แล้ว -> ข้าม + เตือน (กัน implement งานที่เสร็จแล้วซ้ำ);
   ถ้า id ไม่พบ/ไม่ใช่ pending -> ข้าม + เตือน
@@ -73,8 +73,8 @@ scripts/pane-loop.sh insurance-homepage 11 10    # ยัง sort เป็น 1
 ตัวอย่าง:
 
 ```bash
-STEP_TIMEOUT=3600 scripts/pane-loop.sh insurance-homepage 10     # ให้เวลามากขึ้น
-CLAUDE_FLAGS="" scripts/pane-loop.sh insurance-homepage 11       # approve เองในแต่ละ pane
+STEP_TIMEOUT=3600 scripts/pane-loop.sh <feature-name> 10     # ให้เวลามากขึ้น
+CLAUDE_FLAGS="" scripts/pane-loop.sh <feature-name> 11       # approve เองในแต่ละ pane
 ```
 
 > ความปลอดภัย: `--dangerously-skip-permissions` ปิด prompt ทั้งหมด (รวม Bash) -> ขอบเขตจำกัด
@@ -134,10 +134,10 @@ CLAUDE_FLAGS="" scripts/pane-loop.sh insurance-homepage 11       # approve เ�
 scripts/pane-loop.sh
 
 # รันรอบ enhancement เฉพาะ task 10 และ 11 ให้เวลาต่อ task 1 ชม.
-STEP_TIMEOUT=3600 scripts/pane-loop.sh insurance-homepage 10 11
+STEP_TIMEOUT=3600 scripts/pane-loop.sh <feature-name> 10 11
 
 # รัน task เดียว โดยกด approve เครื่องมือเอง (ไม่ skip permission)
-CLAUDE_FLAGS="" scripts/pane-loop.sh insurance-homepage 8
+CLAUDE_FLAGS="" scripts/pane-loop.sh <feature-name> 8
 ```
 
 ---

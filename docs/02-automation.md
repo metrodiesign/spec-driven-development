@@ -11,8 +11,8 @@
 
 ```bash
 scripts/pane-loop.sh                          # auto: ทุก task ที่ยัง [ ] (ต้องมี spec เดียว)
-scripts/pane-loop.sh insurance-homepage       # ระบุ feature, ทุก task ค้าง
-scripts/pane-loop.sh insurance-homepage 10 11 # เฉพาะ task 10,11 (sort + skip ที่ [x] ให้)
+scripts/pane-loop.sh <feature-name>           # ระบุ feature, ทุก task ค้าง
+scripts/pane-loop.sh <feature-name> 10 11     # เฉพาะ task 10,11 (sort + skip ที่ [x] ให้)
 ```
 
 โหมดเลือก task (arg หลัง feature):
@@ -29,8 +29,8 @@ scripts/pane-loop.sh insurance-homepage 10 11 # เฉพาะ task 10,11 (sort
 | `STEP_TIMEOUT` | `2400`                           | เพิ่มถ้า task ใหญ่/เครื่องช้า               |
 
 ```bash
-STEP_TIMEOUT=3600 scripts/pane-loop.sh insurance-homepage 10
-CLAUDE_FLAGS="" scripts/pane-loop.sh insurance-homepage 8
+STEP_TIMEOUT=3600 scripts/pane-loop.sh <feature-name> 10
+CLAUDE_FLAGS="" scripts/pane-loop.sh <feature-name> 8
 ```
 
 ## 2.3 loop ทำอะไร (ย่อ)

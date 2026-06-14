@@ -46,8 +46,11 @@ spec ใน `.claude/specs/<feature>/` ยังเป็น source of truth —
 
 ## 6.5 CI
 
-`.github/workflows/ci.yml` รัน `npm run typecheck` + `npm test` บน PR เข้า develop (gate เดียวกับ
-`task-gate.sh` ในเครื่อง) ให้ทีมเห็น green check. maintainer ตั้งให้ check `CI / typecheck + test`
+`.github/workflows/ci.yml` รัน guard regression suite + secret scan + spec-trace (REQ coverage)
+บน PR เข้า develop — gate ของ framework repo เอง ให้ทีมเห็น green check. ส่วน typecheck/test ราย
+โปรเจกต์ไม่ได้อยู่ใน CI ของ repo นี้ — มันเป็นของ downstream project (พิสูจน์ task green ด้วย
+`.ai/bin/gate-task.sh` ที่อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD` env, auto-detect package.json
+scripts สำหรับ Node project). maintainer ตั้งให้ check `CI / guards + secret-scan + spec-trace`
 เป็น required ใน branch protection ของ develop (ทำครั้งเดียวบน GitHub).
 
 ## 6.6 gh cheat-sheet (อ่าน/ทำมือ)
@@ -64,5 +67,5 @@ gh issue close <n> --comment "..."
 
 1. `gh auth login` (ต่อคน)
 2. `scripts/bootstrap-labels.sh` สร้าง label
-3. maintainer: เปิด branch protection `develop` -> require check `CI / typecheck + test` + require PR review
+3. maintainer: เปิด branch protection `develop` -> require check `CI / guards + secret-scan + spec-trace` + require PR review
 4. รัน `/spec-sync-github <feature>` ครั้งแรก -> ตรวจ preview -> ยืนยัน

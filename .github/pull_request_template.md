@@ -16,8 +16,8 @@ Tasks advanced: <!-- เลข task ใน tasks.md ที่ PR นี้ดั
 
 <!-- คำสั่งที่รันจริง + ผล -->
 
-- test: `npm test` ->
-- typecheck: `npm run typecheck` ->
+- test: `<test command>` -> <!-- project test runner: SDD_TEST_CMD env หรือ package.json test script -->
+- typecheck: `<typecheck command>` -> <!-- project typecheck command: SDD_TYPECHECK_CMD env หรือ package.json typecheck script -->
 
 ## Checklist
 

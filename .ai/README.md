@@ -91,16 +91,22 @@ source — `.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
 
 ## SETUP (one time per clone)
 
-The Tier 1 local floor is now wired automatically: `npm install` runs a `prepare`
-script that sets `core.hooksPath=.githooks`, and `.ai/bin/install.sh` actually performs
-the wiring (no longer print-only). After a normal install you should already have:
+The framework is stack-agnostic — there is no `package.json`/`npm install` to hang a
+`prepare` hook on, so a human wires the Tier 1 local floor once per clone by running:
+
+```sh
+./.ai/bin/install.sh        # sets core.hooksPath=.githooks + marks scripts executable
+```
+
+After it runs you should have:
 
 ```sh
 git config core.hooksPath   # -> .githooks
 ```
 
-If for some reason it is not set (e.g. an install without scripts), a human runs it
-once — Claude cannot, because the bypass guard blocks `core.hooksPath` edits:
+An agent cannot do this from the CLI — the bypass guard blocks `core.hooksPath` edits;
+the script (not an agent typing the command) performs the wiring. As a manual fallback a
+human can also run it directly:
 
 ```sh
 git config core.hooksPath .githooks

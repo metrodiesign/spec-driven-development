@@ -110,13 +110,15 @@ fork or weaken these checks per harness.
 - **Enforced by:** `.github/workflows/ci.yml` as a required check for ALL contributors
   (Tier 1), triggered on both `pull_request` and `push` to `main` AND `develop`.
   Server-side branch protection is the gate that cannot be skipped locally.
-- **Checks CI actually runs** (so the doc matches the workflow): `npm audit
-  --audit-level=high` (blocking — vulnerability audit per Dependency rules),
-  `typecheck`, `test`, the guard-regression suite (every `.claude/hooks/tests/*.test.sh`,
-  so the single check engine cannot be weakened silently), the full-tree secret scan
-  (`.ai/bin/check-secrets.sh --all` with `SECRET_GUARD_SKIP` force-cleared), and
-  spec-trace REQ coverage (Python 3.12 pinned). There is **no lint script** in this
-  project, so CI runs no lint step — lint is not-yet-wired, not a silent failure.
+- **Checks CI actually runs** (so the doc matches the workflow): the guard-regression
+  suite (every `.claude/hooks/tests/*.test.sh`, so the single check engine cannot be
+  weakened silently), the full-tree secret scan (`.ai/bin/check-secrets.sh --all` with
+  `SECRET_GUARD_SKIP` force-cleared), and spec-trace REQ coverage (Python 3.12 pinned).
+  A dependency vulnerability audit is REQUIRED in CI for any project that ships a package
+  manifest (see Dependencies below); this framework repo ships no runtime deps, so its CI
+  runs the guard-suite + secret scan + spec-trace instead of an audit step. There is
+  **no lint script** in this project, so CI runs no lint step — lint is not-yet-wired,
+  not a silent failure.
 
 ### Deploy / release
 
@@ -136,11 +138,13 @@ fork or weaken these checks per harness.
   need a stated reason and approval).
 - Lock files (`package-lock.json`, etc.) must always be committed.
 - Do not pin floating versions (`*` / `latest`) on a production dependency.
-- Vulnerability audit (`npm audit` or equivalent) is part of CI. When auditing, separate
-  a dev-only chain from prod-core before acting — never `npm audit fix --force` a core
-  dependency into a breaking downgrade.
-- **Enforced by:** CI runs a blocking `npm audit --audit-level=high` (Tier 1) +
-  lockfile presence + review approval for new dependencies (Tier 3, see
+- A dependency vulnerability audit (the package manager's audit command or equivalent) is
+  REQUIRED in CI for any project that ships a package manifest. When auditing, separate a
+  dev-only chain from prod-core before acting — never force-fix a core dependency into a
+  breaking downgrade.
+- **Enforced by:** for a project that ships a package manifest, a blocking dependency
+  audit in CI (Tier 1); this framework repo ships no runtime deps, so its CI has no audit
+  step. Lockfile presence + review approval for new dependencies still apply (Tier 3, see
   [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md)).
 
 ### Branch / push discipline

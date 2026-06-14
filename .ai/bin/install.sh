@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # install.sh — wire the Tier-1 enforcement floor into THIS clone, then report.
 #
-# ทำไม script นี้เคย "พิมพ์เฉย ๆ" และทำไมตอนนี้ "รันให้":
+# ทำไม "คน" ต้องรัน script นี้ (agent บน CLI รันเองไม่ได้):
 #   คำสั่ง `git config core.hooksPath ...` มี token `core.hooksPath` ซึ่ง
 #   .ai/bin/check-bypass.sh (และ Claude hook-bypass-guard.sh) ตั้งใจ block — เพราะการ set
 #   core.hooksPath เป็นวิธีปิด/หลบ git hooks ทั้งชุด (รวม secret-guard). ดังนั้น "agent" ที่อยู่
 #   หลัง guard จะพิมพ์คำสั่งนี้บน command line เองไม่ได้.
-#   ทางออก: ให้ wiring เป็น "ผลข้างเคียงของ npm install" (package.json `prepare`) และให้ "คน"
-#   รัน ./.ai/bin/install.sh นี้ได้ตรง ๆ เป็น manual fallback — ตัว script (ไม่ใช่ agent บน CLI)
-#   เป็นผู้รัน git config ให้ จึงไม่ชน guard ของ command line. ปลอดภัยเพราะ idempotent +
+#   ทางออก: "คน" รัน ./.ai/bin/install.sh นี้ครั้งเดียวต่อ clone — ตัว script (ไม่ใช่ agent บน
+#   CLI) เป็นผู้รัน git config ให้ จึงไม่ชน guard ของ command line. ปลอดภัยเพราะ idempotent +
 #   no-op นอก git repo.
+#   หมายเหตุ: framework เป็น stack-agnostic — ไม่มี package.json/npm install ให้แขวน `prepare`
+#   hook อีกต่อไป ดังนั้น script นี้คือทางเดียวในการ wire Tier-1 floor เข้า clone.
 
 set -euo pipefail
 
@@ -38,8 +39,6 @@ echo
 echo "Verify:"
 echo "  git config --get $HOOKS_KEY        # -> .githooks"
 echo "  ls -l .githooks .ai/bin            # -> scripts are executable (rwx)"
-echo
-echo "Note: 'npm install' also runs this wiring via package.json \"prepare\"."
 echo
 echo "=== OPTIONAL: Codex in-session hooks (per-machine, interactive — issue #26) ==="
 echo "  The Tier-1 floor above already protects every agent at commit/push/PR."

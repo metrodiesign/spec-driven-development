@@ -9,38 +9,17 @@ on:
 permissions:
   contents: read
 
+# The framework is stack-agnostic: this repo ships no application code or package
+# manifest, so CI exercises the framework's OWN deliverables — the guard engine
+# (.ai/bin/check-*.sh) via its adversarial suite, a full-tree secret scan, and the
+# REQ-coverage tracer. A downstream project that scaffolds an app adds its own
+# typecheck/test steps (the task gate already auto-detects them — see .ai/bin/gate-task.sh).
 jobs:
   verify:
-    name: typecheck + test
+    name: guards + spec-trace
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-      - name: Install dependencies
-        # npm install (not npm ci): npm ci's strict ideal-tree reconciliation is
-        # sensitive to the node/npm version that authored package-lock.json vs the
-        # runner's, and this repo's lock predates a pinned Node version. npm install
-        # mirrors the actual local workflow (task-gate runs `npm test` on an
-        # npm-install tree) and still installs from the committed lockfile.
-        # Follow-up: add .nvmrc, regenerate the lock with that Node, restore `npm ci`.
-        run: npm install --no-audit --no-fund
-      - name: Audit dependencies
-        # Dependency rules (CLAUDE.md): vulnerability audit is part of CI. Blocking at
-        # high/critical so the SECURITY_RULES claim ("CI runs npm audit") is actually true.
-        # Full tree (no --omit=dev): the dev-tooling advisories that once forced a prod-only
-        # gate (esbuild via vite/vitest, postcss via next) are cleared in #31 — vitest 4 ->
-        # vite 8 (rolldown, no esbuild) + a postcss>=8.5.10 override — so the whole tree now
-        # gates clean and any regression (dev OR prod) reds the build. If a future transitive
-        # DEV-only advisory with no non-breaking fix starts blocking unrelated PRs, scope back
-        # to `--omit=dev` and track it separately (the original #25 rationale).
-        run: npm audit --audit-level=high
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Test
-        run: npm test
       - name: Guard regression tests
         # Tier 1 floor: the single check engine (.ai/bin/check-*.sh) is exercised by its
         # adversarial test suite here so it cannot drift / be weakened silently — a loosened

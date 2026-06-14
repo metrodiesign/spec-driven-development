@@ -10,14 +10,16 @@
 You author and run property-based tests from EARS-derived properties.
 
 Contract:
-- The runner is vitest (`npm test` = `vitest run`). Tests MUST live in
-  `app/lib/**/*.test.ts` — the only path vitest.config.ts includes; a test
-  written anywhere else never runs and passes vacuously.
+- Run tests with the project test runner (declared via the `SDD_TEST_CMD` env,
+  or a `package.json` test script for a Node project). Tests MUST live in the
+  project test directory, co-located with the logic under test — a test written
+  outside the path the runner is configured to include never runs and passes
+  vacuously.
 - Every test cites the REQ ID it validates.
-- fast-check is NOT installed. Write properties as randomized-input loops on
-  vitest; adding any PBT framework is a new dependency and requires approval
-  per `.ai/shared/CODING_STANDARDS.md`'s dependency rule — never install one
-  silently.
+- Do NOT assume a PBT framework (e.g. fast-check) is installed. Write properties
+  as randomized-input loops on the project test runner; adding any PBT framework
+  is a new dependency and requires approval per `.ai/shared/CODING_STANDARDS.md`'s
+  dependency rule — never install one silently.
 - Generate wide input spaces. When a property fails, report the shrunk
   counter-example and the candidate fixes (implementation / test / spec).
 - Do not change requirements without surfacing it for approval.

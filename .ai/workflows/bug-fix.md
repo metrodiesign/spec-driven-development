@@ -23,8 +23,9 @@ GREEN หลังแก้.
   root-cause analysis เท่านั้น ห้ามแก้ไฟล์.
 - [../shared/TASK_PROTOCOL.md](../shared/TASK_PROTOCOL.md) — สัญญาการ implement task + Evidence.
 - [../shared/EARS.md](../shared/EARS.md) — F-ID (expected fix) และ B-ID (unchanged behavior) เขียนแบบ EARS.
-- [../shared/TESTING_PROTOCOL.md](../shared/TESTING_PROTOCOL.md) — กฎ test: vitest, path `app/lib/**/*.test.ts`,
-  assert observable failure mode.
+- [../shared/TESTING_PROTOCOL.md](../shared/TESTING_PROTOCOL.md) — กฎ test: รันด้วย project test runner
+  (กำหนดผ่าน `SDD_TEST_CMD` env หรือ test script ใน package.json สำหรับโปรเจกต์ Node), test co-located
+  กับ logic ที่คุมใน project test directory, assert observable failure mode.
 - [../shared/ARCHITECTURE.md](../shared/ARCHITECTURE.md) — file organization ที่ต้องเคารพ.
 
 ## Step-by-step process
@@ -59,10 +60,12 @@ GREEN หลังแก้.
    - (a) repro test ที่ **RED ก่อนแก้ / GREEN หลังแก้** (ครอบ F-IDs: defect -> expected);
    - (b) ทุก B-ID มี assertion 1:1;
    - (c) ทุก assertion เช็ก **observable failure mode** (rendered output / computed value /
-     layout measurement) ไม่ใช่ internal implementation detail (anti-pattern: bugfix-lg-button
-     assert ว่าใช้ CSS class ไหน แล้วพลาด failure mode จริง).
-   test ที่รัน headless ได้อยู่ `app/lib/**/*.test.ts` (vitest); observable mode ที่เห็นได้เฉพาะใน
-   browser ตาม browser-verify reference. รัน `npm run typecheck` + `npm test`.
+     layout measurement) ไม่ใช่ internal implementation detail (anti-pattern: assert CSS selector
+     แทน observable failure mode จริง แล้วพลาด failure mode จริง ที่ผู้ใช้เจอ).
+   test ที่รัน headless ได้อยู่ใน project test directory, co-located กับ logic ที่คุม; observable mode ที่
+   เห็นได้เฉพาะใน UI — ถ้าโปรเจกต์ ship UI ให้ verify ใน project target runtime (ดู project UI-verify
+   reference). พิสูจน์ task green ผ่าน `.ai/bin/gate-task.sh` ที่อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD`
+   (auto-detect package.json scripts สำหรับ Node).
    -> verify: repro test RED->GREEN พิสูจน์ได้ (รันบน commit ก่อนแก้ = fail, หลังแก้ = pass);
    typecheck + test เขียว; `scripts/spec-trace.sh bugfix-<short>` ครอบทุก F/B-ID.
 
@@ -70,7 +73,8 @@ GREEN หลังแก้.
 
 - `.claude/specs/bugfix-<short>/bugfix.md` (Defect / Expected F-IDs / Unchanged B-IDs) + tasks.md.
 - โค้ดที่แก้ (เฉพาะ root cause ไม่แตะ do-not-modify list).
-- regression test suite: repro test (RED->GREEN) + assertion ต่อทุก B-ID, ใน `app/lib/**/*.test.ts`.
+- regression test suite: repro test (RED->GREEN) + assertion ต่อทุก B-ID, ใน project test directory
+  co-located กับ logic ที่คุม.
 - tasks.md ทุก task `- [x]` + Evidence; typecheck + test เขียว.
 
 ## Definition of done
@@ -78,15 +82,16 @@ GREEN หลังแก้.
 - [ ] root cause จริงถูกระบุ + อ้าง file:line + ผู้ใช้ยืนยัน (ไม่ใช่ patch อาการ).
 - [ ] repro test RED ก่อนแก้, GREEN หลังแก้ (พิสูจน์ transition defect -> expected).
 - [ ] ทุก B-ID มี assertion 1:1 ที่เช็ก observable mode; ไม่แตะไฟล์ do-not-modify.
-- [ ] `npm run typecheck` + `npm test` เขียว; `scripts/spec-trace.sh bugfix-<short>` ครอบ F/B-ID ครบ.
+- [ ] typecheck + test เขียว (ผ่าน `.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD`);
+      `scripts/spec-trace.sh bugfix-<short>` ครอบ F/B-ID ครบ.
 - [ ] ไม่มี placeholder `?` ใน artifact ใด.
 
 ## Common mistakes to avoid
 
 - กระโดดแก้ก่อนยืนยัน root cause — แก้ symptom ทำบั๊กกลับมาในรูปอื่น.
-- regression test ที่ assert implementation detail (CSS class, ชื่อ internal fn) แทน observable
-  failure mode — ผ่านแต่ไม่ได้กันบั๊กจริง (บทเรียน bugfix-lg-button).
+- regression test ที่ assert implementation detail (CSS selector, ชื่อ internal fn) แทน observable
+  failure mode — ผ่านแต่ไม่ได้กันบั๊กจริง.
 - ไม่ยืนยันว่า test RED ก่อนแก้ — test ที่ GREEN อยู่แล้วก่อนแก้ ไม่ได้พิสูจน์อะไร.
 - แตะไฟล์ใน do-not-modify list เพื่อความสะดวก — เป็น spec conflict ต้อง STOP ถาม.
-- เขียน test นอก `app/lib/**/*.test.ts` — vitest.config.ts ไม่ include = test ไม่รัน ผ่าน vacuously.
+- เขียน test นอก project test directory — runner ไม่ include = test ไม่รัน ผ่าน vacuously.
 - "reproduce" ด้วยการอ่านโค้ดอย่างเดียวทั้งที่รันได้ — ต้อง reproduce live หรือระบุชัดว่าทำไมรันไม่ได้.

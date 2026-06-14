@@ -6,20 +6,23 @@
 
 ## Runner and scope
 
-- Test runner: **vitest** — `npm test` runs `vitest run`.
-- Unit tests cover **pure logic** only, co-located in `app/lib/` as `*.test.ts`. The
-  runner's `include` is `app/lib/**/*.test.ts`; that is where headless tests go.
-- This project has no DB / backend, so there is no integration-test tier against a real
-  service. UI behavior is verified in a real browser (see below), not by vitest.
+- Test runner: **the project test runner** — declared via the `SDD_TEST_CMD` env var, or a
+  `package.json` test script for a Node project. The framework does not assume a specific
+  runner.
+- Unit tests cover **pure logic** only, co-located with the logic under test in the project
+  test directory; that is where headless tests go.
+- A project has an integration-test tier against a real service only if it actually ships a
+  DB / backend — otherwise there is none. UI behavior, when the project ships a UI, is
+  verified in its target runtime (see below), not by the headless test runner.
 
 ## Pure-logic-first
 
-Extract testable logic (formulas, validation, formatting) into **pure functions** in
-`app/lib/`, and get their unit tests GREEN before wiring any UI. Correctness then does
-not get entangled with rendering, and the numeric / behavioral acceptance criteria are
-closed before the component layer exists. Components call these functions; they never
-embed the formula in JSX. See the patterns in [LESSONS.md](LESSONS.md) and the layering
-in [ARCHITECTURE.md](ARCHITECTURE.md).
+Extract testable logic (formulas, validation, formatting) into **pure functions** in the
+project test directory, and get their unit tests GREEN before wiring any UI. Correctness
+then does not get entangled with rendering, and the numeric / behavioral acceptance criteria
+are closed before the component layer exists. Components call these functions; they never
+embed the formula in the view layer. See the patterns in [LESSONS.md](LESSONS.md) and the
+layering in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Test quality
 
@@ -39,19 +42,20 @@ in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## UI verification
 
-Logic that cannot be tested headless under vitest is verified in a real browser. Browser
-verification here uses a **production build** (`npm run build` then `next start` on
-`127.0.0.1`), and you must confirm `document.documentElement.clientWidth === target` at
-each acceptance viewport before trusting a result.
+If the project ships a UI, logic that cannot be tested headless under the project test
+runner is verified in the project's target runtime. READ the project UI-verify reference
+FIRST — it owns how to stand the UI up for verification (e.g. a production build rather than
+a dev server) and what to confirm at each acceptance viewport before trusting a result. The
+framework does not prescribe a specific UI framework or styling system.
 
-Before ANY browser-based verification, READ the browser-verify reference first — it
-contains the probe recipes, the viewport / scrollbar gotchas, the hydration check, and
-the false-positive traps (SVG geometry, gradient backgrounds, focus-ring measurement):
+Before ANY UI-based verification, READ the project UI-verify reference — it contains the
+probe recipes, the viewport / scrollbar gotchas, the hydration check, and the
+false-positive traps (SVG geometry, gradient backgrounds, focus-ring measurement):
 
 `.claude/skills/spec-implement/references/browser-verify.md`
 
-(That file currently lives under the Claude skill; it is the canonical UI-verify
-reference for every agent until/unless it moves under `.ai/`.)
+(That is the project UI-verify reference — currently the Claude browser-verify skill; it is
+the canonical UI-verify reference for every agent until/unless it moves under `.ai/`.)
 
 ## Evidence block format
 
@@ -71,6 +75,13 @@ Evidence:
   each acceptance viewport; never assert a pass you did not observe.
 - If a check could not be run, say so explicitly in `deviations:` — do not leave it
   blank or claim a pass.
+
+The task gate is env-driven, not stack-hardcoded: `.ai/bin/gate-task.sh` proves a flipped
+`[x]` task green by running the project typecheck command (`SDD_TYPECHECK_CMD` env, or a
+`package.json` typecheck script for a Node project) and the project test command
+(`SDD_TEST_CMD` env, or a `package.json` test script for a Node project). When neither a
+command nor a matching script exists, the code-green check is skipped and only this Evidence
+gate applies.
 
 Before marking the LAST task (or any assembly task), run the REQ-trace check; any
 uncovered REQ it reports is a blocker, never skipped silently.

@@ -14,7 +14,7 @@ Before doing any work, read the canonical shared sources — they are the durabl
 source of truth; this conversation is temporary working memory:
 
 - `.ai/shared/PROJECT_CONTEXT.md` — what the product is and why
-- `.ai/shared/CODING_STANDARDS.md` — the stack you MUST prefer + hard constraints
+- `.ai/shared/CODING_STANDARDS.md` — the standards you MUST follow + hard constraints
 - `.ai/shared/ARCHITECTURE.md` — folder layout, naming, file organization
 - `.ai/shared/LESSONS.md` — promoted process lessons (read every session)
 
@@ -24,9 +24,9 @@ task sizing, Definition of Done, prohibitions). EARS notation lives in
 protocols are the other `.ai/shared/*.md` files — open the one the task needs.
 
 `.claude/rules/*.md` are still auto-loaded every turn by the rules loader, but they
-are now pointer stubs routing to these canonical `.ai/shared/*` files (and
-`stack-nextjs.md` is path-scoped). Do not @-import them here, and do not edit the
-stubs — read the canonical sources directly and change knowledge there, once.
+are now pointer stubs routing to these canonical `.ai/shared/*` files. Do not
+@-import them here, and do not edit the stubs — read the canonical sources directly
+and change knowledge there, once.
 
 ## Apply your Claude agent profile
 

@@ -17,17 +17,18 @@ statements that must hold for ALL valid inputs. Express each as:
 Link each to its REQ ID and note the input space / generators needed. Present the
 list and let me choose which to test.
 
-Step 2 — For the chosen properties, write property-based tests. First check
-package.json: if no PBT framework (fast-check / Hypothesis / jqwik / proptest)
+Step 2 — For the chosen properties, write property-based tests. First check for
+an installed PBT framework (fast-check / Hypothesis / jqwik / proptest): if none
 is installed, do NOT install one silently — either write the properties as
-randomized-input loops on vitest (the runner this project has; tests must live
-in `app/lib/**/*.test.ts`, the only path vitest.config.ts includes), or propose
-the framework as a devDependency (with license + maintenance status) and wait
-for approval per tech.md's dependency rule. Generate wide input ranges including edge cases
+randomized-input loops on the project test runner (declared via SDD_TEST_CMD env,
+or a package.json test script for a Node project; tests must live in the project
+test directory, co-located with the logic under test), or propose the framework
+as a dependency (with license + maintenance status) and wait for approval per the
+project's dependency rule. Generate wide input ranges including edge cases
 (empty, max, special characters). Each test cites its REQ ID.
 
 Step 3 — When a test finds a counter-example, report the minimal failing ("shrunk")
 input, then ask whether to fix the implementation, the test, or the requirement.
 
 Delegate to the `pbt-runner` subagent when the properties touch CORE domain
-logic (premium calculation / validation in `app/lib/`); run inline otherwise.
+logic (validation / business rules in the project test directory); run inline otherwise.

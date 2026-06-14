@@ -6,10 +6,10 @@
 #   [b] checkboxes  — task checkbox lines from tasks.md (done vs pending)
 #   [c] git         — log --oneline + status --short (status shows untracked `??`
 #                     files, which `git diff --stat` NEVER shows — that is the point)
-#   [d] disk        — does app/ and package.json actually exist on disk
+#   [d] disk        — do the project's code dir and manifest actually exist on disk
 #
 # Usage: scripts/spec-state.sh <feature-name>
-#   e.g.:  scripts/spec-state.sh insurance-homepage
+#   e.g.:  scripts/spec-state.sh my-feature
 #
 set -uo pipefail
 
@@ -51,7 +51,11 @@ git status --short
 
 echo ""
 echo "== [d] disk artifacts =="
-ls app/ 2>/dev/null || echo "MISSING app/"
-test -f package.json && echo "package.json: yes" || echo "package.json: MISSING"
+# Code dir + project manifest. Override the code dir via SDD_CODE_DIR; the manifest
+# is whatever the project actually has (e.g. package.json for a Node project).
+CODE_DIR="${SDD_CODE_DIR:-app}"
+ls "$CODE_DIR/" 2>/dev/null || echo "MISSING $CODE_DIR/"
+MANIFEST="${SDD_MANIFEST:-package.json}"
+test -f "$MANIFEST" && echo "$MANIFEST: yes" || echo "$MANIFEST: MISSING"
 
 exit 0

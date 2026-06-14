@@ -26,8 +26,8 @@
 ## Tests Run
 
 - `<command>` -> <ผล>
-- typecheck: `npm run typecheck` -> <ผล>
-- test: `npm test` -> <ผล>
+- typecheck: `<typecheck command>` -> <result> (the project typecheck command via SDD_TYPECHECK_CMD env, or a package.json typecheck script)
+- test: `<test command>` -> <result> (the project test runner via SDD_TEST_CMD env, or a package.json test script for a Node project)
 
 ## Known Issues
 

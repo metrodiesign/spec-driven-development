@@ -13,14 +13,14 @@
 #               SINGLE /spec-retro + /clear). CHEAPEST when tasks are tightly coupled
 #               (shared primitives/data/lib): context is acquired once and reused via
 #               cache-read (~10x cheaper) instead of re-acquired per session. Measured
-#               (insurance-homepage): whole feature 1 session ~$16 vs 7 sessions ~$21.
+#               (my-feature): whole feature 1 session ~$16 vs 7 sessions ~$21.
 #               Trade-off: a long context can drift (accuracy) — pick by COUPLING.
-#               e.g.:  scripts/pane-loop.sh insurance-homepage all-in-one
+#               e.g.:  scripts/pane-loop.sh my-feature all-in-one
 #   task-ids: space-separated → each its own pane (fresh session per task; most accurate).
 #             join with '+' to BATCH several into ONE pane/session → run each
 #             /spec-implement in turn, then a SINGLE /spec-retro + /clear. Few-session
 #             middle ground for coupled-but-distinct slices (e.g. logic+data, assemble+audit).
-#             e.g.:  scripts/pane-loop.sh insurance-homepage 1 2+3 4+5 6+7
+#             e.g.:  scripts/pane-loop.sh my-feature 1 2+3 4+5 6+7
 #   (no args): every pending task, auto-grouped by `Batch:` tags in tasks.md.
 #
 # Env:
@@ -70,7 +70,7 @@ shift || true   # ทิ้ง $1 (feature) ถ้ามี — เหลือ 
 #   all-in-one  → ทุก pending task รวมใน 1 pane/session เดียว (implement ไล่ทุก task แล้ว
 #                 1 retro + 1 clear). ถูกสุดเมื่อ task พึ่งกันหนัก (shared primitives/data/lib):
 #                 ได้ context ครั้งเดียว re-read ผ่าน cache-read (~10x ถูก) ไม่ re-acquire ซ้ำ.
-#                 วัดจริง insurance-homepage: 1 session ~$16 vs แยก 7 session ~$21 (~30% แพงกว่า).
+#                 วัดจริง my-feature: 1 session ~$16 vs แยก 7 session ~$21 (~30% แพงกว่า).
 #                 แลก: context ยาวอาจ drift (accuracy) — ใช้เมื่อ coupled + งานไม่ใหญ่จนล้น context.
 #   (default)   → 1 task = 1 pane (fresh context/task, แม่นกว่า) เว้นแต่ Batch: tag / '+' arg.
 ALLINONE=""

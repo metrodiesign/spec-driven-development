@@ -23,7 +23,7 @@ source of truth; this conversation is temporary working memory.
 10. `../../shared/CONTEXT_MANAGEMENT.md` — when to persist state, when to clear
 11. `../../shared/AGENT_HANDOFF_PROTOCOL.md` — how a session hands off to the next
 12. `../../shared/LESSONS.md` — promoted process lessons (read every session)
-13. `../../shared/stack/nextjs.md` — stack-specific lessons (when touching matching files)
+13. `../../shared/stack/` — optional stack-specific profiles; read a `<stack>.md` here when one is present (none bundled by default — see its README)
 
 Then read `../../README.md` for the system map and the per-agent entry points.
 

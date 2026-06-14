@@ -24,8 +24,8 @@
 ## Definition of Done
 
 - [ ] <criterion ที่ตรวจได้ เช่น unit test เขียว>
-- [ ] `npm run typecheck` -> pass
-- [ ] `npm test` -> pass
+- [ ] <typecheck command> -> pass (the project typecheck command via `SDD_TYPECHECK_CMD` env, or a package.json typecheck script for a Node project)
+- [ ] <test command> -> pass (the project test runner via `SDD_TEST_CMD` env, or a package.json test script for a Node project)
 - [ ] tasks.md checkbox + Evidence block ตรงกับงานจริง
 
 ## Open questions

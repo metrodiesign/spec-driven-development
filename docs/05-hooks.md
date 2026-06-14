@@ -62,11 +62,16 @@ quoting — destructive string ที่อยู่ใน quote (เขีย�
 (Edit: เทียบ count `[x]` ใน old/new; Write: ทับทั้งไฟล์ -> trigger เมื่อ content มี `[x]` ใด ๆ).
 เมื่อ trigger:
 
-1. รัน `npm run typecheck` — แดง -> block
-2. รัน `npm test` — แดง -> block (ยกเว้น "No test files found" = vitest ไม่มี test file, ไม่ block)
+1. รัน the project typecheck command (ผ่าน `SDD_TYPECHECK_CMD` env, หรือ package.json typecheck
+   script สำหรับ Node project) — แดง -> block; ไม่ได้ประกาศ command ใด = ข้าม step นี้
+2. รัน the project test runner (ผ่าน `SDD_TEST_CMD` env, หรือ package.json test script สำหรับ Node
+   project) — แดง -> block (ยกเว้น runner exit เพราะหา test ไม่เจอ เช่น "No test files found", ไม่ block);
+   ไม่ได้ประกาศ command ใด = ข้าม step นี้
 3. (Edit path) ต้องมี `Evidence:` block ใน new_string — ขาด -> block
 
-เขียวครบ + มี Evidence = เงียบ exit 0 (zero token). นี่คือกลไกบังคับ Evidence block ที่
+โค้ดเขียวเป็น env-driven: `../.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD`
+(auto-detect package.json scripts สำหรับ Node) แล้วค่อย per-task Evidence check. เขียวครบ + มี
+Evidence = เงียบ exit 0 (zero token). นี่คือกลไกบังคับ Evidence block ที่
 [`01-spec-driven-flow.md`](01-spec-driven-flow.md) §1.5 อธิบายฝั่ง workflow.
 
 ### precompact-persist.sh — PreCompact, inject (non-blocking)
