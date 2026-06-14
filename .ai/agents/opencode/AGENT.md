@@ -90,13 +90,14 @@ Verify each is present and current before relying on it.
   obsolete. Because the plugin cannot hard-block a completed edit, the durable
   enforcement is still Tier 1 (git + CI); the plugin is the in-session reminder. No
   gate logic lives here — same engine as Claude/Codex.
-- **Known parity gap — spec-edit-guard.** Claude ships a non-blocking `spec-edit-guard`
-  (`.claude/hooks/spec-edit-guard.sh`) that WARNS when an already-approved
-  `requirements.md` is edited while its sibling `tasks.md` still has open tasks. There
-  is no OpenCode equivalent yet (it would need its own `file.edited`/`tool.execute`
-  plugin handler). This is an advisory-only convenience, not an enforcement gate — the
-  Tier 1 floor and the task-gate are unaffected. Treat the "keep specs in sync" rule as
-  self-enforced under OpenCode.
+- **spec-edit-guard (advisory).** `.opencode/plugins/spec-edit-guard.js` (a `file.edited`
+  handler) WARNS via `console.error` when an already-approved `requirements.md` is edited
+  while its sibling `tasks.md` still has open tasks. It delegates to the single source
+  `.ai/bin/check-spec-edit.sh` (the same engine Claude/Codex use) and DOES NOT throw — it
+  informs, it never blocks. Like the task-gate plugin, `file.edited` is post-write, so this
+  is a best-effort reminder; the durable backing for "keep specs in sync" is the spec
+  authoring flow, not this hook. Engine logic verified by
+  `.claude/hooks/tests/spec-edit-guard.test.sh` (issue #29).
 - **Agents** — `.opencode/agents/*.md` declare the fresh-context personas as subagents
   (frontmatter `{description, mode: subagent, model?, temperature?,
   permission:{edit,bash}}`, body = system prompt, invoked `@name`). Each body adopts a

@@ -77,10 +77,11 @@ and current before relying on it.
   false-positive risk): `git checkout`/`restore`, `git branch -D`, `find -exec` — the
   Tier 1 git hooks + CI are the durable floor for those. The fail-safe trade-off
   holds: destructive-looking content inside a quoted string may over-block, by design.
-  (Note: Codex's `PreToolUse` hook signals a block via the JSON
-  `hookSpecificOutput.permissionDecision` field, and exit-code/input shape for a Bash
-  matcher differ from Claude's stdin-jq form — confirm against the current Codex hooks
-  docs; the guard is written to be easy to re-point if the input shape changes.)
+  (Codex's PreToolUse(Bash) payload is doc-confirmed: `{"tool_name":"Bash","tool_input":
+  {"command":"..."},...}` — `tool_input.command` is guard.sh's first jq path; the alt jq
+  paths + argv stay as defensive fallbacks. Parsing is regression-tested in
+  `.claude/hooks/tests/codex-adapters.test.sh`. See "Hook firing requires trust" below
+  for when these hooks actually run.)
 - **Task-gate** — registered in `.codex/config.toml` `[hooks]` as `[[hooks.PostToolUse]]`
   with matcher `"^(apply_patch|Bash|Write|Edit)$"`, running `.codex/hooks/task-gate.sh`
   (again `config.toml`, not `hooks.json`). The script extracts the edited file + new
@@ -94,13 +95,27 @@ and current before relying on it.
   with a real reason is accepted. All three adapters (Claude Edit+Write, Codex,
   OpenCode) yield an IDENTICAL gate verdict for the same flip. No gate logic lives in
   the adapter — it is the same engine as Claude's via `gate-task.sh`.
-- **Known parity gap — spec-edit-guard.** Claude ships a non-blocking `spec-edit-guard`
-  (`.claude/hooks/spec-edit-guard.sh`) that WARNS when an already-approved
-  `requirements.md` is edited while its sibling `tasks.md` still has open tasks. There
-  is no Codex equivalent yet (it would need its own guard script plus a
-  `[[hooks.PreToolUse]]`/`apply_patch` matcher). This is an advisory-only convenience,
-  not an enforcement gate — the Tier 1 floor and the task-gate are unaffected. Treat
-  the "keep specs in sync" rule as self-enforced under Codex.
+- **spec-edit-guard (advisory).** `.codex/hooks/spec-edit-guard.sh`, wired as a second
+  `[[hooks.PreToolUse]]` group (matcher `^(apply_patch|Edit)$`) in `.codex/config.toml`,
+  WARNS on stderr when an already-approved `requirements.md` is edited while its sibling
+  `tasks.md` still has open tasks. It delegates to the single source
+  `.ai/bin/check-spec-edit.sh` (the same engine Claude/OpenCode use) and ALWAYS exits 0 —
+  it informs, it never blocks. The Bash PreToolUse payload (`tool_input.command`) is
+  doc-confirmed; the apply_patch/Edit file-path shape is probed (jq paths + patch-body
+  recovery, identical to task-gate) with an argv fallback. Verified by
+  `.claude/hooks/tests/spec-edit-guard.test.sh` (issue #29; payload parse, issue #26).
+- **Hook firing requires per-machine trust — and does NOT fire in `codex exec` (issue #26).**
+  Codex *discovers* project-local `<repo>/.codex/config.toml` hooks, but per the docs they
+  load "only when the project `.codex/` layer is trusted," and each command hook must be
+  reviewed + trusted (recorded against its hash) via the interactive `/hooks` command, or it
+  is skipped. Live-tested here (Codex 0.135 and 0.139): headless `codex exec` did NOT run
+  the guard even with a `[projects."<path>"].trust_level="trusted"` override AND
+  `--dangerously-bypass-hook-trust` — a `SECRET_GUARD_SKIP=1 git status` ran unblocked all
+  four probes. So: (1) **automation via `codex exec` relies on the Tier 1 floor** (git
+  pre-commit + CI), not these in-loop hooks; (2) **for interactive Codex**, run `/hooks`
+  ONCE in this repo to review + trust `guard.sh`, `task-gate.sh`, `spec-edit-guard.sh` —
+  per-machine human setup, like `core.hooksPath`, that cannot be committed. The simulated
+  payload tests above prove the adapters enforce correctly once Codex actually invokes them.
 - **Subagents** — native Codex subagents under `.codex/agents/*.toml`
   (`spec-architect`, `bug-investigator`, `pbt-runner`), each a thin `.toml` whose
   `developer_instructions` adopt the persona body from `../../roles/*` (the single

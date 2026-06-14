@@ -7,14 +7,18 @@
 max_threads = 6
 max_depth = 1
 
-# Hooks (Codex's REAL mechanism) — Codex loads hooks from config.toml under a
-# `[hooks]` table (event -> array of matcher groups, each with a `hooks` array),
-# NOT from a standalone `.codex/hooks.json`. The legacy `.codex/hooks.json` in this
-# directory is INERT under Codex's loader and is kept only as a cross-harness
-# reference / Claude-shape mirror; THIS block is what Codex actually enforces.
-# Each command delegates to the single-source check engine in `.ai/bin/`, the same
-# logic Claude/OpenCode use. PreToolUse blocks a destructive/bypass command before it
-# runs; PostToolUse re-checks a flipped `[x]` task against the gate engine.
+# Hooks — Codex DISCOVERS hooks from this project `config.toml` `[hooks]` table (event ->
+# array of matcher groups, each with a `hooks` array), NOT from a standalone
+# `.codex/hooks.json` (that legacy file is inert, kept only as a Claude-shape reference).
+# IMPORTANT (issue #26): discovery != firing. Per the Codex docs these project-local hooks
+# load "only when the project `.codex/` layer is trusted", and each command hook must be
+# reviewed + trusted via the interactive `/hooks` command (recorded against its hash) or it
+# is skipped. Live-tested (Codex 0.135 + 0.139): headless `codex exec` does NOT run them even
+# with a project trust override + `--dangerously-bypass-hook-trust`. So this block enforces
+# in INTERACTIVE Codex AFTER a one-time `/hooks` trust (per-machine human setup, like
+# core.hooksPath); for `codex exec`/automation the Tier 1 floor (.githooks + CI) is the
+# guarantee. Each command delegates to the single-source check engine in `.ai/bin/` (same
+# logic Claude/OpenCode use). See .ai/agents/codex/AGENT.md "Hook firing requires trust".
 [hooks]
 
 [[hooks.PreToolUse]]
@@ -23,6 +27,17 @@ matcher = "^Bash$"
 [[hooks.PreToolUse.hooks]]
 type = "command"
 command = ".codex/hooks/guard.sh"
+
+# Advisory spec-edit guard (non-blocking, mirrors Claude's spec-edit-guard): WARNS on
+# stderr when an approved requirements.md is edited while its sibling tasks.md still has
+# open tasks. Single source: .ai/bin/check-spec-edit.sh. apply_patch is Codex's edit
+# mechanism; Edit is matched too for harnesses that surface a distinct Edit tool.
+[[hooks.PreToolUse]]
+matcher = "^(apply_patch|Edit)$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = ".codex/hooks/spec-edit-guard.sh"
 
 [[hooks.PostToolUse]]
 matcher = "^(apply_patch|Bash|Write|Edit)$"
