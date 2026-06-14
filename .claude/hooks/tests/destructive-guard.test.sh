@@ -57,6 +57,12 @@ check block "rtk proxy rm -rf"       'rtk proxy rm -rf /tmp/x'
 check block "git reset --hard"       'git reset --hard HEAD~1'
 check block "git clean -fd"          'git clean -fd'
 check block "find -delete"           'find . -name "*.tmp" -delete'
+# issue #30: whole-tree working-copy discard ('.') — block; single-file/branch/unstage pass
+check block "git restore whole tree"      'git restore .'
+check block "git restore -W whole tree"   'git restore --worktree .'
+check block "git restore -SW whole tree"  'git restore --staged --worktree .'
+check block "git checkout -- whole tree"  'git checkout -- .'
+check block "git checkout dot whole tree" 'git checkout .'
 check block "push --force"           'git push --force origin feat'
 check block "push --force-with-lease" 'git push --force-with-lease origin feat'
 check block "push -f"                'git push -f origin feat'
@@ -109,6 +115,12 @@ check_allow_push "push full refspec"      'git push origin refs/heads/feat:refs/
 check allow "grep -r (not rm)"       'grep -r foo .'
 check allow "ls and echo"           'ls && echo ok'
 check allow "git status"             'git status'
+# issue #30 baselines: narrow whole-tree block must NOT catch normal restore/checkout
+check allow "git restore single file"      'git restore src/app.ts'
+check allow "git restore --staged unstage" 'git restore --staged .'
+check allow "git checkout branch"          'git checkout develop'
+check allow "git checkout -- single file"  'git checkout -- src/app.ts'
+check allow "git checkout -b new branch"   'git checkout -b feat/x'
 # benign baselines for new rules — must NOT false-positive
 check allow "DELETE FROM with WHERE" "${DEL} FROM t WHERE id=1"
 check allow "delete with where lc"   "delete from t where id=1"

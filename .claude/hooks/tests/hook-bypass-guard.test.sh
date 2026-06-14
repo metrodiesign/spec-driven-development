@@ -61,6 +61,9 @@ check block "chmod -x pre-commit hook"  'chmod -x .githooks/pre-commit'
 check block "rm a check-*.sh engine"    'rm -f .ai/bin/check-secrets.sh'
 check block "overwrite gate-task.sh"    'mv /tmp/x .ai/bin/gate-task.sh'
 check block "git config hooksPath off"  'git config core.hooksPath /dev/null'
+# issue #27: WRITE forms of core.hooksPath must still block (value / --unset / --replace-all)
+check block "unset hooksPath"           'git config --unset core.hooksPath'
+check block "replace-all hooksPath"     'git config --replace-all core.hooksPath /dev/null'
 check block "redirect into hook file"   'echo "" > .githooks/pre-commit'
 check block "redirect into .git/config" 'printf "[core]" > .git/config'
 # unfixed #13: WHOLE-DIRECTORY tamper (no trailing slash) disables the floor as
@@ -86,6 +89,11 @@ check allow "-n word mid-message"       'git commit -m "document the -n behavior
 check allow "note about -n flag"        "git commit -m 'note about -n flag'"
 check allow "git status"                'git status'
 check allow "git grep -n"               'git grep -n foo'
+# issue #27: read-only core.hooksPath queries are harmless and must NOT block
+check allow "read hooksPath bare"       'git config core.hooksPath'
+check allow "read hooksPath --get"      'git config --get core.hooksPath'
+# issue #28: a literal newline INSIDE the quoted message with a -n word must NOT block
+check allow "newline in quoted -n word" "$(printf 'git commit -m "x\n  -n word"')"
 # finding #13+#9 baseline: benign chmod / file ops outside the guard set pass
 check allow "benign chmod app.ts"       'chmod +x src/app.ts'
 check allow "benign rm build artifact"  'rm -f build/output.js'
