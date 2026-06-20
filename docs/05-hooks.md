@@ -52,13 +52,13 @@ quoting — destructive string ที่อยู่ใน quote (เขีย�
 ### spec-edit-guard.sh — PreToolUse(Edit), warn (non-blocking)
 
 ไม่เคย block — inject คำเตือนอย่างเดียว. ยิงเมื่อ **ครบทุกเงื่อนไข**: ไฟล์ที่แก้คือ
-`.claude/specs/*/requirements.md`, header มี `> Status: approved`, และ sibling `tasks.md`
+`.ai/specs/*/requirements.md`, header มี `> Status: approved`, และ sibling `tasks.md`
 ยังมี task ค้าง (`- [ ]`). เตือนว่าการแก้ requirements ตอนนี้ต้อง propagate ไป
 `design.md`/`tasks.md` (CLAUDE.md: keep specs in sync) และอาจต้อง re-approve.
 
 ### task-gate.sh — PostToolUse(Edit|Write), block
 
-ยิงเฉพาะเมื่อ edit/write **flip checkbox เป็น `- [x]`** ใน `.claude/specs/*/tasks.md`
+ยิงเฉพาะเมื่อ edit/write **flip checkbox เป็น `- [x]`** ใน `.ai/specs/*/tasks.md`
 (Edit: เทียบ count `[x]` ใน old/new; Write: ทับทั้งไฟล์ -> trigger เมื่อ content มี `[x]` ใด ๆ).
 เมื่อ trigger:
 
@@ -83,7 +83,7 @@ best-effort — **โมเดลยังเป็นคนเขียน** ho
 
 ### SessionStart (inline ใน settings.json)
 
-inject `Branch: <current branch>. Active specs: <ls .claude/specs>` เข้า context ทุก session.
+inject `Branch: <current branch>. Active specs: <ls .ai/specs>` เข้า context ทุก session.
 
 ## 5.2 secret-guard (git pre-commit)
 

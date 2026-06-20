@@ -25,7 +25,7 @@ cost tracking และ retrospective. อ่านตามลำดับส�
 | รัฐธรรมนูญ workflow      | `../CLAUDE.md`                                 |
 | มาตรฐานโปรเจกต์          | `../.claude/rules/{product,tech,structure}.md` |
 | บทเรียนสะสม              | `../.claude/rules/lessons.md`                  |
-| spec ของแต่ละฟีเจอร์     | `../.claude/specs/<feature>/`                  |
+| spec ของแต่ละฟีเจอร์     | `../.ai/specs/<feature>/`                  |
 | นิยาม skill (slash)      | `../.claude/skills/spec-*/`                    |
 | hooks (guardrails)       | `../.claude/hooks/` + `../.claude/settings.json` |
 | agent definitions        | `../.claude/agents/`                           |

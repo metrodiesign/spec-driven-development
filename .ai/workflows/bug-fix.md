@@ -43,7 +43,7 @@ GREEN หลังแก้.
    <behavior>`. STOP — present findings, รอผู้ใช้ยืนยัน root cause. ห้ามแก้ไฟล์ใน phase นี้.
    -> verify: root cause อ้าง file:line จริง + reproduce ได้ (หรือระบุว่าทำไมรันไม่ได้); ผู้ใช้ยืนยัน.
 
-3. **Phase 2 — bugfix.md.** หลังผู้ใช้ confirm สร้าง `.claude/specs/bugfix-<short>/bugfix.md`:
+3. **Phase 2 — bugfix.md.** หลังผู้ใช้ confirm สร้าง `.ai/specs/bugfix-<short>/bugfix.md`:
    - `## Current Behavior (Defect)` — `WHEN <repro> THEN <defect>` พร้อม repro ที่รันได้จริง
      (page/viewport/command/measured value ไม่ใช่ prose).
    - `## Expected Behavior` — F1, F2... (EARS, stable F-IDs, หนึ่ง criterion ต่อ fix).
@@ -71,7 +71,7 @@ GREEN หลังแก้.
 
 ## Expected output
 
-- `.claude/specs/bugfix-<short>/bugfix.md` (Defect / Expected F-IDs / Unchanged B-IDs) + tasks.md.
+- `.ai/specs/bugfix-<short>/bugfix.md` (Defect / Expected F-IDs / Unchanged B-IDs) + tasks.md.
 - โค้ดที่แก้ (เฉพาะ root cause ไม่แตะ do-not-modify list).
 - regression test suite: repro test (RED->GREEN) + assertion ต่อทุก B-ID, ใน project test directory
   co-located กับ logic ที่คุม.

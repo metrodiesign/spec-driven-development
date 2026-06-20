@@ -7,7 +7,7 @@
 # PER TASK (scoped to each flipped [x] region) and requires non-trivial content, so every
 # adapter input shape yields the same verdict (PR #24 findings #6/#19/#20/#28).
 #
-# Fires only when a .claude/specs/*/tasks.md checkbox is being flipped to [x].
+# Fires only when a .ai/specs/*/tasks.md (or legacy .claude/specs/*/) checkbox is being flipped to [x].
 # เขียว = เงียบ exit 0, แดง = exit 2 + stderr ให้แก้ก่อน mark เสร็จ
 #
 # Interface (harness-agnostic):
@@ -26,6 +26,8 @@ FILE="${1:-${GATE_FILE:-}}"
 NEW="${2:-${GATE_NEW:-}}"
 
 case "$FILE" in
+  */.ai/specs/*/tasks.md) ;;
+  .ai/specs/*/tasks.md) ;;
   */.claude/specs/*/tasks.md) ;;
   .claude/specs/*/tasks.md) ;;
   *) exit 0 ;;

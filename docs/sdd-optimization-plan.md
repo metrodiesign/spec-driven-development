@@ -69,7 +69,7 @@
 ไฟล์: `.claude/settings.json`, `.claude/hooks/task-gate.sh` (ใหม่)
 
 - พิสูจน์แล้ว: Stop hook exit code เป็นของ `tail` + `exit 0` ปิดท้าย = โมเดลไม่เคยเห็นผล test; TaskCompleted ตายสองชั้น (lint script ที่ผูกกับ tool ซึ่งถูกถอดออกใน toolchain เวอร์ชันที่ใช้ → exit 1 เสมอ, event ยิงเฉพาะ Task tools ที่ workflow นี้ไม่ใช้)
-- ทำ: ลบ Stop + TaskCompleted hooks; เพิ่ม PostToolUse (matcher `Edit|Write`, timeout 120) → `.claude/hooks/task-gate.sh`: อ่าน stdin JSON ด้วย jq, early-exit ถ้า file ไม่ใช่ `.claude/specs/*/tasks.md`, ตรวจว่า edit flip `- [ ]` → `- [x]` (เทียบ old_string/new_string; Write ดู content), ถ้าใช่รัน gate ที่ขับด้วย env (`.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD` — auto-detect package.json scripts ของ Node ถ้ามี) — เขียว = เงียบ exit 0, แดง = exit 2 + stderr ไทยสั้น "ห้าม mark [x] จนกว่าเขียว" ยิงแค่ 5-10 ครั้ง/feature
+- ทำ: ลบ Stop + TaskCompleted hooks; เพิ่ม PostToolUse (matcher `Edit|Write`, timeout 120) → `.claude/hooks/task-gate.sh`: อ่าน stdin JSON ด้วย jq, early-exit ถ้า file ไม่ใช่ `.ai/specs/*/tasks.md`, ตรวจว่า edit flip `- [ ]` → `- [x]` (เทียบ old_string/new_string; Write ดู content), ถ้าใช่รัน gate ที่ขับด้วย env (`.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD` — auto-detect package.json scripts ของ Node ถ้ามี) — เขียว = เงียบ exit 0, แดง = exit 2 + stderr ไทยสั้น "ห้าม mark [x] จนกว่าเขียว" ยิงแค่ 5-10 ครั้ง/feature
 
 ### S1. ซ่อม feedback loop ของ Stop hook (ถ้าเลือกเก็บ Stop ไว้แทน A1) [adjust, high/low]
 
@@ -84,10 +84,10 @@
 
 ไฟล์: `.claude/settings.json`
 
-- ข้อเท็จจริงจาก verify (แรงกว่าที่คิด): prettier hook "ทำงานจริง" — npm 11 auto-install prettier เวอร์ชัน floating ผ่าน npx (ไม่เคยผ่าน dependency review, ขัด Dependency rules) format ทุกไฟล์รวม .md ใน `.claude/specs/` (~0.6s/ครั้ง) + ทำ harness file-state stale บังคับ re-read
+- ข้อเท็จจริงจาก verify (แรงกว่าที่คิด): prettier hook "ทำงานจริง" — npm 11 auto-install prettier เวอร์ชัน floating ผ่าน npx (ไม่เคยผ่าน dependency review, ขัด Dependency rules) format ทุกไฟล์รวม .md ใน `.ai/specs/` (~0.6s/ครั้ง) + ทำ harness file-state stale บังคับ re-read
 - ทำ: ลบ PostToolUse prettier entry; ถ้าอยากได้ format จริงในอนาคต = pin prettier exact version ผ่าน approval + `.prettierignore` กัน `.claude/**` และ `*.md` + `npx --no-install`
 - SessionStart: แทน string interpolation ด้วย jq (กัน JSON พัง/context injection จากชื่อ branch แปลก):
-  `jq -n --arg b "$(git branch --show-current 2>/dev/null)" --arg s "$(ls .claude/specs 2>/dev/null | tr '\n' ' ')" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:("Branch: "+$b+". Active specs: "+$s)}}'`
+  `jq -n --arg b "$(git branch --show-current 2>/dev/null)" --arg s "$(ls .ai/specs 2>/dev/null | tr '\n' ' ')" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:("Branch: "+$b+". Active specs: "+$s)}}'`
 
 ### A2. ขยาย destructive-command guard ให้ครอบ Destructive Ops + Workflow rules จริง [adjust, high/low]
 
@@ -248,7 +248,7 @@
 
 1. spec-requirements ไม่ได้ rec ตรงตัว — EARS template มี 3/5 patterns + ไม่มี guard กัน criterion non-atomic/subjective (ถูก W2(4) ครอบบางส่วน — ตอน implement ให้ปิดทั้งสองจุด)
 2. PreCompact hook + breadcrumb กลางงาน — context discipline ใน CLAUDE.md ตอนนี้พึ่งความจำโมเดลล้วน; เพิ่ม PreCompact hook inject คำสั่ง persist active-task state ก่อน compact
-3. spec-file guard hook — PreToolUse Edit บน `.claude/specs/**/requirements.md` เตือนเมื่อแก้ spec ที่ approved ระหว่างมี task ค้าง (เสริม W3 status field พอดี)
+3. spec-file guard hook — PreToolUse Edit บน `.ai/specs/**/requirements.md` เตือนเมื่อแก้ spec ที่ approved ระหว่างมี task ค้าง (เสริม W3 status field พอดี)
 4. completion evidence ใน tasks.md — บังคับบันทึกผลเทสต์/viewport ที่ตรวจ/deviation ตอน mark [x] (เสริม A1 task-gate)
 5. spec-architect ซ้ำ outline กับ spec-design (drift risk) — repurpose เป็น design-reviewer/requirements-auditor แบบ fresh-context adversarial (audit ชี้ว่า "คุ้มสุดและถูก")
 6. backfill artifact เดิมที่ commit แล้ว: ID format asymmetry (`1.1` vs `REQ-1.1` — A5 parser รองรับแล้วแต่ artifact ควร normalize), REQ-15.6 แทรกผิดลำดับ, placeholder ใน bugfix tasks.md

@@ -11,7 +11,7 @@ from cost_lib import detect_feature, all_task_ids, session_costs, render_breakdo
 
 MY_SESSION = os.environ.get("MY_SESSION", "")  # orchestrator session id to exclude
 FEATURE = detect_feature()
-TASKS = f".claude/specs/{FEATURE}/tasks.md"
+TASKS = f".ai/specs/{FEATURE}/tasks.md"
 OUT = f"retrospectives/cost-{FEATURE}.md"
 
 

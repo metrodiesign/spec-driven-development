@@ -10,7 +10,7 @@ Mirror a spec's `tasks.md` onto GitHub Issues so teammates see progress. The spe
 files stay the SOURCE OF TRUTH; the issues are an idempotent PROJECTION. Re-running
 must UPDATE, never duplicate.
 
-Parse `$ARGUMENTS`: first token is `<feature>` (a folder under `.claude/specs/`);
+Parse `$ARGUMENTS`: first token is `<feature>` (a folder under `.ai/specs/`);
 flags `--dry-run` (preview only, never write) and `--epic-only` (epic, no sub-issues).
 
 Transport: use the GitHub MCP tools (`mcp__plugin_github_github__*`), NOT `gh` in
@@ -23,7 +23,7 @@ writing the manifest file.
 ## Steps
 
 1. Resolve + guard. Resolve `<feature>` like spec-implement: if the conversation does
-   not name one and `.claude/specs/` holds many, ask — never guess. Refuse to run if
+   not name one and `.ai/specs/` holds many, ask — never guess. Refuse to run if
    `requirements.md` (or `tasks.md`) is still `> Status: draft`, unless `--epic-only`:
    do not publish unapproved scope to teammates. State the reason and stop.
 
@@ -41,7 +41,7 @@ writing the manifest file.
    its sub-bullets as scope, and the inline B-IDs (e.g. `(B1.1, B1.2)`) as the
    "Satisfies" content.
 
-4. Load or init the manifest `.claude/specs/<feature>/.github-sync.json` (schema
+4. Load or init the manifest `.ai/specs/<feature>/.github-sync.json` (schema
    below). If it is missing, BEFORE creating anything, recover: `search_issues` for
    the body marker `spec-sync: feature=<feature>` and rebuild the manifest from any
    hits. This is the duplicate guard when the manifest was lost.
@@ -87,7 +87,7 @@ Identity comes from the manifest (fallback: marker search). Re-running UPDATES.
 twice errors). State mirrors the checkbox, so flipping a task to `[x]` and re-syncing
 closes its sub-issue and advances the epic progress bar.
 
-## Manifest schema (`.claude/specs/<feature>/.github-sync.json`, git-committed)
+## Manifest schema (`.ai/specs/<feature>/.github-sync.json`, git-committed)
 
 ```json
 {

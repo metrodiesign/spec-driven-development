@@ -33,6 +33,9 @@ SANDBOX="$(mktemp -d)"
 printf '%s' '{"name":"gate-task-test","version":"1.0.0","private":true,"scripts":{"typecheck":"true","test":"true"}}' > "$SANDBOX/package.json"
 mkdir -p "$SANDBOX/.claude/specs/sample"
 GATEFILE="$SANDBOX/.claude/specs/sample/tasks.md"
+# canonical .ai/specs path: prove the engine path filter fires there too (dual-match).
+mkdir -p "$SANDBOX/.ai/specs/sample"
+AIGATEFILE="$SANDBOX/.ai/specs/sample/tasks.md"
 
 cleanup() {
   # assemble the recursive-force delete token at runtime so the live destructive guard
@@ -171,6 +174,13 @@ check_engine block "placeholder 'TODO' is not real evidence"               "$HUN
 check_engine block "old synthetic 'n/a (Write path)' token is trivial"     "$HUNK_WRITEPATH"
 check_engine allow "explicit 'n/a (...)' escape is the agent's choice"      "$HUNK_NA"
 check_engine allow "Evidence value wrapped in backticks counts"            "$(printf '%s\n' '- [x] 8. flip' '     Evidence: `tsc --noEmit` exit 0; vitest 9/9')"
+
+echo "=== PATH FILTER: gate fires under canonical .ai/specs AND legacy .claude/specs ==="
+# same no-Evidence flip must BLOCK regardless of which specs root holds tasks.md.
+( cd "$SANDBOX" && GATE_FILE="$AIGATEFILE" GATE_NEW="$HUNK_NOEV" "$ENGINE" >/dev/null 2>&1 )
+[ $? -eq 2 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL [engine][block] .ai/specs path no Evidence"; }
+( cd "$SANDBOX" && GATE_FILE="$AIGATEFILE" GATE_NEW="$HUNK_EV" "$ENGINE" >/dev/null 2>&1 )
+[ $? -eq 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL [engine][allow] .ai/specs path evidenced"; }
 
 echo "=== TRIGGER: non-flip edits allow silently ==="
 check_engine allow "no [x] in content -> not a flip"                       '- [ ] 7. still todo'

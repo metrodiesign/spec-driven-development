@@ -43,6 +43,11 @@ printf '> Status: approved 2026-06-14\n'                   > "$APPROVED_DONE"
 printf -- '- [x] 1. done\n'                                > "$SANDBOX/.claude/specs/approved-done/tasks.md"
 printf '> Status: draft\n'                                 > "$DRAFT_OPEN"
 printf -- '- [ ] 1. still open\n'                          > "$SANDBOX/.claude/specs/draft-open/tasks.md"
+# canonical .ai/specs fixture: same approved+open shape under the new root.
+mkdir -p "$SANDBOX/.ai/specs/ai-approved-open"
+AI_APPROVED_OPEN="$SANDBOX/.ai/specs/ai-approved-open/requirements.md"
+printf '> Status: approved 2026-06-14\n\n# Requirements\n' > "$AI_APPROVED_OPEN"
+printf -- '- [x] 1. done\n- [ ] 2. still open\n'           > "$SANDBOX/.ai/specs/ai-approved-open/tasks.md"
 
 # assert: $1=warn|silent  $2=desc  $3=exit-code  $4=surface-output
 assert() {
@@ -63,6 +68,7 @@ OUT=$("$ENGINE" "$APPROVED_DONE"); assert silent "engine: approved, no open task
 OUT=$("$ENGINE" "$DRAFT_OPEN");    assert silent "engine: draft (not approved) + open"   "$?" "$OUT"
 OUT=$("$ENGINE" "$SANDBOX/.claude/specs/approved-open/tasks.md"); assert silent "engine: tasks.md path (not requirements)" "$?" "$OUT"
 OUT=$("$ENGINE" "/tmp/random/notes.md"); assert silent "engine: unrelated path"          "$?" "$OUT"
+OUT=$("$ENGINE" "$AI_APPROVED_OPEN"); assert warn "engine: canonical .ai/specs approved + open" "$?" "$OUT"
 
 # ---- Claude adapter: {"tool_input":{"file_path":...}} -> additionalContext JSON on stdout ----
 OUT=$(printf '{"tool_input":{"file_path":%s}}' "$(printf '%s' "$APPROVED_OPEN" | jq -Rs .)" | "$CLAUDE_HOOK" 2>/dev/null)
@@ -87,6 +93,15 @@ OUT=$(printf '{"tool_name":"apply_patch","tool_input":{"command":%s}}' "$(printf
 assert warn   "codex: apply_patch body path recovery" "$?" "$OUT"
 OUT=$(printf '{"tool_name":"Edit","tool_input":{"file_path":%s}}' "$(printf '%s' "/tmp/x/src/app.ts" | jq -Rs .)" | "$CODEX_HOOK" 2>&1 1>/dev/null)
 assert silent "codex: non-spec path" "$?" "$OUT"
+# apply_patch body recovery must also match the canonical .ai/specs root (regex dual-match).
+AI_PATCH="*** Begin Patch
+*** Update File: $AI_APPROVED_OPEN
+@@
+-old
++new
+*** End Patch"
+OUT=$(printf '{"tool_name":"apply_patch","tool_input":{"command":%s}}' "$(printf '%s' "$AI_PATCH" | jq -Rs .)" | "$CODEX_HOOK" 2>&1 1>/dev/null)
+assert warn   "codex: apply_patch body path recovery under .ai/specs" "$?" "$OUT"
 
 echo "---"
 echo "pass=$pass fail=$fail"

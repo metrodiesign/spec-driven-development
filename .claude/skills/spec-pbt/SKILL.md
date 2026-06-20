@@ -6,7 +6,7 @@ argument-hint: <feature folder name (optional)>
 
 # Property-Based Testing
 
-Resolve the target spec: use $ARGUMENTS if given; if `.claude/specs/` holds more
+Resolve the target spec: use $ARGUMENTS if given; if `.ai/specs/` holds more
 than one feature and none was named, list them and ask — never guess. If
 requirements.md is still `> Status: draft`, warn in Thai and ask for
 confirmation before proceeding.

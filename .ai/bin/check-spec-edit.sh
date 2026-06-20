@@ -16,8 +16,10 @@ set -u
 FILE="${1:-$(cat 2>/dev/null)}"
 [ -n "$FILE" ] || exit 0
 
-# only requirements.md under .claude/specs/** — editing tasks.md/design.md is silent
+# only requirements.md under .ai/specs/** (or legacy .claude/specs/**) — editing tasks.md/design.md is silent
 case "$FILE" in
+  */.ai/specs/*/requirements.md) ;;
+  .ai/specs/*/requirements.md) ;;
   */.claude/specs/*/requirements.md) ;;
   .claude/specs/*/requirements.md) ;;
   *) exit 0 ;;

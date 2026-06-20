@@ -79,7 +79,7 @@ Verify each is present and current before relying on it.
   before relying on it.
 - **Task-gate** — `.opencode/plugins/task-gate.js` runs as a side effect on
   `file.edited` (OpenCode does not guarantee throw-block semantics there). When the
-  edited path is a `.claude/specs/*/tasks.md` flipped to `[x]`, it delegates to the
+  edited path is a `.ai/specs/*/tasks.md` flipped to `[x]`, it delegates to the
   single-source gate engine `../../bin/gate-task.sh` (`$GATE_FILE` / `$GATE_NEW`) and
   surfaces a red gate (typecheck/test fail or missing/placeholder `Evidence:`). The
   Evidence requirement is **per flipped task** (scoped to each `[x]` region up to the

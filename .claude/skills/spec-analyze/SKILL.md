@@ -6,7 +6,7 @@ argument-hint: <feature folder name (optional)>
 
 # Analyze Requirements
 
-Resolve the target spec: use $ARGUMENTS if given; if `.claude/specs/` holds more
+Resolve the target spec: use $ARGUMENTS if given; if `.ai/specs/` holds more
 than one feature and none was named, list them and ask — never guess.
 
 Read the spec's requirements.md and report issues in FIVE categories:

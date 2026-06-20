@@ -2,7 +2,7 @@
 # task-gate.sh — Codex PostToolUse adapter (Tier 2 harness hook).
 #
 # Thin adapter ONLY: it inspects what Codex just wrote and, when a
-# .claude/specs/<feature>/tasks.md checkbox was flipped to [x], delegates the
+# .ai/specs/<feature>/tasks.md (or legacy .claude/specs/) checkbox was flipped to [x], delegates the
 # actual typecheck/test/Evidence decision to the single-source engine in
 # .ai/bin/gate-task.sh. No gate logic lives here — keep typecheck/test/Evidence
 # policy in .ai/bin/gate-task.sh so Claude, Codex, OpenCode and CI all share one
@@ -54,12 +54,14 @@ fi
 # patch body), recover it from the patch/command text by matching a tasks.md path.
 if [ -z "$FILE" ] && [ -n "$NEW" ]; then
   FILE=$(printf '%s\n' "$NEW" \
-    | grep -oE '[^[:space:]]*\.claude/specs/[^[:space:]]*/tasks\.md' \
+    | grep -oE '[^[:space:]]*\.(ai|claude)/specs/[^[:space:]]*/tasks\.md' \
     | head -n1 || true)
 fi
 
 # Only care about a tasks.md edit; anything else -> allow silently.
 case "$FILE" in
+  */.ai/specs/*/tasks.md) ;;
+  .ai/specs/*/tasks.md) ;;
   */.claude/specs/*/tasks.md) ;;
   .claude/specs/*/tasks.md) ;;
   *) exit 0 ;;

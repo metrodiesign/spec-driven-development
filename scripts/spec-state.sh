@@ -2,7 +2,7 @@
 #
 # spec-state.sh — ground-truth state checker for the spec-driven workflow.
 # Print 4 blocks of raw evidence so the agent trusts the FILESYSTEM, not memory:
-#   [a] artifacts   — which phase files exist under .claude/specs/<feature>/
+#   [a] artifacts   — which phase files exist under .ai/specs/<feature>/
 #   [b] checkboxes  — task checkbox lines from tasks.md (done vs pending)
 #   [c] git         — log --oneline + status --short (status shows untracked `??`
 #                     files, which `git diff --stat` NEVER shows — that is the point)
@@ -14,7 +14,7 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-SPECS_DIR=".claude/specs"
+SPECS_DIR=".ai/specs"
 FEATURE="${1:-}"
 
 cd "$REPO"

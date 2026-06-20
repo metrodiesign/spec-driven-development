@@ -8,7 +8,7 @@
 
 ## Context
 
-- Spec / Feature: <feature-name หรือ .claude/specs/<feature>/>
+- Spec / Feature: <feature-name หรือ .ai/specs/<feature>/>
 - Active task ID: <เช่น task 4 ใน tasks.md>
 - REQ IDs in scope: <REQ-1.1, REQ-13.2, ...>
 

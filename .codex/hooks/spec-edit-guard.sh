@@ -34,7 +34,7 @@ fi
 # apply_patch may carry the path only inside the patch body — recover a requirements.md path.
 if [ -z "$FILE" ] && [ -n "$NEW" ]; then
   FILE=$(printf '%s\n' "$NEW" \
-    | grep -oE '[^[:space:]]*\.claude/specs/[^[:space:]]*/requirements\.md' \
+    | grep -oE '[^[:space:]]*\.(ai|claude)/specs/[^[:space:]]*/requirements\.md' \
     | head -n1 || true)
 fi
 

@@ -176,11 +176,11 @@ def task_of(sid):
 
 
 def detect_feature():
-    """env FEATURE; ไม่งั้น auto ถ้ามี spec เดียวใน .claude/specs/ (หลายอัน -> error)."""
+    """env FEATURE; ไม่งั้น auto ถ้ามี spec เดียวใน .ai/specs/ (หลายอัน -> error)."""
     f = os.environ.get("FEATURE", "")
     if f:
         return f
-    dirs = [d for d in glob.glob(".claude/specs/*/") if os.path.isdir(d)]
+    dirs = [d for d in glob.glob(".ai/specs/*/") if os.path.isdir(d)]
     if len(dirs) == 1:
         return os.path.basename(dirs[0].rstrip("/"))
     sys.exit(f"ระบุ feature ผ่าน env FEATURE= (พบ {len(dirs)} specs)")

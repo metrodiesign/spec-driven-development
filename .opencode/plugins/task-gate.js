@@ -1,6 +1,6 @@
 // task-gate.js — OpenCode plugin (Tier 2 harness hook).
 //
-// Thin adapter ONLY: it watches for edits to a .claude/specs/<feature>/tasks.md
+// Thin adapter ONLY: it watches for edits to a .ai/specs/<feature>/tasks.md (or legacy .claude/specs/)
 // and delegates the actual typecheck/test/Evidence decision to the single-source
 // engine in .ai/bin/gate-task.sh. No gate logic lives here — keep typecheck/test/
 // Evidence policy in .ai/bin/gate-task.sh so Claude, Codex, OpenCode and CI all
@@ -47,7 +47,7 @@ export const TaskGate = async ({ $ }) => ({
     if (!file) return;
 
     // Only care about a spec tasks.md edit; anything else -> allow silently.
-    if (!/\.claude\/specs\/.*\/tasks\.md$/.test(file)) return;
+    if (!/\.(ai|claude)\/specs\/.*\/tasks\.md$/.test(file)) return;
 
     // Delegate to the single-source engine. The engine inspects the *content* it
     // is handed (arg $2 / $GATE_NEW), not the file on disk — file.edited gives us

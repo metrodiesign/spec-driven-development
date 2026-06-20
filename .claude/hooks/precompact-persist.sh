@@ -9,7 +9,7 @@ INPUT=$(cat 2>/dev/null)
 TRIGGER=$(printf '%s' "$INPUT" | jq -r '.trigger // "auto"' 2>/dev/null)
 [ -n "$TRIGGER" ] || TRIGGER="auto"
 
-MSG="กำลังจะ compact (trigger: ${TRIGGER}). ก่อน history ถูกย่อ ให้เขียน active-task state ปัจจุบันลง .claude/specs/<feature>/tasks.md (และ design.md ถ้าเกี่ยวกับสถาปัตยกรรม) ตาม CLAUDE.md Context discipline ให้ครบ: (1) active spec + task ID ที่กำลังทำ (2) ไฟล์ที่แก้ไปแล้ว (3) คำสั่ง test/build/run ที่ใช้จริง (4) ทุก architectural decision พร้อมเหตุผล (5) อะไรเสร็จแล้ว + next step. ห้าม compact กลาง task ที่ยังไม่เสร็จถ้า state อยู่แค่ในบทสนทนานี้ — เซฟลงไฟล์ก่อน."
+MSG="กำลังจะ compact (trigger: ${TRIGGER}). ก่อน history ถูกย่อ ให้เขียน active-task state ปัจจุบันลง .ai/specs/<feature>/tasks.md (และ design.md ถ้าเกี่ยวกับสถาปัตยกรรม) ตาม CLAUDE.md Context discipline ให้ครบ: (1) active spec + task ID ที่กำลังทำ (2) ไฟล์ที่แก้ไปแล้ว (3) คำสั่ง test/build/run ที่ใช้จริง (4) ทุก architectural decision พร้อมเหตุผล (5) อะไรเสร็จแล้ว + next step. ห้าม compact กลาง task ที่ยังไม่เสร็จถ้า state อยู่แค่ในบทสนทนานี้ — เซฟลงไฟล์ก่อน."
 
 jq -n --arg m "$MSG" '{hookSpecificOutput:{hookEventName:"PreCompact",additionalContext:$m}}'
 exit 0

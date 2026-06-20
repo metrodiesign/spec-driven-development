@@ -20,7 +20,7 @@ Phase 1 — Delegate root-cause analysis to the `bug-investigator` subagent,
 passing the intake answers. Present its findings to me and STOP. Wait for me to
 confirm the root cause.
 
-Phase 2 (after I confirm) — Create `.claude/specs/bugfix-<short>/bugfix.md`:
+Phase 2 (after I confirm) — Create `.ai/specs/bugfix-<short>/bugfix.md`:
 
   # Bugfix: <short title>
   > Status: draft

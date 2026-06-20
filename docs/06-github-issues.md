@@ -1,7 +1,7 @@
 # 6. GitHub Issues (teammate visibility)
 
 เชื่อม spec-driven workflow เข้ากับ GitHub Issues เพื่อให้เพื่อนร่วมทีมเห็นความคืบหน้า.
-spec ใน `.claude/specs/<feature>/` ยังเป็น source of truth — issue เป็นแค่ภาพฉาย (projection)
+spec ใน `.ai/specs/<feature>/` ยังเป็น source of truth — issue เป็นแค่ภาพฉาย (projection)
 ที่ sync จาก tasks.md แบบ idempotent (รันซ้ำไม่ duplicate).
 
 ## 6.1 โมเดล issue
@@ -24,7 +24,7 @@ spec ใน `.claude/specs/<feature>/` ยังเป็น source of truth —
 ```
 
 - รันหลัง task เป็น `[x]` แล้ว (รันหลัง gate ไม่ใช่ระหว่าง) — on-demand ไม่มี hook ยิง network กลาง task.
-- idempotency มาจาก manifest `.claude/specs/<feature>/.github-sync.json` (commit เข้า repo,
+- idempotency มาจาก manifest `.ai/specs/<feature>/.github-sync.json` (commit เข้า repo,
   เฉพาะคำสั่ง sync เขียน — อย่าแก้มือ, อย่าใส่ link ลง tasks.md).
 - transport = GitHub MCP tools (ไม่ใช่ `gh` ตรง — RTK hook rewrite stdout ของ bash).
 
