@@ -84,37 +84,50 @@ fi
 # real character and not be a bare placeholder (TODO/TBD/???/-/.). The explicit `n/a`
 # escape stays valid — but it is the AGENT's choice in the file, never auto-fabricated.
 EV_FAIL=$(printf '%s\n' "$NEW" | awk '
+  # non-trivial = real content, not empty / a bare placeholder. Used for both the inline
+  # Evidence: value and each Evidence-block bullet. Strips decorative whitespace/backticks/quotes.
+  function nontrivial(v,   lc) {
+    gsub(/^[[:space:]`"'"'"']+|[[:space:]`"'"'"']+$/, "", v)
+    lc=tolower(v)
+    return (v != "" && lc != "todo" && lc != "tbd" && lc != "???" && \
+            lc != "-" && lc != "." && lc != "none" && lc != "pending" && \
+            lc != "n/a (write path)")
+  }
   # A checkbox line starts a new task region. Track only [x] regions for Evidence.
   /^[[:space:]]*-[[:space:]]\[[xX]\]/ {
     # entering a new [x] task: the previous [x] region just closed — verdict it.
     if (in_x && !have_ev) { print prev_task; failed=1 }
-    in_x=1; have_ev=0
+    in_x=1; have_ev=0; ev_open=0
     prev_task=$0
     next
   }
   /^[[:space:]]*-[[:space:]]\[[[:space:]]\]/ {
     # a [ ] (unchecked) task closes any open [x] region.
     if (in_x && !have_ev) { print prev_task; failed=1 }
-    in_x=0; have_ev=0
+    in_x=0; have_ev=0; ev_open=0
     next
   }
   {
-    # within the current region, look for a non-trivial Evidence: line.
+    # within the current region, look for a non-trivial Evidence: line. The documented
+    # format (TESTING_PROTOCOL.md) is a multiline block: an `Evidence:` header followed by
+    # `- test:`/`- viewports:`/`- deviations:` bullets — so the value can live inline on the
+    # header OR on a following bullet. Either non-trivial form satisfies the gate.
     if (in_x && !have_ev) {
       line=$0
       # match an Evidence: label (case-insensitive), capture the value after the colon.
       if (line ~ /^[[:space:]]*[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:/) {
         val=line
         sub(/^[[:space:]]*[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:[[:space:]]*/, "", val)
-        # strip surrounding whitespace + common decorative chars (backticks/quotes).
-        gsub(/^[[:space:]`"'"'"']+|[[:space:]`"'"'"']+$/, "", val)
-        lc=tolower(val)
-        # trivial / placeholder values do NOT count as real evidence.
-        if (val != "" && lc != "todo" && lc != "tbd" && lc != "???" && \
-            lc != "-" && lc != "." && lc != "none" && lc != "pending" && \
-            lc != "n/a (write path)") {
-          have_ev=1
-        }
+        if (nontrivial(val)) { have_ev=1 } else { ev_open=1 }  # empty header -> expect bullets
+      } else if (ev_open && line ~ /^[[:space:]]*-[[:space:]]/) {
+        # a bullet inside an open Evidence block (checkbox lines never reach here — handled
+        # above via next). Strip the dash AND an optional `key:` label (test:/viewports:/
+        # deviations:) so a placeholder VALUE (`- test: TODO`) is judged on the value, not the
+        # ever-non-trivial label; a label-less bullet (`- all green`) is checked whole.
+        val=line
+        sub(/^[[:space:]]*-[[:space:]]*/, "", val)
+        sub(/^[^[:space:]:]+:[[:space:]]*/, "", val)
+        if (nontrivial(val)) { have_ev=1 }
       }
     }
   }

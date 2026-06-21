@@ -174,6 +174,25 @@ check_engine block "placeholder 'TODO' is not real evidence"               "$HUN
 check_engine block "old synthetic 'n/a (Write path)' token is trivial"     "$HUNK_WRITEPATH"
 check_engine allow "explicit 'n/a (...)' escape is the agent's choice"      "$HUNK_NA"
 check_engine allow "Evidence value wrapped in backticks counts"            "$(printf '%s\n' '- [x] 8. flip' '     Evidence: `tsc --noEmit` exit 0; vitest 9/9')"
+# documented multiline block: `Evidence:` header (empty inline) + bullets — MUST pass.
+check_engine allow "multiline Evidence block (header + bullets)"            "$(printf '%s\n' \
+  '- [x] 9. flip with the documented block format' \
+  '     Evidence:' \
+  '       - test: vitest -> 12 passed / 0 failed' \
+  '       - viewports: 375 OK | 768 OK | 1440 OK' \
+  '       - deviations: none')"
+# empty Evidence: header with only a placeholder bullet is still trivial — MUST block.
+check_engine block "multiline Evidence block with placeholder bullet only"  "$(printf '%s\n' \
+  '- [x] 10. flip with an empty block' \
+  '     Evidence:' \
+  '       - TODO')"
+# placeholder behind a `key:` label inside a bullet must still block (codex P2): the label
+# is non-trivial but the VALUE is a placeholder — judge the value, not the label.
+check_engine block "multiline block, all bullets are key: placeholder"      "$(printf '%s\n' \
+  '- [x] 11. flip with labelled placeholder bullets' \
+  '     Evidence:' \
+  '       - test: TODO' \
+  '       - viewports: pending')"
 
 echo "=== PATH FILTER: gate fires under canonical .ai/specs AND legacy .claude/specs ==="
 # same no-Evidence flip must BLOCK regardless of which specs root holds tasks.md.

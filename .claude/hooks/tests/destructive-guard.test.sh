@@ -75,6 +75,15 @@ check block "push +HEAD:main"        'git push origin +HEAD:main'
 # branch-target protection (command-string based)
 check block "push to develop"        'git push origin develop'
 check block "push HEAD:main"         'git push origin HEAD:main'
+# global options between `git` and subcommand must NOT slip the guard (bypass regression)
+check block "git -C . push develop"     'git -C . push origin develop'
+check block "git -c kv push --force"    'git -c user.name=x push --force origin feat'
+check block "git --no-pager push +main" 'git --no-pager push origin +main'
+check block "git -C . reset --hard"     'git -C . reset --hard HEAD~1'
+# long global option with a SEPARATE-token value must not slip the guard (codex P1)
+check block "git --git-dir val push"    'git --git-dir .git push origin develop'
+check block "git --work-tree val reset" 'git --work-tree . reset --hard HEAD~1'
+check block "git --git-dir=val push"    'git --git-dir=.git push origin develop'
 # regression (critic): fully-qualified refspec — '/' before main/develop slipped the anchor
 check block "push refs/heads/main"   'git push origin HEAD:refs/heads/main'
 check block "push refs/heads/develop" 'git push origin HEAD:refs/heads/develop'
@@ -129,6 +138,7 @@ check allow "select drop from menu"  'select drop from menu'
 check allow "truncate -s coreutil"   'truncate -s 0 /tmp/app.log'
 check allow "truncate --size coreutil" 'truncate --size=0 /tmp/app.log'
 check_allow_push "push --all no force"    'git push --all origin'
+check_allow_push "git -C . push feat"     'git -C . push origin feat'
 check_allow_push "branch maintenance"     'git push origin maintenance'
 
 echo "---"
