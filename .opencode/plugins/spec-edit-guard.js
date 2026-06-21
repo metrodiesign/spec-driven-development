@@ -26,7 +26,7 @@ export const SpecEditGuard = async ({ $ }) => ({
 
     // Only an approved-spec requirements.md is interesting; the engine re-checks the
     // approved/open-task conditions and prints nothing when they do not hold.
-    if (!/\.claude\/specs\/.*\/requirements\.md$/.test(file)) return;
+    if (!/\.(ai|claude)\/specs\/.*\/requirements\.md$/.test(file)) return;
 
     const r = await $`./.ai/bin/check-spec-edit.sh ${file}`.nothrow().quiet();
     const msg = r.stdout.toString().trim();

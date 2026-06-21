@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # สร้าง GitHub labels สำหรับ spec-sync-github bridge (idempotent — รันซ้ำปลอดภัย).
 # ใช้: scripts/bootstrap-labels.sh [feature ...]
-#   ไม่ใส่ feature = สแกนทุกโฟลเดอร์ใต้ .claude/specs/ แล้วสร้าง label spec:<feature> ให้ครบ
+#   ไม่ใส่ feature = สแกนทุกโฟลเดอร์ใต้ .ai/specs/ แล้วสร้าง label spec:<feature> ให้ครบ
 # ต้อง gh auth login มาก่อน. สีอ้างพาเลตแบรนด์ (rules/tech.md).
 set -euo pipefail
 
@@ -23,7 +23,7 @@ ensure_label "req-spine" "FDB913" "Epic carries the requirement (REQ) coverage t
 
 # per-feature labels
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SPECS_DIR="$SCRIPT_DIR/../.claude/specs"
+SPECS_DIR="$SCRIPT_DIR/../.ai/specs"
 
 features=()
 if [ "$#" -gt 0 ]; then

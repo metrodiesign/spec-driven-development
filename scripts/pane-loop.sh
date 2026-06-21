@@ -44,7 +44,7 @@ fi
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FEATURE="${1:-}"
-SPECS_DIR=".claude/specs"
+SPECS_DIR=".ai/specs"
 CLAUDE_FLAGS="${CLAUDE_FLAGS-}"
 STEP_TIMEOUT="${STEP_TIMEOUT:-2400}"
 

@@ -27,7 +27,7 @@ operating layer ที่ vendor-neutral ออกจาก per-agent adapter:
 scripts/              # automation (pane-loop, cost/trace tooling, spec-state, ...)
 docs/                 # คู่มือผู้ใช้ของ framework
 retrospectives/       # บันทึก retro รายเดือน
-.claude/specs/<feature-name>/   # spec artifact ต่อ feature: requirements.md, design.md, tasks.md
+.ai/specs/<feature-name>/   # spec artifact ต่อ feature: requirements.md, design.md, tasks.md
                                 #   (+ .github-sync.json sidecar เมื่อ sync แล้ว)
 ```
 
@@ -47,7 +47,7 @@ retrospectives/       # บันทึก retro รายเดือน
 - จัด import เป็นชั้น: external ก่อน → internal absolute → relative
 - naming convention ชัดและคงเส้นคงวาทั้ง project (ดู Naming Conventions ด้านล่าง)
 
-`.github-sync.json` ใน `.claude/specs/<feature>/` = sidecar manifest ของ `/spec-sync-github`
+`.github-sync.json` ใน `.ai/specs/<feature>/` = sidecar manifest ของ `/spec-sync-github`
 (link map issue<->task) — commit เข้า repo, เฉพาะคำสั่ง sync เขียน; ห้ามแก้มือ,
 ห้ามใส่ link ลง tasks.md
 

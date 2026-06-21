@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ตัวตรวจ requirements traceability (deterministic) สำหรับ spec ใต้ .claude/specs/<feature>/.
+"""ตัวตรวจ requirements traceability (deterministic) สำหรับ spec ใต้ .ai/specs/<feature>/.
 
 ตรวจ 2 เรื่อง:
 1. coverage — เกณฑ์ (criterion) ทุกข้อใน requirements.md (บรรทัด `- N.M ...` ใต้หัวข้อ
@@ -238,10 +238,10 @@ def run(feature, specs_dir):
 
 def main(argv):
     if len(argv) != 2:
-        print("ใช้: scripts/spec-trace.sh <feature>   (feature = โฟลเดอร์ใต้ .claude/specs/)",
+        print("ใช้: scripts/spec-trace.sh <feature>   (feature = โฟลเดอร์ใต้ .ai/specs/)",
               file=sys.stderr)
         return 1
-    specs_dir = Path(__file__).resolve().parent.parent / ".claude" / "specs"
+    specs_dir = Path(__file__).resolve().parent.parent / ".ai" / "specs"
     return run(argv[1], specs_dir)
 
 

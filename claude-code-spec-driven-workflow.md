@@ -25,7 +25,7 @@
 | Hooks (User Prompt Submit)                   | **Hook** `UserPromptSubmit`                  | `.claude/settings.json`                                          |
 | Skills                                       | **Skills** (มาตรฐานเดียวกัน)                 | `.claude/skills/`                                                |
 | Custom agents / Autopilot                    | **Subagents**                                | `.claude/agents/*.md`                                            |
-| `#spec` ในแชต                                | `@` อ้างไฟล์ + รัน slash command             | `@.claude/specs/<feature>/`                                      |
+| `#spec` ในแชต                                | `@` อ้างไฟล์ + รัน slash command             | `@.ai/specs/<feature>/`                                      |
 | Run all Tasks (parallel)                     | รันทีละ task หรือทั้งชุดตามลำดับ dependency  | `/spec-implement all`                                            |
 
 **สรุปสั้น:** CLAUDE.md = พฤติกรรม, `.claude/rules/` = มาตรฐาน, `.claude/skills/spec-*` = ขั้นตอน, `.claude/settings.json` = automation, `.claude/agents/` = ผู้เชี่ยวชาญเฉพาะทาง
@@ -93,7 +93,7 @@ code, ALWAYS. Do not jump to implementation for any non-trivial feature.
 
 ## The non-negotiable workflow
 
-Every feature flows through three artifacts under `.claude/specs/<feature-name>/`,
+Every feature flows through three artifacts under `.ai/specs/<feature-name>/`,
 in order, with an APPROVAL GATE after each:
 
 1. requirements.md — WHAT the system must do (behavior, in EARS notation)
@@ -352,7 +352,7 @@ Step 1 — Recommend ONE workflow and explain why in two sentences:
   strict non-functional constraints (latency, compliance).
 - Quick (`/spec-quick`): well-understood feature, no approval gates wanted.
 
-Step 2 — Create the spec folder at `.claude/specs/<kebab-case-name>/`.
+Step 2 — Create the spec folder at `.ai/specs/<kebab-case-name>/`.
 
 Step 3 — Ask me ALL clarifying questions you need in a single message:
 who the user is, what they want, why, success criteria, edge cases, constraints.
@@ -374,7 +374,7 @@ argument-hint: <feature folder name (optional)>
 
 # Generate requirements.md
 
-Write `.claude/specs/<feature>/requirements.md` with this structure:
+Write `.ai/specs/<feature>/requirements.md` with this structure:
 
 # Requirements: <Feature Name>
 
@@ -441,7 +441,7 @@ description: Generate the design.md artifact from approved requirements. Use aft
 
 First read the active spec's requirements.md and the project rules
 (@.claude/rules/tech.md, @.claude/rules/structure.md). Then write
-`.claude/specs/<feature>/design.md`:
+`.ai/specs/<feature>/design.md`:
 
 # Design: <Feature Name>
 
@@ -476,7 +476,7 @@ description: Generate the tasks.md implementation checklist from the approved de
 # Generate tasks.md
 
 Read the active spec's design.md and requirements.md, then write
-`.claude/specs/<feature>/tasks.md`. Size tasks for a large-context, high-effort
+`.ai/specs/<feature>/tasks.md`. Size tasks for a large-context, high-effort
 model: each task is a COHESIVE, INDEPENDENTLY VERIFIABLE slice that you can
 implement end-to-end in one pass, even if it spans many files.
 
@@ -628,7 +628,7 @@ Bug: $ARGUMENTS
 Phase 1 — Delegate root-cause analysis to the `bug-investigator` subagent.
 Present its findings to me and STOP. Wait for me to confirm the root cause.
 
-Phase 2 (after I confirm) — Create `.claude/specs/bugfix-<short>/` with a fix spec
+Phase 2 (after I confirm) — Create `.ai/specs/bugfix-<short>/` with a fix spec
 that documents the fix AND captures unchanged behavior:
 WHEN <condition> THEN THE SYSTEM SHALL CONTINUE TO <existing behavior>
 
@@ -709,7 +709,7 @@ Exit code 2 = block. PreToolUse ที่ exit 2 จะหยุด tool, Stop �
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"SessionStart\\\",\\\"additionalContext\\\":\\\"Branch: $(git branch --show-current 2>/dev/null). Active specs: $(ls .claude/specs 2>/dev/null | tr '\\n' ' ')\\\"}}\""
+            "command": "echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"SessionStart\\\",\\\"additionalContext\\\":\\\"Branch: $(git branch --show-current 2>/dev/null). Active specs: $(ls .ai/specs 2>/dev/null | tr '\\n' ' ')\\\"}}\""
           }
         ]
       }
@@ -846,7 +846,7 @@ scripts/pane-loop.sh <feature-name>   # ละ feature ได้ถ้ามี 
 1. **ตั้งค่า** — `/init` → วาง CLAUDE.md + rules + skills + agents + settings.json → commit
 2. **`/spec-new`** "ระบบล็อกอิน email/password, reset password, กัน brute-force"
    → Claude เลือก Requirements-First (greenfield + รู้พฤติกรรม) แล้วถามคำถาม
-3. **`/spec-requirements`** → ได้ `.claude/specs/user-authentication/requirements.md`:
+3. **`/spec-requirements`** → ได้ `.ai/specs/user-authentication/requirements.md`:
    ```
    REQ-1: User Registration
      1.1 WHEN a user submits valid registration data
@@ -913,7 +913,7 @@ Do not change requirements without surfacing it for approval.
 
 ## 10. Token & Context Discipline (ประหยัด token โดยไม่ลดคุณภาพ)
 
-> หัวใจ: ประหยัดด้วยการตัด **noise** ออกจาก context — ไม่ใช่ตัด **ความสามารถ** ห้ามลด effort หรือหด context window เพื่อประหยัดเงิน เพราะนั่นคือการลดคุณภาพ และเพราะ spec อยู่ในไฟล์ (`.claude/specs/`) อยู่แล้ว การ `/clear` หรือ compact จึงทำได้แบบ "ไม่สูญข้อมูล" ถ้ายึดหลักเดียว: **เซฟลงไฟล์ก่อน แล้วค่อยล้าง**
+> หัวใจ: ประหยัดด้วยการตัด **noise** ออกจาก context — ไม่ใช่ตัด **ความสามารถ** ห้ามลด effort หรือหด context window เพื่อประหยัดเงิน เพราะนั่นคือการลดคุณภาพ และเพราะ spec อยู่ในไฟล์ (`.ai/specs/`) อยู่แล้ว การ `/clear` หรือ compact จึงทำได้แบบ "ไม่สูญข้อมูล" ถ้ายึดหลักเดียว: **เซฟลงไฟล์ก่อน แล้วค่อยล้าง**
 
 ### หลักกำกับ (อ่านก่อนทุกอย่าง)
 
@@ -932,7 +932,7 @@ Do not change requirements without surfacing it for approval.
 **🟢 ทำได้เลย**
 
 - `/clear` ระหว่างงานคนละเรื่อง หรือเมื่อจบ task หนึ่ง — รีเซ็ต context ทั้งหมด (เซฟ spec ไว้แล้ว resume ทีหลังได้)
-- **1 cohesive task = 1 session** ทำ task ให้จบเป็นก้อน → `/clear` → task ถัดไป โหลดบริบทกลับด้วย `@.claude/specs/<feature>/`
+- **1 cohesive task = 1 session** ทำ task ให้จบเป็นก้อน → `/clear` → task ถัดไป โหลดบริบทกลับด้วย `@.ai/specs/<feature>/`
 - ใช้ subagents (`spec-architect`, `bug-investigator`, `pbt-runner`) กับงานที่ต้องอ่านไฟล์เยอะ — มันทำในคอนเทกซ์แยกแล้วส่งกลับแค่สรุป main context จึงสะอาด
 - ใช้ rules แบบ `paths:` (fileMatch) แทน `always` เท่าที่ปลอดภัย — โหลดเฉพาะตอนแตะไฟล์ที่เกี่ยว
 - ดู `/context` ว่าอะไรกินที่ + เฝ้า % ใน status line · ใช้ `/btw` ถามคำถามแทรกที่ไม่อยากให้เข้า context
@@ -961,7 +961,7 @@ Do not change requirements without surfacing it for approval.
 ```markdown
 ## Context discipline (save tokens WITHOUT losing correctness)
 
-- The spec files in `.claude/specs/<feature>/` are the durable source of truth;
+- The spec files in `.ai/specs/<feature>/` are the durable source of truth;
   this conversation is temporary working memory. Before I run /clear, or before
   compaction triggers, make sure the current state — active task ID, decisions and
   their rationale, what's done, and the next step — is written into tasks.md /

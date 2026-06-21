@@ -24,7 +24,7 @@ STOP and switch to the gated flow (`/spec-requirements` → `/spec-analyze` →
    constraints, skip to step 1. Otherwise ask ALL missing questions in ONE
    batched message (in Thai), wait for the answers, then run steps 1-6 in one
    uninterrupted pass — this single Q&A round replaces every approval gate.
-1. Create the spec folder `.claude/specs/<kebab-case-name>/`. Every artifact
+1. Create the spec folder `.ai/specs/<kebab-case-name>/`. Every artifact
    written below gets the header `> Status: approved <YYYY-MM-DD> (quick, no
    gates)` immediately — the constitution exempts this flow from gates.
 2. `requirements.md` — EARS notation, atomic/testable, stable IDs (REQ-N). Keep it tight.

@@ -31,7 +31,7 @@ priority ด้วย severity ให้คนตัดสินใจได้�
 ## Step-by-step process
 
 1. **กำหนดขอบเขต diff.** ระบุชุดการเปลี่ยนที่ review: `git diff <base>...<head>` หรือ working tree.
-   หา spec ที่เกี่ยวข้องใน `.claude/specs/<feature>/` (requirements.md + design.md) เพื่อรู้
+   หา spec ที่เกี่ยวข้องใน `.ai/specs/<feature>/` (requirements.md + design.md) เพื่อรู้
    intended behavior. รัน `scripts/spec-state.sh <feature>` เพื่อเห็นสถานะจริง (รวม untracked `??`
    ที่ `git diff --stat` ไม่เห็น).
    -> verify: รู้ทุกไฟล์ที่เปลี่ยนจริง (รวม untracked) + REQ/F-ID ที่ diff ควรครอบ.

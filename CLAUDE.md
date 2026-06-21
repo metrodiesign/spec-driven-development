@@ -38,7 +38,7 @@ Adopt the Claude-specific adapter and honest self-knowledge in:
 
 ## The workflow gates (non-negotiable)
 
-Every feature flows through three artifacts under `.claude/specs/<feature-name>/`,
+Every feature flows through three artifacts under `.ai/specs/<feature-name>/`,
 IN ORDER, with an APPROVAL GATE after each (Design-First swaps 1 and 2 — same gates):
 
   1. requirements.md  — WHAT the system must do (EARS notation)
@@ -84,7 +84,7 @@ in-session convenience on top of that floor.
 
 ## Context discipline (Claude-specific — full rules in `.ai/shared/CONTEXT_MANAGEMENT.md`)
 
-- The spec files in `.claude/specs/<feature>/` are the durable source of truth; this
+- The spec files in `.ai/specs/<feature>/` are the durable source of truth; this
   conversation is temporary working memory. Before I run /clear, or before compaction
   triggers, write the current state — active task ID, decisions + rationale, what's
   done, the next step — into tasks.md / design.md. NEVER clear or compact in the

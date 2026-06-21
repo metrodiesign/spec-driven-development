@@ -20,7 +20,7 @@ Step 1 — Recommend ONE workflow and explain why in two sentences:
   strict non-functional constraints (latency, compliance).
 - Quick (`/spec-quick`): well-understood feature, no approval gates wanted.
 
-Step 2 — Create the spec folder at `.claude/specs/<kebab-case-name>/`.
+Step 2 — Create the spec folder at `.ai/specs/<kebab-case-name>/`.
 
 Step 3 — Ask me ALL clarifying questions you need in a single message:
 who the user is, what they want, why, success criteria, edge cases, constraints.

@@ -9,7 +9,7 @@ argument-hint: <task id, range like 1-3, or "all">
 Resolve $ARGUMENTS to the target task(s): a single id (e.g. 2), a range (1-3), or
 all incomplete tasks. For multiple tasks, work in dependency order.
 
-Resolve the active spec first: if `.claude/specs/` holds more than one feature and
+Resolve the active spec first: if `.ai/specs/` holds more than one feature and
 the conversation does not name one, pick the single folder whose tasks.md still has
 the requested task id unchecked (`- [ ]`); for a range or "all", pick the folder
 with any unchecked tasks. If more than one folder qualifies: interactive → list

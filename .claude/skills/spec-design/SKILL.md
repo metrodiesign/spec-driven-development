@@ -6,7 +6,7 @@ argument-hint: <feature folder name (optional)>
 
 # Generate design.md
 
-Resolve the target spec: use $ARGUMENTS if given; if `.claude/specs/` holds more
+Resolve the target spec: use $ARGUMENTS if given; if `.ai/specs/` holds more
 than one feature and none was named, list them and ask — never guess.
 
 Mode — requirements-first (default, requirements.md exists): read it plus the
@@ -26,7 +26,7 @@ constraints that motivated Design-First (latency, compliance, a11y, ...). If
 requirements.md is missing and Design-First was never chosen, stop and ask —
 never guess the mode.
 
-Then write `.claude/specs/<feature>/design.md`:
+Then write `.ai/specs/<feature>/design.md`:
 
   # Design: <Feature Name>
   > Status: draft

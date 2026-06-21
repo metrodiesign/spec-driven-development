@@ -5,7 +5,7 @@
 
 ## 1.1 สาม artifact + approval gate
 
-ทุกฟีเจอร์ไหลผ่าน 3 ไฟล์ใต้ `.claude/specs/<feature>/` ตามลำดับ มี **gate หยุดให้ review หลังทุกขั้น**:
+ทุกฟีเจอร์ไหลผ่าน 3 ไฟล์ใต้ `.ai/specs/<feature>/` ตามลำดับ มี **gate หยุดให้ review หลังทุกขั้น**:
 
 ```
 requirements.md   WHAT — พฤติกรรมระบบ (EARS notation)
@@ -95,4 +95,4 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
 
 - วงจรเดิมรองรับทั้งฟีเจอร์ใหม่และรอบ enhancement: เพิ่ม task ผ่านลำดับเดิม
   (requirements -> design -> tasks -> implement) เสมอ
-- browse `.claude/specs/<feature>/` เพื่อดูตัวอย่าง spec ของโปรเจกต์เอง (demo spec ถูกถอดออกแล้ว)
+- browse `.ai/specs/<feature>/` เพื่อดูตัวอย่าง spec ของโปรเจกต์เอง (demo spec ถูกถอดออกแล้ว)

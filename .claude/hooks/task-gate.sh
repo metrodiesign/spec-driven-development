@@ -7,6 +7,8 @@
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 case "$FILE" in
+  */.ai/specs/*/tasks.md) ;;
+  .ai/specs/*/tasks.md) ;;
   */.claude/specs/*/tasks.md) ;;
   .claude/specs/*/tasks.md) ;;
   *) exit 0 ;;

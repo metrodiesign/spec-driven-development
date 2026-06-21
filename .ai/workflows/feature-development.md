@@ -41,7 +41,7 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
 1. **Intake / workflow choice.** ถ้าโจทย์ยังไม่ตอบ who/what/why/success criteria/edge cases/
    constraints ให้ถามคำถาม clarifying ทั้งหมดใน ONE batched message (ภาษาไทย) แล้วเลือก workflow
    (requirements-first default; Design-First เมื่อสถาปัตยกรรมต้องตัดสินก่อน). สร้างโฟลเดอร์
-   `.claude/specs/<kebab-case-name>/`.
+   `.ai/specs/<kebab-case-name>/`.
    -> verify: โฟลเดอร์ spec มีอยู่; คำถามถูกตอบครบ.
 
 2. **requirements.md (EARS).** เขียนตาม [../shared/EARS.md](../shared/EARS.md): ทุก functional
@@ -90,7 +90,7 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
 
 ## Expected output
 
-- โฟลเดอร์ `.claude/specs/<feature>/` มี requirements.md, design.md, tasks.md ที่ header เป็น
+- โฟลเดอร์ `.ai/specs/<feature>/` มี requirements.md, design.md, tasks.md ที่ header เป็น
   `> Status: approved <YYYY-MM-DD>`.
 - โค้ดฟีเจอร์ + co-located unit test ใน the project test directory, co-located กับ logic under test สำหรับ pure logic.
 - tasks.md ทุก task `- [x]` พร้อม Evidence block.

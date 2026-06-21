@@ -6,7 +6,7 @@ argument-hint: <feature folder name (optional)>
 
 # Generate tasks.md
 
-Resolve the target spec: use $ARGUMENTS if given; if `.claude/specs/` holds more
+Resolve the target spec: use $ARGUMENTS if given; if `.ai/specs/` holds more
 than one feature and none was named, list them and ask — never guess.
 
 Read the active spec's design.md and requirements.md. If either upstream
@@ -14,7 +14,7 @@ artifact is still `> Status: draft` (design.md always; requirements.md too when
 it exists — e.g. derived in design-first), warn in Thai and ask for
 confirmation first — and if I confirm, flip the draft one(s) to
 `> Status: approved <YYYY-MM-DD>`. Then write
-`.claude/specs/<feature>/tasks.md`. Size tasks for a large-context, high-effort
+`.ai/specs/<feature>/tasks.md`. Size tasks for a large-context, high-effort
 model: each task is a COHESIVE, INDEPENDENTLY VERIFIABLE slice that you can
 implement end-to-end in one pass, even if it spans many files.
 

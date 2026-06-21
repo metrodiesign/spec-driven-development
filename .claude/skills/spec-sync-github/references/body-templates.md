@@ -11,7 +11,7 @@ Use plain `[done]` / `[open]` (no emoji) to match the repo's no-emoji ethos.
 
 ```markdown
 <!-- spec-sync: feature=<feature> epic -->
-**Spec:** `.claude/specs/<feature>/`
+**Spec:** `.ai/specs/<feature>/`
 **Status:** <the `> Status:` line from requirements.md> · <M> tasks
 
 Tracks the `<feature>` spec. Each sub-issue below is a cohesive, independently

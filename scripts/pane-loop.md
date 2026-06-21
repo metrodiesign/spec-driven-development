@@ -22,7 +22,7 @@ pane ถัดไป รันแบบ sequential (ทุก task แชร์ 
 - macOS + **iTerm2** (ใช้ AppleScript/`osascript` คุม session; Terminal.app ใช้ไม่ได้)
 - `claude` CLI อยู่ใน PATH (เปิดด้วย `/bin/zsh -lc` -> อ่าน profile ปกติ)
 - รันจากที่ไหนก็ได้ (script `cd` เข้า repo เอง โดยอิงตำแหน่งไฟล์)
-- มี spec อย่างน้อย 1 อันใน `.claude/specs/<feature>/tasks.md` ที่มี checkbox `- [ ] N.`
+- มี spec อย่างน้อย 1 อันใน `.ai/specs/<feature>/tasks.md` ที่มี checkbox `- [ ] N.`
 - iTerm2 ควรเป็นหน้าต่าง active (split จะเกิดใน current window/current session)
 
 ---

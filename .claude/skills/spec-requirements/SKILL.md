@@ -8,7 +8,7 @@ argument-hint: <feature folder name (optional)>
 
 Resolve the target spec folder: use $ARGUMENTS if given; otherwise use the
 feature folder created by /spec-new in this conversation. If neither identifies
-one and `.claude/specs/` holds several features, list them and ask — never guess.
+one and `.ai/specs/` holds several features, list them and ask — never guess.
 
 Derive mode (Design-First): trigger when the folder has a design.md but no
 requirements.md. If that design.md is still `> Status: draft`, warn in Thai and
@@ -29,7 +29,7 @@ finds the table so `scripts/spec-trace.sh` passes; otherwise it hard-fails with
 no skill authorized to create it. If the derived requirements change during
 review, update the table to match before approval.
 
-Write `.claude/specs/<feature>/requirements.md` with this structure:
+Write `.ai/specs/<feature>/requirements.md` with this structure:
 
   # Requirements: <Feature Name>
   > Status: draft

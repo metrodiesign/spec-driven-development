@@ -88,7 +88,7 @@ and current before relying on it.
   (again `config.toml`; `.codex/hooks.json` removed — see Pre-tool guard). The script extracts the edited file + new
   content from the Codex hook payload and delegates to the single-source gate engine
   `../../bin/gate-task.sh` (`$GATE_FILE` / `$GATE_NEW`). The gate fires only when a
-  `.claude/specs/*/tasks.md` checkbox is flipped to `[x]`: green = silent exit 0, red
+  `.ai/specs/*/tasks.md` checkbox is flipped to `[x]`: green = silent exit 0, red
   (typecheck/test fail or missing/placeholder `Evidence:`) = exit 2 so you fix before
   marking the task done. The Evidence requirement is **per flipped task** (scoped to
   each `[x]` region up to the next checkbox or EOF), not per-file, and rejects
