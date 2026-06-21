@@ -24,6 +24,17 @@ N=$(printf '%s' "$C" | tr -d '\\'\''"')
 # (ครอบ indent, xargs/sudo/env-prefix, path prefix เช่น /bin/rm) + optional rtk proxy
 POS='(^|[;&|][[:space:]]*|\$\([[:space:]]*|[[:space:]])(rtk[[:space:]]+(proxy[[:space:]]+)?)?([^[:space:]]*/)?'
 
+# git global options ที่อยู่ระหว่าง `git` กับ subcommand (เช่น `git -C . push`,
+# `git -c user.name=x push --force`, `git --no-pager push`) เคยทำให้ anchor `git[[:space:]]+push`
+# ไม่ match -> bypass guard. GO ครอบ option run นี้: `-C/-c <arg>` (กิน arg ถัดมา), long option
+# ที่กินค่าแยก token (`--git-dir .git`, `--work-tree .`) -> ต้องกินค่าด้วย ไม่งั้น value token
+# ค้างทำให้ subcommand ไม่ match (bypass), `--flag[=val]` ทั่วไป, และ short pager flag `-p`/`-P`
+# (no-arg). value-taking long-opt alt
+# วางก่อน generic `--` เพื่อกินรูป space-separated; value token ตัวแรกห้ามขึ้น dash (กัน subcommand
+# โดน). (`-[cC]` ขึ้น dash เดี่ยว, `--` ขึ้นสอง dash -> ไม่ทับกัน). ใส่คั่นทุก git check ผ่าน
+# `git${GO}[[:space:]]+<subcommand>`.
+GO='([[:space:]]+(-[cC][[:space:]]+[^[:space:];&|]+|--(git-dir|work-tree|namespace|super-prefix|exec-path|config-env|attr-source|object-format)[[:space:]]+[^[:space:];&|-][^[:space:];&|]*|--[^[:space:];&|]+|-[pP]))*'
+
 block() {
   echo "Blocked: $1" >&2
   exit 2
@@ -43,10 +54,10 @@ if [ -n "$RM_SPANS" ]; then
   done <<<"$RM_SPANS"
 fi
 
-echo "$N" | grep -qE "${POS}git[[:space:]]+reset[[:space:]]+--hard" &&
+echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+reset[[:space:]]+--hard" &&
   block 'git reset --hard — ยืนยันเป้าหมายก่อน (Destructive Ops rules)'
 
-echo "$N" | grep -qE "${POS}git[[:space:]]+clean[[:space:]]([^;&|]*[[:space:]])?(-[A-Za-z]*f[A-Za-z]*|--force)([[:space:]]|$)" &&
+echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+clean[[:space:]]([^;&|]*[[:space:]])?(-[A-Za-z]*f[A-Za-z]*|--force)([[:space:]]|$)" &&
   block 'git clean -f — ยืนยันเป้าหมายก่อน (Destructive Ops rules)'
 
 echo "$N" | grep -qE "${POS}find[[:space:]][^;&|]*[[:space:]]-delete([[:space:]]|$)" &&
@@ -57,7 +68,7 @@ echo "$N" | grep -qE "${POS}find[[:space:]][^;&|]*[[:space:]]-delete([[:space:]]
 # history (Tier-1 backstop ไม่ถึง). block เฉพาะ pathspec '.' ทั้ง tree เท่านั้น —
 # single-file (git restore file / git checkout -- file), branch switch (git checkout dev
 # / -b), unstage-only (git restore --staged .) ผ่าน เพื่อกัน false-positive.
-CO_SPANS=$(echo "$N" | grep -oE "${POS}git[[:space:]]+(restore|checkout)[[:space:]][^;&|]*")
+CO_SPANS=$(echo "$N" | grep -oE "${POS}git${GO}[[:space:]]+(restore|checkout)[[:space:]][^;&|]*")
 if [ -n "$CO_SPANS" ]; then
   while IFS= read -r SPAN; do
     # pathspec '.' standing alone (after ' -- ' or a space, then space/end) = whole tree
@@ -93,29 +104,29 @@ if [ -n "$DEL_SPAN" ] && ! echo "$DEL_SPAN" | grep -qiE "[[:space:]]where([[:spa
   block 'SQL DELETE FROM ไม่มี WHERE — ลบทั้งตาราง ยืนยันกับ user ก่อน (Destructive Ops rules)'
 fi
 
-echo "$N" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*--force(-with-lease)?([[:space:]]|$)" &&
+echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*--force(-with-lease)?([[:space:]]|$)" &&
   block 'force push (Workflow rules: ห้าม force push)'
 
 # short flag -f (รวมแบบ combined เช่น -uf) — จำกัด span ไม่ให้ข้าม command separator
-echo "$N" | grep -qE "${POS}git[[:space:]]+push[[:space:]]+([^;&|]*[[:space:]])?-[A-Za-z]*f[A-Za-z]*([[:space:]]|$)" &&
+echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]]+([^;&|]*[[:space:]])?-[A-Za-z]*f[A-Za-z]*([[:space:]]|$)" &&
   block 'force push -f (Workflow rules: ห้าม force push)'
 
 # force via leading-'+' refspec (git push origin +feat / +main / +HEAD:main rewrite remote history)
-echo "$N" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*[[:space:]]\+[^[:space:];&|]" &&
+echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*[[:space:]]\+[^[:space:];&|]" &&
   block 'force push (+refspec rewrite remote history; Workflow rules: ห้าม force push)'
 
 # --mirror = บังคับ overwrite ทุก ref ปลายทาง (force โดยธรรมชาติ) -> block ไม่มีเงื่อนไข
-echo "$N" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*--mirror([[:space:]]|=|$)" &&
+echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*--mirror([[:space:]]|=|$)" &&
   block 'git push --mirror — overwrite ทุก ref ปลายทาง (Workflow rules: ห้าม force push)'
 
 # --all + force = force-overwrite ทุก branch ref จาก branch ไหนก็ได้
-if echo "$N" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*--all([[:space:]]|$)" &&
-  echo "$N" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*(--force(-with-lease)?([[:space:]]|$)|[[:space:]]-[A-Za-z]*f[A-Za-z]*([[:space:]]|$))"; then
+if echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*--all([[:space:]]|$)" &&
+  echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*(--force(-with-lease)?([[:space:]]|$)|[[:space:]]-[A-Za-z]*f[A-Za-z]*([[:space:]]|$))"; then
   block 'git push --all --force — force-overwrite ทุก branch (Workflow rules: ห้าม force push)'
 fi
 
 # branch protection: commit/push ขณะอยู่บน main/develop หรือ push ระบุ main/develop
-if echo "$N" | grep -qE "${POS}git[[:space:]]+(commit|push)([[:space:]]|$)"; then
+if echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+(commit|push)([[:space:]]|$)"; then
   BR=$(git branch --show-current 2>/dev/null)
   if [ "$BR" = "main" ] || [ "$BR" = "develop" ]; then
     block "git commit/push บน branch $BR — ต้อง branch แยกแล้วผ่าน PR (Workflow rules)"
@@ -125,7 +136,7 @@ if echo "$N" | grep -qE "${POS}git[[:space:]]+(commit|push)([[:space:]]|$)"; the
   #   '+' -> '+main' force push
   #   '/' -> fully-qualified refspec 'HEAD:refs/heads/main' (critic: เดิม / นำหน้า main เลยรอด)
   # trailing ([[:space:]]|$) บังคับ word boundary -> 'maintenance'/'developer-x' ไม่ false-block
-  echo "$N" | grep -qE "${POS}git[[:space:]]+push[[:space:]][^;&|]*([[:space:]]|:|\+|/)(main|develop)([[:space:]]|$)" &&
+  echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*([[:space:]]|:|\+|/)(main|develop)([[:space:]]|$)" &&
     block 'git push ตรงเข้า main/develop — ต้องผ่าน PR (Workflow rules)'
 fi
 
