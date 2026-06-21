@@ -84,6 +84,9 @@ check block "git -C . reset --hard"     'git -C . reset --hard HEAD~1'
 check block "git --git-dir val push"    'git --git-dir .git push origin develop'
 check block "git --work-tree val reset" 'git --work-tree . reset --hard HEAD~1'
 check block "git --git-dir=val push"    'git --git-dir=.git push origin develop'
+# short pager global flags -p/-P before subcommand must not slip the guard (codex P1 round 2)
+check block "git -P push develop"       'git -P push origin develop'
+check block "git -p push +main"         'git -p push origin +main'
 # regression (critic): fully-qualified refspec — '/' before main/develop slipped the anchor
 check block "push refs/heads/main"   'git push origin HEAD:refs/heads/main'
 check block "push refs/heads/develop" 'git push origin HEAD:refs/heads/develop'

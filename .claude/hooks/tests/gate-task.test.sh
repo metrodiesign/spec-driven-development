@@ -193,6 +193,12 @@ check_engine block "multiline block, all bullets are key: placeholder"      "$(p
   '     Evidence:' \
   '       - test: TODO' \
   '       - viewports: pending')"
+# a NON-EMPTY placeholder header must NOT open bullet mode — a later non-evidence bullet
+# must not rescue it (codex P2 round 2). `Evidence: TODO` + `- notes: foo` -> still BLOCK.
+check_engine block "placeholder header does not open bullet-collection"     "$(printf '%s\n' \
+  '- [x] 12. flip with a placeholder header then a stray bullet' \
+  '     Evidence: TODO' \
+  '       - notes: not actually verification')"
 
 echo "=== PATH FILTER: gate fires under canonical .ai/specs AND legacy .claude/specs ==="
 # same no-Evidence flip must BLOCK regardless of which specs root holds tasks.md.

@@ -86,9 +86,9 @@ fi
 EV_FAIL=$(printf '%s\n' "$NEW" | awk '
   # non-trivial = real content, not empty / a bare placeholder. Used for both the inline
   # Evidence: value and each Evidence-block bullet. Strips decorative whitespace/backticks/quotes.
+  function trim(v) { gsub(/^[[:space:]`"'"'"']+|[[:space:]`"'"'"']+$/, "", v); return v }
   function nontrivial(v,   lc) {
-    gsub(/^[[:space:]`"'"'"']+|[[:space:]`"'"'"']+$/, "", v)
-    lc=tolower(v)
+    v=trim(v); lc=tolower(v)
     return (v != "" && lc != "todo" && lc != "tbd" && lc != "???" && \
             lc != "-" && lc != "." && lc != "none" && lc != "pending" && \
             lc != "n/a (write path)")
@@ -118,7 +118,10 @@ EV_FAIL=$(printf '%s\n' "$NEW" | awk '
       if (line ~ /^[[:space:]]*[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:/) {
         val=line
         sub(/^[[:space:]]*[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:[[:space:]]*/, "", val)
-        if (nontrivial(val)) { have_ev=1 } else { ev_open=1 }  # empty header -> expect bullets
+        # ONLY a truly empty `Evidence:` header opens bullet-collection mode. A non-empty but
+        # placeholder header (`Evidence: TODO`) stays trivial and must NOT open the block —
+        # else a later non-evidence bullet would rescue it (codex P2 re-open).
+        if (nontrivial(val)) { have_ev=1 } else if (trim(val) == "") { ev_open=1 }
       } else if (ev_open && line ~ /^[[:space:]]*-[[:space:]]/) {
         # a bullet inside an open Evidence block (checkbox lines never reach here — handled
         # above via next). Strip the dash AND an optional `key:` label (test:/viewports:/
