@@ -1,7 +1,8 @@
 # Design: Autonomous Engineering Platform — Phase 1 (Claude Adapter + AAL + First Calibration + Console Interactive/Governance)
 
-> Status: draft — awaiting human review (adversarial review by spec-architect: round 1 REVISE
-> 15 findings all applied; round 2 REVISE 6 reconciliation edits all applied; round 3 APPROVE)
+> Status: approved 2026-07-06 (human approval), amended 2026-07-06 (traceability backfilled from
+> derived requirements.md; adversarial review by spec-architect: round 1 REVISE 15 findings all
+> applied; round 2 REVISE 6 reconciliation edits all applied; round 3 APPROVE)
 > Source of truth: `./unified-platform-spec.md` v1.1 (§4, §5, §7, §8, §9.4, §10.2–10.3, §11, §12, §13, §14).
 > This design transcribes the spec into an implementable module plan for Phase 1 scope only, on top
 > of the delivered Phase 0 (PR #41). On any conflict the spec wins (order: Invariants §2 →
@@ -388,17 +389,17 @@ is recorded (same honesty rule as the spikes, A4).
 
 | Layer | What (maps to design section) |
 |---|---|
-| `aal/conformance` self-test | harness drives FakeAdapter variants: a compliant one passes P1–P8; sabotaged variants (returns prose, fabricates execution output, ignores schema, double-burns on retry) each fail EXACTLY the probe that owns the behavior — proves probes discriminate, not decorate |
-| `aal` unit | repair loop bounded (2 rounds, then structured failure); registry refuses unregistered/failed adapters; requestId stable per round across retry; router no_capacity path |
-| `core/context` unit | pipeline determinism (same inputs → byte-identical manifest); GOVERN blocks planted secret (fixture, runtime-assembled shapes); MARK canary present in serialized bundle; recall/waste counters against a scripted touched-set |
-| `core/contract` unit | validate pre-parsed contract object + freeze hash over raw bytes; mid-run mutation → ESCALATED contract_changed; budget fields flow into `budget` module |
-| `core/human` unit + integration | package generation (diff budget: at/over/under); attestation completeness required; API token auth (401 paths); approve → APPROVED transition through a REAL mini-loop with FakeAdapter; reject → CHANGES_REQUESTED; steering 501; kill asserts the FULL semantics — lease released + worktree QUARANTINED + dispatch revoked + KILL_REQUESTED event |
-| Supervised-loop E2E (CI, FakeAdapter) | fixture repo + goal.yaml → full loop to REVIEWING → API approve → APPROVED; every GATE_RESULT worktreeHash-bound; proves the CALIBRATION HARNESS MATH (metric computation + reproducibility re-run from clean checkout) — the numbers themselves are scripted, hence meaningless as §12 metrics and never reported as such |
-| First calibration numbers (MANUAL live run — the §14 DoD item) | `platform loop run --live` on the fixture goal: real model, core-measured held-out pass rate + reproducibility, reported as a RANGE (n small, §12), recorded as evidence; Phase 1 does not close without at least one live number set |
-| Fault-injection suite | UNCHANGED and must stay green (INV-8 proof: core behavior identical under the new source) + one added scenario: AALProposalSource wrapping a lying FakeAdapter still never yields PASSED (the DoD#1 property survives the real plumbing) |
-| `console/backend` | PTY lifecycle with `sh` (spawn/attach/detach/reap/audit/rate-limit/ticket burn — no quota use); F-Term non-loopback 403 EVEN WITH `--insecure`; settings/permissions/memory roundtrip + 409 conflict + managed-scope immutability + schema-invalid 422; Effective View resolver parity check against CLI-exposed effective values; F-Auth full (method detection per chain position, shadowing red warning asserts names-never-values, no token-accepting route exists); permissions simulator table; install-guards idempotency; usage indexer grouping + cwd-based autonomous split; ingest auth + WS fanout; FTS search |
-| `console/web` | pure-function units (usage grouping extensions, provenance display, permission rule preview); build green; browser verify pass per Phase-0 practice (real `platform console`, viewports checked) |
-| Manual (recorded, never auto-claimed) | F-Term parity checklist vs real CLI: slash commands, plan mode, permission prompt keystroke, `--resume`, detach/attach, `/usage` quota movement after a live loop run (SPIKE-2/4 remainders become Phase-1 DoD items) |
+| `aal/conformance` self-test | harness drives FakeAdapter variants: a compliant one passes P1–P8; sabotaged variants (returns prose, fabricates execution output, ignores schema, double-burns on retry) each fail EXACTLY the probe that owns the behavior — proves probes discriminate, not decorate (REQ-3) |
+| `aal` unit | repair loop bounded (2 rounds, then structured failure); registry refuses unregistered/failed adapters; requestId stable per round across retry; router no_capacity path (REQ-1, REQ-2, REQ-5, REQ-6) |
+| `core/context` unit | pipeline determinism (same inputs → byte-identical manifest); GOVERN blocks planted secret (fixture, runtime-assembled shapes); MARK canary present in serialized bundle; recall/waste counters against a scripted touched-set (REQ-7) |
+| `core/contract` unit | validate pre-parsed contract object + freeze hash over raw bytes; mid-run mutation → ESCALATED contract_changed; budget fields flow into `budget` module (REQ-8) |
+| `core/human` unit + integration | package generation (diff budget: at/over/under); attestation completeness required; API token auth (401 paths); approve → APPROVED transition through a REAL mini-loop with FakeAdapter; reject → CHANGES_REQUESTED; steering 501; kill asserts the FULL semantics — lease released + worktree QUARANTINED + dispatch revoked + KILL_REQUESTED event (REQ-9, REQ-10) |
+| Supervised-loop E2E (CI, FakeAdapter) | fixture repo + goal.yaml → full loop to REVIEWING → API approve → APPROVED; every GATE_RESULT worktreeHash-bound; proves the CALIBRATION HARNESS MATH (metric computation + reproducibility re-run from clean checkout) — the numbers themselves are scripted, hence meaningless as §12 metrics and never reported as such (REQ-11.1, REQ-11.2, REQ-11.5) |
+| First calibration numbers (MANUAL live run — the §14 DoD item) | `platform loop run --live` on the fixture goal: real model, core-measured held-out pass rate + reproducibility, reported as a RANGE (n small, §12), recorded as evidence; Phase 1 does not close without at least one live number set (REQ-11.3, REQ-11.4, REQ-4) |
+| Fault-injection suite | UNCHANGED and must stay green (INV-8 proof: core behavior identical under the new source) + one added scenario: AALProposalSource wrapping a lying FakeAdapter still never yields PASSED (the DoD#1 property survives the real plumbing) (REQ-12) |
+| `console/backend` | PTY lifecycle with `sh` (spawn/attach/detach/reap/audit/rate-limit/ticket burn — no quota use); F-Term non-loopback 403 EVEN WITH `--insecure`; settings/permissions/memory roundtrip + 409 conflict + managed-scope immutability + schema-invalid 422; Effective View resolver parity check against CLI-exposed effective values; F-Auth full (method detection per chain position, shadowing red warning asserts names-never-values, no token-accepting route exists); permissions simulator table; install-guards idempotency; usage indexer grouping + cwd-based autonomous split; ingest auth + WS fanout; FTS search (REQ-13 – REQ-20) |
+| `console/web` | pure-function units (usage grouping extensions, provenance display, permission rule preview); build green; browser verify pass per Phase-0 practice (real `platform console`, viewports checked) (REQ-13 – REQ-20 UI layer) |
+| Manual (recorded, never auto-claimed) | F-Term parity checklist vs real CLI: slash commands, plan mode, permission prompt keystroke, `--resume`, detach/attach, `/usage` quota movement after a live loop run (SPIKE-2/4 remainders become Phase-1 DoD items) (REQ-13.6, REQ-11.4) |
 
 ## Non-Functional Considerations (why Design-First)
 
@@ -419,5 +420,25 @@ is recorded (same honesty rule as the spikes, A4).
 
 ## Requirement Traceability
 
-(Design-First: REQ IDs do not exist yet — `/spec-requirements` derives them from this design and
-backfills this section, as done for Phase 0.)
+| Design element | Satisfies |
+|---|---|
+| `aal/protocol` envelopes + `aal/repair` bounded loop + vendor grep over aal/ | REQ-1 |
+| `aal/registry` conformance gating + drift canary + P7 score storage | REQ-2 |
+| `aal/conformance` probe semantics + sabotaged-variant self-test | REQ-3 |
+| `adapters/anthropic` (D-004 isolation, cwd bucket, costUnits, transcript capture + fallback, quota_limited, determinism none, auth probe) | REQ-4 |
+| `aal/source` (ProposalSource impl, PROPOSAL_INTENT durability, durable replay, path provenance, Proposal mapping) | REQ-5 |
+| `aal/router` capability match + no_capacity | REQ-6 |
+| `core/context` pipeline (deterministic, COMPRESS v1, GOVERN block, MARK canary, manifest evidence, recall/waste, machine-config exclusion) | REQ-7 |
+| `core/contract` + composition-root yaml-at-edge + frozen byte hash + zero-dep core | REQ-8 |
+| `core/human` approval-package generator (diff budget, attestations, timing) | REQ-9 |
+| `core/human` Human Plane API (node:http loopback, human-plane.json, approve/reject transitions, redacted events, kill semantics, steering 501, 401/rate limit) | REQ-10 |
+| Composition root `platform loop` (FakeAdapter default, --live structural guards, CI E2E, manual live calibration, not_enabled_phase1 guards) | REQ-11 |
+| Dependency rules (vendor grep aal/, composition-root injection, fault-injection unchanged + lying-FakeAdapter scenario, conformance-gated wiring) | REQ-12 |
+| `console/backend` PTY manager + F-Term routes/WS tickets/loopback-hard/audit/resume/degraded | REQ-13 |
+| `console/backend` governance — settings editor + write safety + Effective View parity | REQ-14 |
+| `console/backend` governance — permissions builder/simulator/install-guards | REQ-15 |
+| `console/backend` auth (F-Auth FULL) | REQ-16 |
+| `console/backend` governance — CLAUDE.md editor | REQ-17 |
+| `console/backend` observability — usage indexer/cwd split/alerts | REQ-18 |
+| `console/backend` observability — activity install/uninstall + ingest + WS | REQ-19 |
+| `console/backend` observability — FTS5 session search | REQ-20 |

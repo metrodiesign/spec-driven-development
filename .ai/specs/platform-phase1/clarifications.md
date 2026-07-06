@@ -64,3 +64,10 @@ codebase, not architecture discovery.
 - **B6 Approval gates:** user reviews each artifact (design → requirements →
   tasks) before the next; spec-architect subagent adversarial review runs before
   every status flip, recorded in the status line.
+  **Amended 2026-07-06 (AFK delegation):** after approving design.md the user
+  switched to goal-mode ("ทำงานตาม Autonomous Loop โดยไม่ต้องถาม — AFK"): the
+  remaining gates (requirements, tasks) are satisfied by spec-architect
+  adversarial review standing in for the human, honestly labeled
+  `approved (goal-mode, spec-architect review)` — same protocol as Phase 0 A5.
+  User decisions #1–#4 above remain binding; live-run structural guards
+  (CI env / TTY / budget cap) stay absolute.
