@@ -1,6 +1,6 @@
 # Design: Autonomous Engineering Platform — Phase 0 (Deterministic Core + Console Foundation) + §15 Spikes
 
-> Status: approved 2026-07-06 (goal-mode; adversarial review by spec-architect — verdict REVISE round 1, all 12 findings applied, see clarifications.md A5)
+> Status: approved 2026-07-06, amended 2026-07-06 (traceability backfilled from derived requirements.md; goal-mode; adversarial review by spec-architect — verdict REVISE round 1, all 12 findings applied, see clarifications.md A5)
 > Source of truth: `./unified-platform-spec.md` v1.1 (§3, §4, §6, §8, §11, §13, §14, §15). This design
 > transcribes the spec into an implementable module plan for Phase 0 scope only. On any conflict the
 > spec wins (order: Invariants §2 → templates §11 → other sections).
@@ -292,12 +292,12 @@ core is implemented until they pass.
 
 | Layer | What | Maps to |
 |---|---|---|
-| `core/test/fault-injection.test.ts` | DoD 1–9, each an independent scenario on a synthetic target-repo fixture with a malicious `ProposalSource` | Phase 0 DoD (design §"Golden harness", §"Executor") |
-| co-located unit tests in `core/src/**` | state-machine table, lease CAS, event-log append-only property, hash/evidence, path policy, budget counters | §6.2/6.3/6.6 |
-| `console/backend` tests | Fastify `inject()` per endpoint incl. auth-shadowing detection + fail-closed startup gate + redaction of home paths in responses + host-header/CORS rejection cases + negative guarantees (no credential route, no user-creation route) | §8, §13.1, §13.3, INV-12/14/15 |
-| golden harness self-test | manifest mismatch detected; write attempt to golden rejected | §6.5 |
-| CI vendor-name check | `check-core-vendor-free.sh` runs in CI; a planted vendor word fails | INV-7 |
-| Spike evidence | each SPIKE-n.md records exact commands + observed output | §15 |
+| `core/test/fault-injection.test.ts` | DoD 1–9, each an independent scenario on a synthetic target-repo fixture with a malicious `ProposalSource` | REQ-1, REQ-2, REQ-5, REQ-6, REQ-7, REQ-8.5, REQ-9, REQ-10 (DoD map in requirements.md) |
+| co-located unit tests in `core/src/**` | state-machine table, lease CAS, event-log append-only property, hash/evidence, path policy, budget counters | REQ-3, REQ-4, REQ-5, REQ-7, REQ-10 |
+| `console/backend` tests | Fastify `inject()` per endpoint incl. auth-shadowing detection + fail-closed startup gate + redaction of home paths in responses + host-header/CORS rejection cases + negative guarantees (no credential route, no user-creation route) | REQ-12, REQ-13, REQ-14, REQ-15 |
+| golden harness self-test | manifest mismatch detected; write attempt to golden rejected | REQ-9 |
+| CI vendor-name check | `check-core-vendor-free.sh` runs in CI; a planted vendor word fails | REQ-11 |
+| Spike evidence | each SPIKE-n.md records exact commands + observed output | REQ-16 |
 
 Console web (SPA) Phase 0: logic kept in pure functions (grouping transcripts into 5h windows,
 shadowing detection display) with unit tests; rendering kept thin — no E2E in Phase 0 (T2 is
@@ -318,5 +318,21 @@ stubbed by design).
 
 ## Requirement Traceability
 
-Design-first: no REQ IDs exist yet. `/spec-requirements` will derive REQ-IDs from this design + the
-spec's DoD and backfill this table; Testing Strategy above maps to design sections in the interim.
+| Design element | Satisfies |
+|---|---|
+| `actions` + `executor` policy checks (path allowlist, golden read-only, structured rejection) | REQ-1 |
+| `security` NetworkSandbox (sandbox-exec / fail-closed) | REQ-2 |
+| `state` event log (INSERT-only, projection rebuild, events.jsonl export) | REQ-3 |
+| `evidence` content-addressed store + GateReport binding | REQ-4 |
+| `state` lease (single-transaction CAS + heartbeat/TTL) | REQ-5 |
+| executor snapshot-before-intent + crash recovery + duplicate-actionId skip | REQ-6 |
+| `orchestrator` + state-machine transition table (claims-as-data, no COMPLETED path) | REQ-7 |
+| `gates` ladder T0/T1, gate-ladder.json byte hash, T2/T3 explicit stubs, flaky retry-and-flag | REQ-8 |
+| Golden harness (manifest verify, scope note) | REQ-9 |
+| `budget` counters → BUDGET_EXCEEDED/ESCALATED | REQ-10 |
+| Dependency rule + `check-core-vendor-free.sh` + ProposalSource port | REQ-11 |
+| Launcher + startup gate + §13.3 Phase-0 subset | REQ-12 |
+| `GET /api/status` / `/api/projects` / `/api/sessions` | REQ-13 |
+| `GET /api/auth` shadowing detection | REQ-14 |
+| `GET /api/usage/estimate` + `PUT /api/usage/config` | REQ-15 |
+| `spikes/` package + docs/spikes/SPIKE-n.md records | REQ-16 |
