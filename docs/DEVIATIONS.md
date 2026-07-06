@@ -26,6 +26,10 @@ how to reverse.
   (INV-10 unaffected).
 - **Reverse:** Phase 1 adds the `yaml` dep and migrates the file; hash-into-evidence logic is
   format-agnostic.
+- **Amended (Phase 1 design, 2026-07-06):** the `yaml` dep lands at the composition root
+  (`console/backend`) — goal.yaml is parsed at the edge and core receives a validated plain
+  object + raw bytes (frozen-contract hash stays byte-based). `core/` keeps zero runtime deps;
+  `gate-ladder.json` stays JSON. See `.ai/specs/platform-phase1/design.md` "Technology Decisions".
 
 ## D-004 — SDK isolation uses `tools: []`, not the spec's `allowedTools: []`
 
