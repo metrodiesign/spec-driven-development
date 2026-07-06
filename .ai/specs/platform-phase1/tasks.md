@@ -14,7 +14,7 @@
 > CI must never spend quota: every CI path uses the FakeAdapter (REQ-11.2);
 > live runs are task 11 only.
 
-- [ ] 1. Ring 1/2 scaffold + enforcement extension — new pnpm workspaces `aal/` and `adapters/`
+- [x] 1. Ring 1/2 scaffold + enforcement extension — new pnpm workspaces `aal/` and `adapters/`
      (strict tsconfig, smoke tests), extend `scripts/check-core-vendor-free.sh` to grep `aal/`
      (planted vendor word demonstrably fails), create `.ai/schemas/task-result.schema.json`,
      `.ai/policies/phase1.json` (named policy keys: transcript_poll_interval_ms,
@@ -24,6 +24,19 @@
      in core/ AND aal/ each fail it.
      Satisfies: REQ-12.1. Verify: `pnpm install && pnpm typecheck && pnpm lint && pnpm test`;
      planted-word runs exit 1 for both rings.
+     Evidence:
+       - test: `pnpm typecheck` -> all 6 workspaces Done (aal, adapters added); `pnpm test` ->
+         73 pass / 0 fail (aal smoke 1 incl. `core/types` link resolves, adapters smoke 1,
+         plus existing core 45 / backend 22 / web 4 unchanged); `pnpm lint` -> eslint no issues
+       - test: `scripts/check-core-vendor-free.sh` -> exit 0 "core/ and aal/ vendor-name-free";
+         planted "anthropic" in aal/src/*.tmp.ts -> exit 1 with file:line; planted "openai" in
+         core/src/*.tmp.ts -> exit 1; both removed -> exit 0 again
+       - viewports: n/a — scaffold/logic-only
+       - deviations: added `exports` map to core/package.json (".", "./ports", "./types") so
+         Ring 1 can import core types by package name; aal depends on `core` (workspace:*),
+         adapters depends on `aal`+`core`; `_template.ts` deferred to Phase 3 (design amended);
+         `.ai/policies/phase1.json` also carries repair_max_rounds + cost_units_per_1k_tokens
+         (used by later tasks, colocated with the other bounds)
 
 - [ ] 2. AAL protocol + conformance suite in RED — `aal/src/protocol.ts` (AgentRequest/
      AgentResponse/CapabilityManifest/AdapterInterface/AdapterError types), FakeAdapter skeleton

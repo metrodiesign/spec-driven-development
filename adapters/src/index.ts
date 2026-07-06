@@ -1,0 +1,3 @@
+// Ring 2 public surface (adapters — wire-format translation only, INV-8).
+// Vendor names are legal HERE and only here. Populated in task 7 (anthropic).
+export const RING = 2 as const;

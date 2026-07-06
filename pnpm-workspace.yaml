@@ -1,5 +1,7 @@
 packages:
   - core
+  - aal
+  - adapters
   - console/backend
   - console/web
   - spikes
