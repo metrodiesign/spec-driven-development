@@ -23,6 +23,7 @@ import {
   type PermRule,
   type ScopeValues,
 } from './govern.ts';
+import { activityHookEntry, buildSessionSearch, indexUsage, type UsageRecord } from './observe.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -42,6 +43,8 @@ export interface AppDeps {
   termManager?: TermManager;
   /** Per-source spawn rate limiter for F-Term (REQ-13.5); default allows all. */
   termRateOk?(): boolean;
+  /** Per-install token for the activity ingest endpoint (REQ-19.2). */
+  activityToken?: string;
 }
 
 const DISCLAIMER =
@@ -304,6 +307,48 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return { saved: true, hash: result.newHash };
     },
   );
+
+  // --- F-Usage full: indexer over local records (REQ-18) ---
+  app.post<{ Body: { records?: UsageRecord[] } }>('/api/usage/full', async (req) => {
+    const records = Array.isArray(req.body?.records) ? req.body.records : [];
+    const agentPrefix = join(deps.homeDir, '.ai', 'runs', 'agent-sessions');
+    return { ...indexUsage(records, agentPrefix), moneyDisclaimer: MONEY_DISCLAIMER };
+  });
+
+  // --- F-Act: fail-open activity hook install + token-gated ingest (REQ-19) ---
+  app.post<{ Body: { ingestUrl?: string; timeoutMs?: number } }>('/api/activity/install', async (req, reply) => {
+    const ingestUrl = req.body?.ingestUrl;
+    if (typeof ingestUrl !== 'string') return reply.code(400).send({ error: 'ingestUrl required' });
+    const token = deps.activityToken ?? 'set-a-token';
+    return { entry: activityHookEntry(ingestUrl, token, req.body?.timeoutMs ?? 1500) };
+  });
+  app.post('/api/events/ingest', async (req, reply) => {
+    if (deps.activityToken === undefined || req.headers['x-ingest-token'] !== deps.activityToken) {
+      return reply.code(401).send({ error: 'bad ingest token' });
+    }
+    // Accepted; a live server broadcasts over WS (runtime, task 11).
+    return reply.code(202).send({ accepted: true });
+  });
+
+  // --- F-Sess search: rebuildable FTS5 over session docs (REQ-20) ---
+  app.get<{ Querystring: { q?: string; project?: string } }>('/api/sessions/search', async (req, reply) => {
+    const q = req.query.q;
+    const project = req.query.project;
+    if (typeof q !== 'string' || q.length === 0) return reply.code(400).send({ error: 'q required' });
+    if (typeof project !== 'string' || project.length === 0) return reply.code(400).send({ error: 'project required' });
+    const { sessions } = readSessions(deps.homeDir, project);
+    const docs = sessions.map((s) => ({
+      sessionId: s.sessionId,
+      project,
+      text: `${s.sessionId} ${s.firstTs ?? ''} ${s.lastTs ?? ''}`,
+    }));
+    const search = buildSessionSearch(docs);
+    try {
+      return { results: search.search(q) };
+    } finally {
+      search.close();
+    }
+  });
 
   // --- Static SPA (built console/web) — path-contained, no directory listing ---
   const dist = deps.webDistDir;

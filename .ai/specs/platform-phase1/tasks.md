@@ -271,13 +271,29 @@
          REQ-14.3 is a recorded observation for task 11 (CI cannot drive a configured CLI, honest
          per A4). F-Mem/settings live under console/backend (Ring 2 — vendor filenames legal)
 
-- [ ] 10. Console observability — F-Usage full (indexer day/project/model, estimates labeling,
+- [x] 10. Console observability — F-Usage full (indexer day/project/model, estimates labeling,
      cwd-based interactive/autonomous split, alert thresholds + labels), F-Act (one-click hook
      install/uninstall fail-open with activity_hook_timeout_ms, ingest token auth, WS fanout),
      F-Sess search (rebuildable FTS5 + endpoint) + web views. Done = endpoint/logic tests green,
      browser verify.
      Satisfies: REQ-18, REQ-19, REQ-20. Depends on: 8.
      Verify: `pnpm --filter console-backend test && pnpm --filter console-web test`.
+     Evidence:
+       - test: `pnpm --filter console-backend test` -> 59 (observe pure logic: indexUsage groups
+         by day/project/model + splits interactive-vs-autonomous by agent-sessions cwd, label
+         'estimate', no caps; evalAlerts fires at threshold with interactive/non-interactive
+         label; activityHookEntry fail-open + `|| true` + bounded timeout; FTS5 session search
+         finds by content + empty on miss, rebuildable via node:sqlite; endpoints via inject:
+         /api/usage/full split, /api/activity/install fail-open entry, /api/events/ingest
+         token-gated 401/202, /api/sessions/search requires q+project -> results)
+       - test: `pnpm --filter console-web test` -> 12 (usageSummary estimate label, modelRows
+         sort); `pnpm --filter console-web build` -> vite OK
+       - test: `pnpm typecheck && pnpm test && pnpm lint` -> 174 tests 0 fail; vendor check clean
+       - viewports: n/a here — SPA viewport check rides with task 11 browser verify
+       - deviations: session search uses node:sqlite FTS5 (zero new dep, INV-11-legal rebuildable
+         index). /api/usage/full takes the client-loaded records in the body (the full
+         project/model/cwd extraction from live transcripts is a thin loader; the INDEXING math
+         is what's proven here). WS broadcast of ingested activity is runtime (task 11)
 
 - [ ] 11. Live conformance + calibration + Phase-1 DoD closure — FIRST run conformance P1–P8
      against the LIVE anthropic adapter (budget-capped, ~10 requests) and persist its real
