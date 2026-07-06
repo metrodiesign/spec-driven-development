@@ -123,10 +123,18 @@ export function createGateRunner(opts: GateRunnerOptions): GateRunner {
       cwd: opts.worktreeDir,
       encoding: 'utf8',
     }).trim();
+    // Bind the TESTED tree, not just HEAD (REQ-4.2): gates run mid-loop against
+    // uncommitted writes. Hash of tracked+untracked content at gate entry —
+    // checks may append their own artifacts (e.g. a flaky counter) while running.
+    execFileSync('git', ['add', '-A'], { cwd: opts.worktreeDir });
+    const worktreeHash = execFileSync('git', ['write-tree'], {
+      cwd: opts.worktreeDir,
+      encoding: 'utf8',
+    }).trim();
     const envHash = sha256Hex(
       JSON.stringify({ platform: process.platform, node: process.version }),
     );
-    const base = { tier, gateConfigHash, commitHash, envHash, scopeNote: SCOPE_NOTE };
+    const base = { tier, gateConfigHash, commitHash, worktreeHash, envHash, scopeNote: SCOPE_NOTE };
 
     if (tier === 'T2' || tier === 'T3') {
       // Explicit stub — never a silent pass (REQ-8.4).

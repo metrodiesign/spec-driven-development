@@ -117,6 +117,11 @@ function assertGateEventsBacked(c: ReturnType<typeof buildCore>, fix: Fixture): 
       expectedConfigHash,
       'gate config hash = sha256 of the actual config bytes (REQ-8.3)',
     );
+    assert.match(
+      String(e.payload['worktreeHash'] ?? ''),
+      /^[0-9a-f]{40}$/,
+      'gate result binds the tested (possibly dirty) tree via worktreeHash (REQ-4.2)',
+    );
     const checks = e.payload['checks'] as GateCheck[];
     for (const check of checks) {
       assert.ok(
@@ -337,6 +342,73 @@ test('DoD#2b: rejections come back to the source as structured feedback, loop in
 });
 
 // ---------------------------------------------------------------------------
+// DoD#2c — RUN_COMMAND side effects are contained by the sandbox: file writes
+// outside the task worktree and onto test/golden are denied even THROUGH a
+// shell (REQ-1.2/1.3 at the command layer). Escape writes would be invisible
+// to worktreeHash/rollback/golden-manifest, so they must be impossible at run
+// time, not merely detected later.
+// ---------------------------------------------------------------------------
+test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', darwinOnly, async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const escapeTarget = join(fix.root, 'cmd-escape.txt');
+
+    const outEscape = await c.executor.execute(
+      {
+        type: 'RUN_COMMAND',
+        actionId: 'a-cmd-escape',
+        cmd: `printf x > "${escapeTarget}"`,
+        network: 'none',
+      },
+      'implementer',
+    );
+    assert.equal(outEscape.status, 'applied', 'command ran under the sandbox');
+    if (outEscape.status === 'applied') {
+      assert.notEqual(outEscape.exitCode, 0, 'escape write exited non-zero');
+    }
+    assert.ok(!existsSync(escapeTarget), 'no file materialized outside the worktree');
+
+    const outGolden = await c.executor.execute(
+      {
+        type: 'RUN_COMMAND',
+        actionId: 'a-cmd-golden',
+        cmd: 'echo tampered >> test/golden/expected.txt',
+        network: 'none',
+      },
+      'implementer',
+    );
+    assert.equal(outGolden.status, 'applied');
+    if (outGolden.status === 'applied') {
+      assert.notEqual(outGolden.exitCode, 0, 'golden write exited non-zero');
+    }
+    assert.equal(
+      readFileSync(join(fix.worktree, 'test/golden/expected.txt'), 'utf8'),
+      'golden truth\n',
+      'golden content untouched even via shell',
+    );
+
+    // Control: writes INSIDE the worktree still work — containment, not breakage.
+    const outOk = await c.executor.execute(
+      {
+        type: 'RUN_COMMAND',
+        actionId: 'a-cmd-ok',
+        cmd: 'printf ok > src/cmd-out.txt',
+        network: 'none',
+      },
+      'implementer',
+    );
+    assert.equal(outOk.status, 'applied');
+    if (outOk.status === 'applied') {
+      assert.equal(outOk.exitCode, 0, 'legit in-worktree write succeeded');
+    }
+    assert.equal(readFileSync(join(fix.worktree, 'src/cmd-out.txt'), 'utf8'), 'ok');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // DoD#3 — a command that sneaks toward the network is blocked at connect and
 // the block is logged with core-captured evidence (REQ-2.1/2.2); hosts without
 // an enforcing sandbox refuse to run at all (REQ-2.3, fail-closed).
@@ -403,23 +475,11 @@ test('DoD#4: golden tampering (edit) is caught by the manifest check at T1', asy
     );
     assert.equal(outLegit.status, 'applied');
 
-    // ...then tamper with golden. On darwin the tamper goes through a real
-    // RUN_COMMAND (the executor cannot fs-block a shell); elsewhere the same
-    // side effect is simulated — detection is the gate's job either way.
-    if (isDarwin) {
-      const outTamper = await c.executor.execute(
-        {
-          type: 'RUN_COMMAND',
-          actionId: 'a-tamper',
-          cmd: 'echo tampered >> test/golden/expected.txt',
-          network: 'none',
-        },
-        'implementer',
-      );
-      assert.equal(outTamper.status, 'applied');
-    } else {
-      writeFileSync(join(fix.worktree, 'test/golden/expected.txt'), 'golden truth\ntampered\n');
-    }
+    // ...then tamper with golden OUT-OF-BAND (direct fs write). In-loop shell
+    // tampering is blocked by the sandbox itself (proven in DoD#2c); the
+    // manifest check exists for tamper that bypasses the executor entirely —
+    // another process, a human, a bug. Detection stays the gate's job.
+    writeFileSync(join(fix.worktree, 'test/golden/expected.txt'), 'golden truth\ntampered\n');
 
     const report = await c.gates.run('T1');
     assert.equal(report.pass, false, 'T1 fails on tampered golden');

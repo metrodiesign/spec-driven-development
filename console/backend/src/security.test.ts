@@ -36,6 +36,21 @@ test('CORS origin allowlist mirrors the host allowlist (REQ-12.4)', () => {
   assert.equal(corsOriginAllowed('not-a-url', '127.0.0.1', 9119), false);
 });
 
+test('CORS/host port pinning: a portless origin is port 80, NOT the console origin (REQ-12.4)', () => {
+  // http://localhost (implicit :80) is a DIFFERENT origin from the console on
+  // :9119 — a page served from another localhost server must not get CORS reads.
+  assert.equal(corsOriginAllowed('http://localhost', '127.0.0.1', 9119), false);
+  assert.equal(corsOriginAllowed('http://localhost:80', '127.0.0.1', 9119), false);
+  assert.equal(corsOriginAllowed('https://localhost', '127.0.0.1', 9119), false);
+  assert.equal(corsOriginAllowed('http://127.0.0.1', '127.0.0.1', 9119), false);
+  // Default-port equivalence stays honest when the console itself runs on 80.
+  assert.equal(corsOriginAllowed('http://localhost', '127.0.0.1', 80), true);
+  // Host header without a port means port 80 as well — reject on 9119.
+  assert.equal(hostHeaderAllowed('localhost', '127.0.0.1', 9119), false);
+  assert.equal(hostHeaderAllowed('127.0.0.1', '127.0.0.1', 9119), false);
+  assert.equal(hostHeaderAllowed('localhost', '127.0.0.1', 80), true);
+});
+
 test('redaction: tokens, credential paths, home prefix -> display form (REQ-12.5)', () => {
   const home = '/Users/operator';
   // Synthetic token SHAPES assembled at runtime so the repo's own secret

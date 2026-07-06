@@ -303,7 +303,7 @@ function performApply(
 
   // RUN_COMMAND under the deny-network sandbox (validated available upstream).
   if (opts.sandbox.kind !== 'available') throw new Error('sandbox availability changed mid-flight');
-  const { cmd, args } = opts.sandbox.wrap(action.cmd);
+  const { cmd, args } = opts.sandbox.wrap(action.cmd, opts.worktreeDir);
   const cwd =
     action.cwd === undefined
       ? opts.worktreeDir

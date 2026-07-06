@@ -43,6 +43,21 @@ how to reverse.
   `canUseTool`; `settingSources: []` is required for the callback (or the empty tool set) to be
   authoritative.
 
+## D-005 — Sandbox denies file writes outside the worktree (hardening beyond §6.1)
+
+- **What:** the darwin RUN_COMMAND sandbox denies `file-write*` outside the task worktree (plus
+  `/dev/null`) and onto `test/golden` even inside it. Spec §6.1 mandates only the network deny.
+- **Why (Codex review on PR #41, confirmed):** a shell command could write outside the worktree
+  (`printf x > ../../outside`) or append to golden; escape writes are invisible to
+  `worktreeHash`/rollback/golden-manifest, so containment must be enforced at run time, not
+  detected later. Proven by fault-injection DoD#2c.
+- **Consequence accepted:** temp-dir writes (TMPDIR, `/tmp`) are denied in Phase 0 — toolchains
+  that need scratch space get a per-policy allowlist entry when they arrive; never a blanket
+  `/tmp` allow.
+- **Related:** GateReport now also carries `worktreeHash` (git tree hash of the exact dirty tree
+  the gate ran on) beside `commitHash` — REQ-4.2 binding made honest for mid-loop gates.
+- **Reverse:** none intended — strictly stronger enforcement of REQ-1.2/1.3.
+
 ## D-003 — Fault-injection CI job pinned to a macOS runner
 
 - **What:** the `core` fault-injection suite (Phase 0 DoD) runs on a macOS runner in CI, not the

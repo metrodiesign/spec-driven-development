@@ -94,6 +94,12 @@ export interface GateReport {
   pass: boolean | 'not_enabled';
   gateConfigHash: string;
   commitHash: string;
+  /**
+   * Git tree hash of the exact (possibly dirty) tracked+untracked content the
+   * gate ran on (REQ-4.2). Gates run mid-loop against uncommitted writes, so
+   * commitHash (HEAD) alone would name a tree that cannot reproduce the pass.
+   */
+  worktreeHash: string;
   envHash: string;
   checks: GateCheck[];
   /** DoD#4 scope: golden check detects tampering only (REQ-9.3). */

@@ -89,6 +89,10 @@
        - viewports: n/a — logic-only
        - deviations: realpath containment added at apply time (symlink escapes) beyond the
          lexical policy; RUN_COMMAND env is minimal deterministic PATH (no secret leakage)
+       - post-review (Codex, PR #41): sandbox now denies file-write outside the worktree +
+         onto test/golden even via shell (D-005); new DoD#2c proves escape/golden writes fail
+         and in-worktree writes still work; DoD#4 tamper moved out-of-band (prevention proven
+         separately, detection still fully exercised)
 
 - [x] 5. Core gates + golden harness + budget — T0/T1 runners from `gate-ladder.json` (byte hash
      into every GateReport), T2/T3 explicit `not_enabled`, flaky retry-once-and-flag, golden
@@ -106,6 +110,10 @@
        - viewports: n/a — logic-only
        - deviations: convention gate builtin = .only/.skip scan of test files (INV-16 list);
          flaky fail-then-pass = pass:false (conservative, human decides)
+       - post-review (Codex, PR #41): GateReport gains worktreeHash (git tree hash of the exact
+         dirty tree the gate ran on) beside commitHash — REQ-4.2 binding honest for mid-loop
+         gates; unit test runner.test.ts + fault-injection helper now assert it on every
+         GATE_RESULT
 
 - [x] 6. Orchestrator + state machine — pure transition table (§6.3), claims-as-data, no
      COMPLETED path for agents, illegal-transition structured error, `not_enabled_phase0`
@@ -147,6 +155,9 @@
        - viewports: n/a — API/CLI
        - deviations: static SPA serving added to the backend (path-contained, no dep) so the
          launcher serves the UI at /
+       - post-review (Codex, PR #41): CORS/host allowlist now pins the EFFECTIVE port — a
+         portless origin/Host resolves to its default port (80/443) and must equal the console
+         port, closing the `http://localhost` (:80) cross-origin read; tests added
 
 - [x] 8. Console web SPA — React+Vite: Status/Projects/Sessions/Auth/Usage views wired to the
      API, third-party disclaimer, usage 5h-window grouping + shadowing display as pure tested

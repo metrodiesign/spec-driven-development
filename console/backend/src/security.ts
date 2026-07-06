@@ -51,9 +51,12 @@ export function hostHeaderAllowed(hostHeader: string | undefined, bindHost: stri
     : hostHeader.replace(/:\d+$/, '');
   const allowed = new Set(['127.0.0.1', '::1', 'localhost', bindHost]);
   if (!allowed.has(bare)) return false;
+  // No explicit port = port 80 (the console never terminates TLS itself). It
+  // must still equal the console port — otherwise `http://localhost` (:80),
+  // a DIFFERENT origin, would count as the console's own (REQ-12.4).
   const portMatch = hostHeader.match(/:(\d+)$/);
-  if (portMatch !== null && Number(portMatch[1]) !== port) return false;
-  return true;
+  const effectivePort = portMatch === null ? 80 : Number(portMatch[1]);
+  return effectivePort === port;
 }
 
 /** CORS origin allowlist on the same basis as the host allowlist (REQ-12.4). */
@@ -61,7 +64,13 @@ export function corsOriginAllowed(origin: string, bindHost: string, port: number
   try {
     const u = new URL(origin);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-    return hostHeaderAllowed(u.host, bindHost, port);
+    // Resolve the origin's EFFECTIVE port (URL drops default ports) so the
+    // port-pinning check above always sees an explicit one.
+    const effectivePort = u.port !== '' ? Number(u.port) : u.protocol === 'https:' ? 443 : 80;
+    const hostWithPort = u.hostname.includes(':')
+      ? `[${u.hostname}]:${effectivePort}`
+      : `${u.hostname}:${effectivePort}`;
+    return hostHeaderAllowed(hostWithPort, bindHost, port);
   } catch {
     return false;
   }
