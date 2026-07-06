@@ -1,0 +1,15 @@
+{
+  "$comment": "Default gate ladder policy (unified-platform-spec.md §6.4). The raw bytes of this file are hashed into every GateReport (INV-10). Commands are resolved against the TARGET repo the core is gating; 'fallback:full_unit' means targeted-test selection is not implemented in Phase 0 and the full unit suite runs instead (spec §6.4 T0). T2/T3 are explicit stubs in Phase 0 — they must report not_enabled, never pass silently.",
+  "t0": {
+    "lint": "pnpm lint",
+    "typecheck": "pnpm typecheck",
+    "targetedTests": "fallback:full_unit"
+  },
+  "t1": {
+    "fullTests": "pnpm test",
+    "convention": "builtin",
+    "golden": "builtin"
+  },
+  "t2": { "status": "not_enabled_phase0" },
+  "t3": { "status": "not_enabled_phase0" }
+}

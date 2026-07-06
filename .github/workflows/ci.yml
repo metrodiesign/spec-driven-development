@@ -15,6 +15,31 @@ permissions:
 # REQ-coverage tracer. A downstream project that scaffolds an app adds its own
 # typecheck/test steps (the task gate already auto-detects them — see .ai/bin/gate-task.sh).
 jobs:
+  platform:
+    # Platform (unified-platform-spec.md) — Phase 0. Pinned to macOS per
+    # docs/DEVIATIONS.md D-003: the fault-injection DoD#3 (egress default-deny)
+    # asserts real blocked-at-connect behavior, which the Phase 0 sandbox
+    # implements via darwin sandbox-exec. Linux impl (unshare -n) is future work.
+    name: platform (vendor check + typecheck + lint + tests)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vendor-name check on core/ (INV-7)
+        run: scripts/check-core-vendor-free.sh
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Tests (incl. core fault-injection suite)
+        run: pnpm test
+
   verify:
     name: guards + spec-trace
     runs-on: ubuntu-latest

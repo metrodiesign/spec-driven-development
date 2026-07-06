@@ -16,3 +16,6 @@ tsconfig.tsbuildinfo
 .env
 .env.*
 !.env.example
+
+# Spike ad-hoc proof artifacts
+/tmp/spike5-proof-*.txt

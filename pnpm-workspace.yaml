@@ -1,0 +1,8 @@
+packages:
+  - core
+  - console/backend
+  - console/web
+  - spikes
+allowBuilds:
+  esbuild: true
+  node-pty: true

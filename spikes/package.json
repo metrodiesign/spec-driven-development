@@ -1,0 +1,21 @@
+{
+  "name": "spikes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "spike:1": "node src/spike1-sessions.ts",
+    "spike:2": "node src/spike2-pty.ts",
+    "spike:3": "node src/spike3-query.ts",
+    "spike:4": "node src/spike4-billing.ts",
+    "spike:5": "node src/spike5-isolation.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.200",
+    "node-pty": "1.1.0"
+  }
+}
