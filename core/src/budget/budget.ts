@@ -8,6 +8,21 @@ export interface BudgetTracker {
   exceeded(): false | { limit: 'iterations' | 'costUnits' | 'wallclock' };
 }
 
-export function createBudget(_limits: BudgetLimits, _clock: Clock): BudgetTracker {
-  throw new Error('NotImplemented: createBudget');
+export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker {
+  const startedAt = clock.now();
+  let iterations = 0;
+  let costUnits = 0;
+
+  return {
+    noteIteration(cost) {
+      iterations += 1;
+      costUnits += cost;
+    },
+    exceeded() {
+      if (iterations >= limits.maxIterations) return { limit: 'iterations' };
+      if (costUnits > limits.maxCostUnits) return { limit: 'costUnits' };
+      if (clock.now() - startedAt > limits.maxWallclockMs) return { limit: 'wallclock' };
+      return false;
+    },
+  };
 }

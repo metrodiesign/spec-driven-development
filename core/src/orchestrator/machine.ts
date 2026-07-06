@@ -28,9 +28,81 @@ export type Trigger =
   | 'cancel'
   | 'roll_back'
   | 'quarantine'
-  | 'pause'
-  | 'resume';
+  | 'pause';
 
-export function transition(_state: TaskState, _trigger: Trigger): TransitionResult {
-  throw new Error('NotImplemented: transition');
+const ACTIVE_STATES: TaskState[] = [
+  'PROPOSED',
+  'ANALYZING',
+  'READY',
+  'IMPLEMENTING',
+  'VERIFYING',
+  'FAILED',
+  'DIAGNOSING',
+  'REPAIRING',
+  'PASSED',
+  'REVIEWING',
+  'CHANGES_REQUESTED',
+];
+
+const TABLE: Partial<Record<TaskState, Partial<Record<Trigger, TaskState>>>> = {
+  PROPOSED: { analyze: 'ANALYZING' },
+  ANALYZING: { ready: 'READY' },
+  READY: { start_implementing: 'IMPLEMENTING' },
+  IMPLEMENTING: { verify: 'VERIFYING' },
+  VERIFYING: { gate_failed: 'FAILED', gate_passed: 'PASSED' },
+  FAILED: { diagnose: 'DIAGNOSING' },
+  DIAGNOSING: { repair: 'REPAIRING' },
+  REPAIRING: { verify: 'VERIFYING' },
+  PASSED: { review: 'REVIEWING' },
+  REVIEWING: { changes_requested: 'CHANGES_REQUESTED', human_approved: 'APPROVED' },
+  CHANGES_REQUESTED: { repair: 'REPAIRING' },
+  APPROVED: { merge_queued: 'MERGE_QUEUED' },
+  MERGE_QUEUED: { audited: 'AUDITED' },
+  AUDITED: { completed: 'COMPLETED' },
+};
+
+/** Enabled in a later phase only (REQ-7.5). Listing them keeps refusal explicit. */
+const PHASE_GATED: ReadonlySet<Trigger> = new Set([
+  'human_approved',
+  'merge_queued',
+  'audited',
+  'completed',
+]);
+
+/** Special transitions available from every active state (spec §6.3). */
+const UNIVERSAL: Partial<Record<Trigger, TaskState>> = {
+  block: 'BLOCKED',
+  escalate: 'ESCALATED',
+  cancel: 'CANCELLED',
+  roll_back: 'ROLLED_BACK',
+  quarantine: 'QUARANTINED',
+  pause: 'PAUSED',
+};
+
+export function transition(state: TaskState, trigger: Trigger): TransitionResult {
+  if (PHASE_GATED.has(trigger)) {
+    return {
+      ok: false,
+      reason: 'not_enabled_phase0',
+      detail: `trigger ${trigger} is enabled in a later phase (REQ-7.5)`,
+    };
+  }
+  const universal = UNIVERSAL[trigger];
+  if (universal !== undefined) {
+    if (ACTIVE_STATES.includes(state)) return { ok: true, next: universal };
+    return {
+      ok: false,
+      reason: 'illegal_transition',
+      detail: `${trigger} not allowed from terminal state ${state}`,
+    };
+  }
+  const next = TABLE[state]?.[trigger];
+  if (next === undefined) {
+    return {
+      ok: false,
+      reason: 'illegal_transition',
+      detail: `no transition for trigger ${trigger} from state ${state}`,
+    };
+  }
+  return { ok: true, next };
 }

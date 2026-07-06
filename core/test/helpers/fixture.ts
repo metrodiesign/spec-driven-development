@@ -110,12 +110,23 @@ export function makeIds(): IdSource {
   return { next: (prefix: string) => `${prefix}-${++n}` };
 }
 
-/** A flaky test script: fails on first run, passes afterwards (marker file). */
+/**
+ * A flaky test script: fails on first run, passes afterwards (marker file).
+ * Every execution appends to `.runs` so tests can prove HOW MANY times the
+ * gate actually ran the suite (retry must be real, not a label).
+ */
 export function installFlakyTests(fix: Fixture): void {
   writeFileSync(
     join(fix.worktree, 'run-tests.sh'),
-    '#!/bin/sh\nif [ -f .flaky-ran ]; then exit 0; else touch .flaky-ran; exit 1; fi\n',
+    '#!/bin/sh\necho x >> .runs\nif [ -f .flaky-ran ]; then exit 0; else touch .flaky-ran; exit 1; fi\n',
   );
   git(fix.worktree, 'add', '-A');
   git(fix.worktree, 'commit', '-q', '-m', 'fixture: flaky tests');
+}
+
+/** A deterministically failing test script — the control for flaky detection. */
+export function installAlwaysFailTests(fix: Fixture): void {
+  writeFileSync(join(fix.worktree, 'run-tests.sh'), '#!/bin/sh\necho x >> .runs\nexit 1\n');
+  git(fix.worktree, 'add', '-A');
+  git(fix.worktree, 'commit', '-q', '-m', 'fixture: always-fail tests');
 }

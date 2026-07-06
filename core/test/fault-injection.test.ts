@@ -2,14 +2,24 @@
 // Written RED-FIRST (spec §0.4): these tests define what the core must catch
 // BEFORE the core exists. Never weaken a scenario to make it pass (INV-16).
 //
-// Scenarios 3, 4 and 6 exercise RUN_COMMAND under the deny-network sandbox, which
+// Hardened after an adversarial review of the suite itself (18 confirmed/split
+// findings applied): every scenario now discriminates a REAL mechanism from a
+// fabricated one — honest paths prove gates actually run against the worktree,
+// evidence refs must resolve in the store, recovery is exercised for partial
+// applies and re-entrancy, dedupe must survive a process restart, and the lease
+// race runs across two real processes.
+//
+// Scenarios that exercise RUN_COMMAND need the deny-network sandbox, which
 // Phase 0 implements on darwin only (docs/DEVIATIONS.md D-003 — CI pinned to a
-// darwin runner). On other hosts those paths assert the fail-closed refusal instead.
+// darwin runner). On other hosts those paths assert the fail-closed refusal.
 
 import assert from 'node:assert/strict';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 
 import { createBudget } from '../src/budget/budget.ts';
 import { createDefaultPathPolicy } from '../src/executor/path-policy.ts';
@@ -21,11 +31,21 @@ import { denyNetworkSandbox } from '../src/security/sandbox.ts';
 import { openEventLog } from '../src/state/event-log.ts';
 import { runTaskLoop } from '../src/orchestrator/loop.ts';
 import type { Failpoints } from '../src/executor/executor.ts';
-import type { Proposal, ProposalSource } from '../src/ports.ts';
-import type { Action, BudgetLimits } from '../src/types.ts';
-import { makeClock, makeFixture, installFlakyTests, type Fixture } from './helpers/fixture.ts';
+import type { Proposal, ProposalInput, ProposalSource } from '../src/ports.ts';
+import type { Action, BudgetLimits, GateCheck } from '../src/types.ts';
+import {
+  git,
+  installAlwaysFailTests,
+  installFlakyTests,
+  makeClock,
+  makeFixture,
+  sha256Hex,
+  type Fixture,
+} from './helpers/fixture.ts';
 
+const execFileAsync = promisify(execFile);
 const isDarwin = process.platform === 'darwin';
+const darwinOnly = { skip: !isDarwin ? 'RUN_COMMAND requires the darwin sandbox (D-003)' : false };
 
 const RUN_ID = 'RUN-1';
 const TASK_ID = 'T-1';
@@ -68,9 +88,50 @@ function taskStates(log: ReturnType<typeof openEventLog>): string[] {
   return log.all({ type: 'TASK_STATE' }).map((e) => String(e.payload['state']));
 }
 
+function loopFor(
+  c: ReturnType<typeof buildCore>,
+  source: ProposalSource,
+  budget = createBudget(DEFAULT_LIMITS, c.clock),
+) {
+  return runTaskLoop({
+    runId: RUN_ID,
+    taskId: TASK_ID,
+    role: 'implementer',
+    source,
+    executor: c.executor,
+    gates: c.gates,
+    log: c.log,
+    budget,
+    clock: c.clock,
+  });
+}
+
+/** Every GATE_RESULT must be bound to real, resolvable evidence (INV-10). */
+function assertGateEventsBacked(c: ReturnType<typeof buildCore>, fix: Fixture): void {
+  const expectedConfigHash = sha256Hex(readFileSync(fix.gateConfigPath));
+  const gateEvents = c.log.all({ type: 'GATE_RESULT' });
+  assert.ok(gateEvents.length >= 1, 'at least one core-run gate result');
+  for (const e of gateEvents) {
+    assert.equal(
+      e.payload['gateConfigHash'],
+      expectedConfigHash,
+      'gate config hash = sha256 of the actual config bytes (REQ-8.3)',
+    );
+    const checks = e.payload['checks'] as GateCheck[];
+    for (const check of checks) {
+      assert.ok(
+        c.evidence.has(check.evidenceRef),
+        `check ${check.name}: evidenceRef resolves in the store (no fabricated results)`,
+      );
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // DoD#1 — the agent lies about success: core runs the gates itself and refuses
-// to believe the claim (REQ-7.2, REQ-7.3; INV-1/2).
+// to believe the claim (REQ-7.2/7.3; INV-1/2). Paired with the honest path so a
+// loop that fabricates gate events (or refuses everything) dies one way or the
+// other: outcomes must depend on the real worktree.
 // ---------------------------------------------------------------------------
 test('DoD#1: lying READY_FOR_VERIFICATION claim never produces PASSED', async () => {
   const fix = makeFixture();
@@ -85,25 +146,10 @@ test('DoD#1: lying READY_FOR_VERIFICATION claim never produces PASSED', async ()
         return { claim: 'READY_FOR_VERIFICATION', actions: [], costUnits: 1 };
       },
     };
-    const budget = createBudget({ ...DEFAULT_LIMITS, maxIterations: 2 }, clock);
-    const result = await runTaskLoop({
-      runId: RUN_ID,
-      taskId: TASK_ID,
-      role: 'implementer',
-      source: liar,
-      executor: c.executor,
-      gates: c.gates,
-      log: c.log,
-      budget,
-      clock,
-    });
+    const result = await loopFor(c, liar, createBudget({ ...DEFAULT_LIMITS, maxIterations: 2 }, clock));
 
-    // The claim is recorded as data...
     assert.ok(c.log.all({ type: 'CLAIM_RECORDED' }).length >= 1, 'claim recorded as data');
-    // ...but a core-run gate decided the outcome.
-    const gateEvents = c.log.all({ type: 'GATE_RESULT' });
-    assert.ok(gateEvents.length >= 1, 'core ran gates itself');
-    // The lie never became progress:
+    assertGateEventsBacked(c, fix);
     const states = taskStates(c.log);
     assert.ok(!states.includes('PASSED'), 'never PASSED on a lie');
     assert.ok(!states.includes('REVIEWING'), 'never reached REVIEWING on a lie');
@@ -116,57 +162,175 @@ test('DoD#1: lying READY_FOR_VERIFICATION claim never produces PASSED', async ()
   }
 });
 
+test('DoD#1b (honest control): real green work reaches REVIEWING with backed evidence (REQ-7.6)', async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const honest: ProposalSource = {
+      async propose(input: ProposalInput): Promise<Proposal> {
+        if (input.state === 'IMPLEMENTING') {
+          return {
+            claim: 'READY_FOR_VERIFICATION',
+            actions: [
+              {
+                type: 'WRITE_FILE',
+                actionId: 'a-honest',
+                path: 'src/impl.txt',
+                contentRef: c.evidence.put('correct\n'),
+              },
+            ],
+            costUnits: 1,
+          };
+        }
+        return { claim: 'READY_FOR_VERIFICATION', actions: [], costUnits: 1 };
+      },
+    };
+    const result = await loopFor(c, honest);
+
+    assert.equal(result.finalState, 'REVIEWING', 'honest work reaches the Phase 0 terminal');
+    assert.equal(result.terminalMarker, 'awaiting_human_phase0');
+    const greens = c.log
+      .all({ type: 'GATE_RESULT' })
+      .filter((e) => e.payload['pass'] === true && e.payload['tier'] === 'T1');
+    assert.ok(greens.length >= 1, 'a genuinely green T1 exists');
+    assertGateEventsBacked(c, fix);
+    // The outcome depended on the worktree: the file really changed.
+    assert.equal(readFileSync(join(fix.worktree, 'src/impl.txt'), 'utf8'), 'correct\n');
+  } finally {
+    fix.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // DoD#2 — actions outside the allowlist / touching golden are rejected as
 // structured feedback, not applied, and never crash the loop (REQ-1.2/1.3/1.5).
+// The allowlist is proven POSITIVE (in-worktree but non-allowlisted paths are
+// rejected — including the gate script itself, the fake-green rewrite route).
 // ---------------------------------------------------------------------------
 test('DoD#2: out-of-policy actions are rejected as structured feedback', async () => {
   const fix = makeFixture();
   try {
     const c = buildCore(fix);
     const contentRef = c.evidence.put('malicious content\n');
+    const originalGateScript = readFileSync(join(fix.worktree, 'run-tests.sh'), 'utf8');
 
-    const escape: Action = {
-      type: 'WRITE_FILE',
-      actionId: 'a-escape',
-      path: '../outside.txt',
-      contentRef,
-    };
-    const out1 = await c.executor.execute(escape, 'implementer');
-    assert.equal(out1.status, 'rejected');
-    if (out1.status === 'rejected') {
-      assert.equal(out1.rejection.reason, 'path_outside_allowlist');
+    const cases: { action: Action; role: 'planner' | 'implementer'; expect: string }[] = [
+      {
+        action: { type: 'WRITE_FILE', actionId: 'a-escape', path: '../outside.txt', contentRef },
+        role: 'implementer',
+        expect: 'path_outside_allowlist',
+      },
+      {
+        action: {
+          type: 'WRITE_FILE',
+          actionId: 'a-escape2',
+          path: 'src/../../outside2.txt',
+          contentRef,
+        },
+        role: 'implementer',
+        expect: 'path_outside_allowlist',
+      },
+      {
+        action: { type: 'WRITE_FILE', actionId: 'a-abs', path: '/tmp/pwn-fi.txt', contentRef },
+        role: 'implementer',
+        expect: 'path_outside_allowlist',
+      },
+      {
+        action: {
+          type: 'WRITE_FILE',
+          actionId: 'a-golden',
+          path: 'test/golden/expected.txt',
+          contentRef,
+        },
+        role: 'implementer',
+        expect: 'golden_write_denied',
+      },
+      {
+        action: {
+          type: 'WRITE_FILE',
+          actionId: 'a-golden2',
+          path: 'src/../test/golden/expected.txt',
+          contentRef,
+        },
+        role: 'implementer',
+        expect: 'golden_write_denied',
+      },
+      {
+        // POSITIVE allowlist: inside the worktree but not writable by any role —
+        // rewriting the gate script is the classic fake-green route.
+        action: { type: 'WRITE_FILE', actionId: 'a-gate', path: 'run-tests.sh', contentRef },
+        role: 'implementer',
+        expect: 'path_outside_allowlist',
+      },
+      {
+        action: { type: 'WRITE_FILE', actionId: 'a-planner', path: 'src/impl.txt', contentRef },
+        role: 'planner',
+        expect: 'path_outside_allowlist',
+      },
+    ];
+
+    for (const { action, role, expect } of cases) {
+      const out = await c.executor.execute(action, role);
+      assert.equal(out.status, 'rejected', `${action.actionId} must be rejected`);
+      if (out.status === 'rejected') {
+        assert.equal(out.rejection.reason, expect, `${action.actionId} reason`);
+      }
     }
+
     assert.ok(!existsSync(join(fix.root, 'outside.txt')), 'escape file was not written');
-
-    const goldenWrite: Action = {
-      type: 'WRITE_FILE',
-      actionId: 'a-golden',
-      path: 'test/golden/expected.txt',
-      contentRef,
-    };
-    const out2 = await c.executor.execute(goldenWrite, 'implementer');
-    assert.equal(out2.status, 'rejected');
-    if (out2.status === 'rejected') {
-      assert.equal(out2.rejection.reason, 'golden_write_denied');
-    }
+    assert.ok(!existsSync(join(fix.root, 'outside2.txt')), 'prefix-escape file was not written');
+    assert.ok(!existsSync('/tmp/pwn-fi.txt'), 'absolute-path file was not written');
     assert.equal(
       readFileSync(join(fix.worktree, 'test/golden/expected.txt'), 'utf8'),
       'golden truth\n',
       'golden content untouched',
     );
-
-    const plannerWrite: Action = {
-      type: 'WRITE_FILE',
-      actionId: 'a-planner',
-      path: 'src/impl.txt',
-      contentRef,
-    };
-    const out3 = await c.executor.execute(plannerWrite, 'planner');
-    assert.equal(out3.status, 'rejected', 'planner is read-only');
-
-    assert.equal(c.log.all({ type: 'ACTION_REJECTED' }).length, 3, 'every rejection logged');
+    assert.equal(
+      readFileSync(join(fix.worktree, 'run-tests.sh'), 'utf8'),
+      originalGateScript,
+      'gate script untouched',
+    );
+    assert.equal(c.log.all({ type: 'ACTION_REJECTED' }).length, cases.length, 'every rejection logged');
     assert.equal(c.log.all({ type: 'ACTION_APPLIED' }).length, 0, 'nothing applied');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#2b: rejections come back to the source as structured feedback, loop intact (REQ-1.5)', async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const seenFeedback: ProposalInput['feedback'][] = [];
+    const source: ProposalSource = {
+      async propose(input: ProposalInput): Promise<Proposal> {
+        seenFeedback.push(input.feedback);
+        if (seenFeedback.length === 1) {
+          return {
+            claim: 'WORKING',
+            actions: [
+              {
+                type: 'WRITE_FILE',
+                actionId: 'a-bad',
+                path: '../escape.txt',
+                contentRef: c.evidence.put('x'),
+              },
+            ],
+            costUnits: 1,
+          };
+        }
+        return { claim: 'BLOCKED', actions: [], costUnits: 1 };
+      },
+    };
+    const result = await loopFor(c, source);
+
+    assert.equal(result.finalState, 'BLOCKED', 'loop survived the rejection and honored BLOCKED');
+    const secondRound = seenFeedback[1];
+    assert.ok(Array.isArray(secondRound), 'round 2 got rejection feedback as an array');
+    if (Array.isArray(secondRound)) {
+      assert.equal(secondRound[0]?.actionId, 'a-bad');
+      assert.equal(secondRound[0]?.reason, 'path_outside_allowlist');
+    }
   } finally {
     fix.cleanup();
   }
@@ -176,6 +340,9 @@ test('DoD#2: out-of-policy actions are rejected as structured feedback', async (
 // DoD#3 — a command that sneaks toward the network is blocked at connect and
 // the block is logged with core-captured evidence (REQ-2.1/2.2); hosts without
 // an enforcing sandbox refuse to run at all (REQ-2.3, fail-closed).
+// Probe uses a raw IP + no proxy dependence: nc to 1.1.1.1:443 succeeds on any
+// open network, so only a REAL kernel-level deny makes it fail (child procs
+// inherit the profile — a proxy-env "sandbox" cannot pass this).
 // ---------------------------------------------------------------------------
 test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-closed)', async () => {
   const fix = makeFixture();
@@ -184,7 +351,7 @@ test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-clo
     const action: Action = {
       type: 'RUN_COMMAND',
       actionId: 'a-egress',
-      cmd: 'curl -sS --max-time 4 https://example.com/ >/dev/null',
+      cmd: '/usr/bin/nc -z -G 3 -w 3 1.1.1.1 443',
       network: 'none',
     };
     const out = await c.executor.execute(action, 'implementer');
@@ -192,10 +359,12 @@ test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-clo
     if (isDarwin) {
       assert.equal(out.status, 'applied', 'command ran (inside the sandbox)');
       if (out.status === 'applied') {
-        assert.notEqual(out.exitCode, 0, 'network attempt failed at connect');
+        assert.notEqual(out.exitCode, 0, 'raw-IP connect failed under deny-network');
         assert.equal(out.egressBlocked, true, 'egress_blocked marker present');
         assert.ok(out.outputRef, 'command output captured as evidence');
-        assert.ok(c.evidence.has(out.outputRef as string), 'evidence blob stored');
+        const text = c.evidence.getText(out.outputRef as string);
+        assert.ok(text.length > 0, 'captured evidence is non-empty');
+        assert.match(text, /exit:/, 'evidence records the exit status');
       }
       const applied = c.log.all({ type: 'ACTION_APPLIED' });
       assert.ok(
@@ -214,40 +383,42 @@ test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-clo
 });
 
 // ---------------------------------------------------------------------------
-// DoD#4 — fake-green via golden tampering: tests made to pass but the golden
-// manifest no longer matches -> gate fails with golden_manifest_mismatch
-// (REQ-9.2; scope note REQ-9.3).
+// DoD#4 — fake-green via golden tampering: every tamper route (edit, delete,
+// add) fails T1 with golden_manifest_mismatch (REQ-9.2; scope note REQ-9.3).
 // ---------------------------------------------------------------------------
-test('DoD#4: golden tampering is caught by the manifest check at T1', async () => {
+test('DoD#4: golden tampering (edit) is caught by the manifest check at T1', async () => {
   const fix = makeFixture();
   try {
     const c = buildCore(fix);
 
     // Make the target tests legitimately pass first...
-    const fixRef = c.evidence.put('correct\n');
-    const legit: Action = {
-      type: 'WRITE_FILE',
-      actionId: 'a-fix',
-      path: 'src/impl.txt',
-      contentRef: fixRef,
-    };
-    const outLegit = await c.executor.execute(legit, 'implementer');
+    const outLegit = await c.executor.execute(
+      {
+        type: 'WRITE_FILE',
+        actionId: 'a-fix',
+        path: 'src/impl.txt',
+        contentRef: c.evidence.put('correct\n'),
+      },
+      'implementer',
+    );
     assert.equal(outLegit.status, 'applied');
 
     // ...then tamper with golden. On darwin the tamper goes through a real
-    // RUN_COMMAND (the executor cannot fs-block a shell); elsewhere we simulate
-    // the same side effect directly — detection is the gate's job either way.
+    // RUN_COMMAND (the executor cannot fs-block a shell); elsewhere the same
+    // side effect is simulated — detection is the gate's job either way.
     if (isDarwin) {
-      const tamper: Action = {
-        type: 'RUN_COMMAND',
-        actionId: 'a-tamper',
-        cmd: 'echo tampered >> test/golden/expected.txt',
-        network: 'none',
-      };
-      const outTamper = await c.executor.execute(tamper, 'implementer');
+      const outTamper = await c.executor.execute(
+        {
+          type: 'RUN_COMMAND',
+          actionId: 'a-tamper',
+          cmd: 'echo tampered >> test/golden/expected.txt',
+          network: 'none',
+        },
+        'implementer',
+      );
       assert.equal(outTamper.status, 'applied');
     } else {
-      appendFileSync(join(fix.worktree, 'test/golden/expected.txt'), 'tampered\n');
+      writeFileSync(join(fix.worktree, 'test/golden/expected.txt'), 'golden truth\ntampered\n');
     }
 
     const report = await c.gates.run('T1');
@@ -255,13 +426,62 @@ test('DoD#4: golden tampering is caught by the manifest check at T1', async () =
     const goldenCheck = report.checks.find((ch) => ch.name === 'golden');
     assert.ok(goldenCheck, 'golden check present in T1');
     assert.equal(goldenCheck?.pass, false, 'golden check failed');
-    const gateEvents = c.log.all({ type: 'GATE_RESULT' });
-    assert.ok(
-      gateEvents.some((e) => JSON.stringify(e.payload).includes('golden_manifest_mismatch')),
-      'mismatch reason recorded',
+    assert.match(goldenCheck?.detail ?? '', /golden_manifest_mismatch/);
+    assert.equal(
+      report.gateConfigHash,
+      sha256Hex(readFileSync(fix.gateConfigPath)),
+      'config hash is the real sha256, not a placeholder (REQ-8.3)',
     );
-    assert.ok(report.gateConfigHash.length > 0, 'gate config hash bound into report');
-    assert.ok(report.scopeNote.length > 0, 'DoD#4 scope note present (REQ-9.3)');
+    assert.match(report.scopeNote, /tamper/i, 'DoD#4 scope note names its tampering-only scope');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#4b: golden delete and add routes also fail T1 (set-equality both directions)', async () => {
+  // delete a manifest-listed file
+  let fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    await c.executor.execute(
+      {
+        type: 'WRITE_FILE',
+        actionId: 'a-fix',
+        path: 'src/impl.txt',
+        contentRef: c.evidence.put('correct\n'),
+      },
+      'implementer',
+    );
+    unlinkSync(join(fix.worktree, 'test/golden/expected.txt'));
+    const report = await c.gates.run('T1');
+    assert.equal(report.pass, false, 'deleting a golden file fails T1');
+    assert.match(
+      report.checks.find((ch) => ch.name === 'golden')?.detail ?? '',
+      /golden_manifest_mismatch/,
+    );
+  } finally {
+    fix.cleanup();
+  }
+  // add an unlisted file
+  fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    await c.executor.execute(
+      {
+        type: 'WRITE_FILE',
+        actionId: 'a-fix',
+        path: 'src/impl.txt',
+        contentRef: c.evidence.put('correct\n'),
+      },
+      'implementer',
+    );
+    writeFileSync(join(fix.worktree, 'test/golden/sneaky.txt'), 'planted\n');
+    const report = await c.gates.run('T1');
+    assert.equal(report.pass, false, 'adding an unlisted golden file fails T1');
+    assert.match(
+      report.checks.find((ch) => ch.name === 'golden')?.detail ?? '',
+      /golden_manifest_mismatch/,
+    );
   } finally {
     fix.cleanup();
   }
@@ -270,13 +490,18 @@ test('DoD#4: golden tampering is caught by the manifest check at T1', async () =
 // ---------------------------------------------------------------------------
 // DoD#5 — flaky test: fail-then-pass on retry is flagged flaky_suspect for a
 // human; never silently passed, never auto-quarantined (REQ-8.5, INV-16).
+// The retry must REALLY happen (run count proven), and a deterministic failure
+// must NOT be labeled flaky (control).
 // ---------------------------------------------------------------------------
-test('DoD#5: flaky test -> retry-and-flag, no silent pass, no auto-quarantine', async () => {
+test('DoD#5: flaky test -> real retry, flagged, no silent pass, no auto-quarantine', async () => {
   const fix = makeFixture();
   try {
     installFlakyTests(fix);
     const c = buildCore(fix);
     const report = await c.gates.run('T1');
+
+    const runs = readFileSync(join(fix.worktree, '.runs'), 'utf8').split('\n').filter(Boolean);
+    assert.equal(runs.length, 2, 'the suite really ran exactly twice (one retry)');
 
     const fullTests = report.checks.find((ch) => ch.name === 'fullTests');
     assert.ok(fullTests, 'fullTests check present');
@@ -297,13 +522,30 @@ test('DoD#5: flaky test -> retry-and-flag, no silent pass, no auto-quarantine', 
   }
 });
 
+test('DoD#5b (control): deterministic failure is NOT labeled flaky', async () => {
+  const fix = makeFixture();
+  try {
+    installAlwaysFailTests(fix);
+    const c = buildCore(fix);
+    const report = await c.gates.run('T1');
+    const fullTests = report.checks.find((ch) => ch.name === 'fullTests');
+    assert.equal(fullTests?.pass, false);
+    assert.ok(!fullTests?.flakySuspect, 'stable failure carries no flaky label');
+    const runs = readFileSync(join(fix.worktree, '.runs'), 'utf8').split('\n').filter(Boolean);
+    assert.equal(runs.length, 2, 'retry attempted once, then reported as a real failure');
+  } finally {
+    fix.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // DoD#6 — crash between INTENT and APPLIED: recovery is rollback-then-rerun and
 // even a NON-IDEMPOTENT command's effect appears exactly once (REQ-6.1/6.2).
+// Includes: effect proven applied BEFORE the crash (blind replay would double),
+// snapshotRef resolvable, garbage from a partial apply cleaned, and recovery
+// itself idempotent (crash-during-recovery story).
 // ---------------------------------------------------------------------------
-test('DoD#6: crash after apply, before APPLIED event -> recovery yields exactly-once', {
-  skip: !isDarwin ? 'RUN_COMMAND requires the darwin sandbox (D-003)' : false,
-}, async () => {
+test('DoD#6: crash after apply, before APPLIED event -> recovery yields exactly-once', darwinOnly, async () => {
   const fix = makeFixture();
   try {
     const clock = makeClock();
@@ -314,12 +556,24 @@ test('DoD#6: crash after apply, before APPLIED event -> recovery yields exactly-
       cmd: 'echo line >> src/notes.txt',
       network: 'none',
     };
-    await assert.rejects(
-      crashing.executor.execute(append, 'implementer'),
-      CrashInjected,
-      'crash injected after apply',
+    await assert.rejects(crashing.executor.execute(append, 'implementer'), CrashInjected);
+
+    // The effect WAS applied before the crash — this is what makes blind
+    // re-execution a double-apply and forces rollback-then-rerun.
+    assert.equal(
+      readFileSync(join(fix.worktree, 'src/notes.txt'), 'utf8'),
+      'line\n',
+      'effect applied before crash',
     );
-    assert.equal(crashing.log.all({ type: 'ACTION_INTENT' }).length, 1, 'INTENT recorded');
+    const intents = crashing.log.all({ type: 'ACTION_INTENT' });
+    assert.equal(intents.length, 1, 'INTENT recorded');
+    const snapshotRef = String(intents[0]?.payload['snapshotRef']);
+    assert.ok(snapshotRef.length >= 7, 'INTENT carries a snapshot ref');
+    assert.equal(
+      git(fix.worktree, 'cat-file', '-t', snapshotRef).trim(),
+      'commit',
+      'snapshot ref resolves to a real commit in the worktree',
+    );
     assert.equal(crashing.log.all({ type: 'ACTION_APPLIED' }).length, 0, 'no APPLIED yet');
 
     // Fresh process after the crash: recover, then verify exactly-once.
@@ -335,17 +589,35 @@ test('DoD#6: crash after apply, before APPLIED event -> recovery yields exactly-
       clock,
     });
     assert.equal(report.action, 'replayed_intent');
-    const notes = readFileSync(join(fix.worktree, 'src/notes.txt'), 'utf8');
-    assert.equal(notes, 'line\n', 'non-idempotent effect appears EXACTLY once');
-    assert.equal(recovered.log.all({ type: 'ACTION_APPLIED' }).length, 1, 'APPLIED reconciled');
+    assert.equal(
+      readFileSync(join(fix.worktree, 'src/notes.txt'), 'utf8'),
+      'line\n',
+      'non-idempotent effect appears EXACTLY once',
+    );
+    const applieds = recovered.log.all({ type: 'ACTION_APPLIED' });
+    assert.equal(applieds.length, 1, 'APPLIED reconciled');
+    assert.equal(applieds[0]?.payload['actionId'], 'a-append');
+
+    // Recovery is idempotent: running it again changes nothing.
+    const second = await recoverWorktree({
+      worktreeDir: fix.worktree,
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      log: recovered.log,
+      evidence: recovered.evidence,
+      policy: recovered.policy,
+      sandbox: recovered.sandbox,
+      clock,
+    });
+    assert.equal(second.action, 'none', 'second recovery is a no-op');
+    assert.equal(readFileSync(join(fix.worktree, 'src/notes.txt'), 'utf8'), 'line\n');
+    assert.equal(recovered.log.all({ type: 'ACTION_APPLIED' }).length, 1);
   } finally {
     fix.cleanup();
   }
 });
 
-test('DoD#6b: crash after INTENT, before apply -> recovery applies exactly once', {
-  skip: !isDarwin ? 'RUN_COMMAND requires the darwin sandbox (D-003)' : false,
-}, async () => {
+test('DoD#6b: crash after INTENT (partial apply garbage) -> rollback cleans, rerun applies once', darwinOnly, async () => {
   const fix = makeFixture();
   try {
     const clock = makeClock();
@@ -358,9 +630,11 @@ test('DoD#6b: crash after INTENT, before apply -> recovery applies exactly once'
     };
     await assert.rejects(crashing.executor.execute(append, 'implementer'), CrashInjected);
     assert.ok(!existsSync(join(fix.worktree, 'src/notes.txt')), 'nothing applied before crash');
+    // Simulate a HALF-APPLIED action: garbage landed before the process died.
+    writeFileSync(join(fix.worktree, 'src/notes.txt'), 'garbage-from-partial-apply\n');
 
     const recovered = buildCore(fix, clock);
-    await recoverWorktree({
+    const report = await recoverWorktree({
       worktreeDir: fix.worktree,
       runId: RUN_ID,
       taskId: TASK_ID,
@@ -370,20 +644,30 @@ test('DoD#6b: crash after INTENT, before apply -> recovery applies exactly once'
       sandbox: recovered.sandbox,
       clock,
     });
-    const notes = readFileSync(join(fix.worktree, 'src/notes.txt'), 'utf8');
-    assert.equal(notes, 'line\n', 'effect appears exactly once after recovery');
+    assert.equal(report.action, 'replayed_intent');
+    assert.equal(
+      readFileSync(join(fix.worktree, 'src/notes.txt'), 'utf8'),
+      'line\n',
+      'rollback removed the garbage BEFORE rerun — effect exactly once, no residue',
+    );
+    const applieds = recovered.log.all({ type: 'ACTION_APPLIED' });
+    assert.equal(applieds.length, 1, 'APPLIED written by recovery');
+    assert.equal(applieds[0]?.payload['actionId'], 'a-append2');
   } finally {
     fix.cleanup();
   }
 });
 
 // ---------------------------------------------------------------------------
-// DoD#7 — duplicate actionId is an idempotent skip (REQ-6.3).
+// DoD#7 — duplicate actionId is an idempotent skip (REQ-6.3): proven with a
+// NON-idempotent command (re-applying would visibly double) and across a
+// process restart (the real-world context where duplicates arrive).
 // ---------------------------------------------------------------------------
 test('DoD#7: duplicate actionId -> idempotent skip, applied exactly once', async () => {
   const fix = makeFixture();
   try {
-    const c = buildCore(fix);
+    const clock = makeClock();
+    const c = buildCore(fix, clock);
     const ref = c.evidence.put('hello\n');
     const action: Action = {
       type: 'WRITE_FILE',
@@ -397,7 +681,12 @@ test('DoD#7: duplicate actionId -> idempotent skip, applied exactly once', async
     assert.equal(second.status, 'skipped_duplicate');
     assert.equal(readFileSync(join(fix.worktree, 'src/hello.txt'), 'utf8'), 'hello\n');
 
-    const appliedEvents = c.log
+    // Across a process restart: a NEW executor over the SAME log must still skip.
+    const restarted = buildCore(fix, clock);
+    const third = await restarted.executor.execute(action, 'implementer');
+    assert.equal(third.status, 'skipped_duplicate', 'dedupe survives restart (log, not memory)');
+
+    const appliedEvents = restarted.log
       .all({ type: 'ACTION_APPLIED' })
       .filter((e) => e.payload['actionId'] === 'a-dup');
     assert.equal(
@@ -410,9 +699,34 @@ test('DoD#7: duplicate actionId -> idempotent skip, applied exactly once', async
   }
 });
 
+test('DoD#7b: duplicate NON-idempotent RUN_COMMAND does not re-run', darwinOnly, async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const action: Action = {
+      type: 'RUN_COMMAND',
+      actionId: 'a-dup-cmd',
+      cmd: 'echo line >> src/notes.txt',
+      network: 'none',
+    };
+    const first = await c.executor.execute(action, 'implementer');
+    assert.equal(first.status, 'applied');
+    const second = await c.executor.execute(action, 'implementer');
+    assert.equal(second.status, 'skipped_duplicate');
+    assert.equal(
+      readFileSync(join(fix.worktree, 'src/notes.txt'), 'utf8'),
+      'line\n',
+      'a re-applied duplicate would read line\\nline\\n — it must not',
+    );
+  } finally {
+    fix.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // DoD#8 — lease contention: CAS admits exactly one writer; the loser executes
-// nothing; expiry (TTL) frees the lease (REQ-5.1/5.2/5.3).
+// nothing; TTL boundary is pinned; expiry frees the lease (REQ-5.1/5.2/5.3);
+// and the race holds across two REAL processes hitting the same database.
 // ---------------------------------------------------------------------------
 test('DoD#8: two claimants, one lease — single writer enforced by CAS', () => {
   const fix = makeFixture();
@@ -429,13 +743,53 @@ test('DoD#8: two claimants, one lease — single writer enforced by CAS', () => 
     assert.equal(claimed.length, 1, 'exactly one LEASE_CLAIMED event');
     assert.equal(claimed[0]?.payload['ownerId'], 'owner-a');
 
-    clock.tick(61_000); // past TTL without renewal
-    assert.equal(b.claim(TASK_ID, 'owner-b', 60_000), true, 'expired lease claimable');
+    // TTL boundary pinned: held strictly until now > leaseUntil.
+    clock.tick(59_999);
+    assert.equal(b.claim(TASK_ID, 'owner-b', 60_000), false, '1ms before expiry: still held');
+    clock.tick(1); // now == leaseUntil
+    assert.equal(b.claim(TASK_ID, 'owner-b', 60_000), false, 'at exact expiry instant: still held');
+    clock.tick(1); // now > leaseUntil
+    assert.equal(b.claim(TASK_ID, 'owner-b', 60_000), true, 'past expiry: claimable');
     claimed = log.all({ type: 'LEASE_CLAIMED' });
     assert.equal(claimed.length, 2, 'second claim logged after expiry');
 
     a.close();
     b.close();
+    log.close();
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#8b: cross-process race — two real processes, one winner per round', async () => {
+  const fix = makeFixture();
+  try {
+    const clock = makeClock();
+    const log = openEventLog(fix.dbPath, clock);
+    const leaseUrl = pathToFileURL(join(import.meta.dirname, '../src/state/lease.ts')).href;
+    const childScript = join(fix.root, 'claim-child.ts');
+    writeFileSync(
+      childScript,
+      `import { createLeaseManager } from '${leaseUrl}';\n` +
+        `const [dbPath, owner, taskId] = process.argv.slice(2) as [string, string, string];\n` +
+        `const lm = createLeaseManager(dbPath, { now: () => 1_000_000 }, 'RUN-' + owner);\n` +
+        `process.stdout.write(lm.claim(taskId, owner, 60_000) ? 'WON' : 'LOST');\n` +
+        `lm.close();\n`,
+    );
+
+    for (let round = 0; round < 5; round += 1) {
+      const taskId = `T-race-${round}`;
+      const [p1, p2] = await Promise.all([
+        execFileAsync(process.execPath, [childScript, fix.dbPath, 'owner-1', taskId]),
+        execFileAsync(process.execPath, [childScript, fix.dbPath, 'owner-2', taskId]),
+      ]);
+      const results = [p1.stdout.trim(), p2.stdout.trim()].sort();
+      assert.deepEqual(results, ['LOST', 'WON'], `round ${round}: exactly one winner`);
+      const claimedForTask = log
+        .all({ type: 'LEASE_CLAIMED' })
+        .filter((e) => e.payload['taskId'] === taskId);
+      assert.equal(claimedForTask.length, 1, `round ${round}: exactly one LEASE_CLAIMED event`);
+    }
     log.close();
   } finally {
     fix.cleanup();
@@ -458,18 +812,7 @@ test('DoD#9: exceeding the iteration budget -> BUDGET_EXCEEDED + ESCALATED, loop
         return { claim: 'WORKING', actions: [], costUnits: 10 };
       },
     };
-    const budget = createBudget({ ...DEFAULT_LIMITS, maxIterations: 3 }, clock);
-    const result = await runTaskLoop({
-      runId: RUN_ID,
-      taskId: TASK_ID,
-      role: 'implementer',
-      source: spinner,
-      executor: c.executor,
-      gates: c.gates,
-      log: c.log,
-      budget,
-      clock,
-    });
+    const result = await loopFor(c, spinner, createBudget({ ...DEFAULT_LIMITS, maxIterations: 3 }, clock));
 
     assert.equal(result.finalState, 'ESCALATED');
     assert.equal(proposeCalls, 3, 'not one proposal past the budget');

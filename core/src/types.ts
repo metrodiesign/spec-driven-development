@@ -85,6 +85,7 @@ export interface GateCheck {
   pass: boolean;
   flakySuspect?: boolean;
   evidenceRef: string;
+  detail?: string;
 }
 
 /** Every report names exactly what was checked, under which config (INV-10). */
