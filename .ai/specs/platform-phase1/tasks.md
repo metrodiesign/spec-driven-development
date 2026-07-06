@@ -38,7 +38,7 @@
          `.ai/policies/phase1.json` also carries repair_max_rounds + cost_units_per_1k_tokens
          (used by later tasks, colocated with the other bounds)
 
-- [ ] 2. AAL protocol + conformance suite in RED — `aal/src/protocol.ts` (AgentRequest/
+- [x] 2. AAL protocol + conformance suite in RED — `aal/src/protocol.ts` (AgentRequest/
      AgentResponse/CapabilityManifest/AdapterInterface/AdapterError types), FakeAdapter skeleton
      + sabotaged variants (prose-only, fabricated-execution, schema-ignoring, double-burning),
      conformance probes P1–P8 + registry-gating + repair-loop + router scenarios authored as
@@ -52,8 +52,18 @@
      4 saboteurs + schema_fail_first) are real; harness/registry/router/repair are stubs.
      core typecheck/tests green (45), vendor check green (Ring 0+1). Checkbox stays [ ] until the
      suite turns green — task-gate enforces green-on-[x]; flips with task 3 (RED-first §0.4).
+     Evidence:
+       - test: RED observed at commit 46758e9 (`pnpm --filter aal test` -> 16 tests, 1 pass,
+         15 fail, all `NotImplemented: <fn>`); suite now GREEN — see task 3 Evidence
+       - viewports: n/a — logic-only
+       - deviations: shared context DTOs (ContextBundle/ContextPiece/TaskContractExcerpt) +
+         5 Phase-1 event types added to core/types.ts (Ring 0 owns them, Ring 1 imports upward
+         per INV-8); AgentResponse.adapterMeta gains `toolUseCount` (deterministic P6 signal);
+         probes drive the FakeAdapter via a `[probe:Pn ...]` directive embedded in the
+         objective — doubles as a natural-language instruction so the same requests exercise a
+         real model in task 11
 
-- [ ] 3. AAL core GREEN — implement `aal/repair.ts` (bounded 2-round schema repair),
+- [x] 3. AAL core GREEN — implement `aal/repair.ts` (bounded 2-round schema repair),
      `aal/registry.ts` (refuse without P1–P6+P8 pass; P7 score stored; drift canary re-run →
      stale_conformance + refuse-live), `aal/router.ts` (capability match, no_capacity at
      selection AND on send-failure without alternatives), `aal/conformance/` harness with
@@ -61,6 +71,20 @@
      entire task-2 suite green incl. sabotage discrimination self-test.
      Satisfies: REQ-1.3-1.5, REQ-2, REQ-3, REQ-6. Depends on: 2.
      Verify: `pnpm --filter aal test` all green; vendor check still green.
+     Evidence:
+       - test: `pnpm --filter aal test` -> 16 tests, 16 pass, 0 fail — compliant adapter passes
+         P1–P8; sabotage self-test proves each saboteur (prose_only/fabricate_execution/
+         ignore_schema/double_burn) fails EXACTLY its owned probe; conformance record carries a
+         P7 score; repair loop 0-round (compliant) / 1-round (schema_fail_first recovers) /
+         exhaust-2-then-fail (ignore_schema); registry refuses a failing record + drift canary
+         marks stale + drops from eligible; router returns match / throws no_capacity
+       - test: `pnpm typecheck && pnpm test && pnpm lint` -> all 6 packages green, 88 tests 0
+         fail; `scripts/check-core-vendor-free.sh` -> Ring 0+1 vendor-name-free
+       - viewports: n/a — logic-only
+       - deviations: router no_capacity is a dedicated `NoCapacityError` (not an AdapterError —
+         it is a routing outcome, not an adapter failure); repair re-asks use a `#r<n>`
+         requestId suffix so the FakeAdapter's replay cache doesn't return the stale invalid
+         response mid-repair
 
 - [ ] 4. Core context builder + goal contract — `core/src/context/` (SEED→EXPAND→COMPRESS(v1
      whole-file+truncate)→GOVERN(core-own generic secret patterns, block+ESCALATED

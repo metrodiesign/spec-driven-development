@@ -1,3 +1,23 @@
 // Ring 1 public surface (Agent Abstraction Layer — vendor-neutral by law, INV-7).
-// Populated across tasks 2–5 (protocol, registry, router, conformance, source).
 export const RING = 1 as const;
+
+export * from './protocol.ts';
+export { FakeAdapter, type FakeAdapterOptions, type FakeBehavior } from './fake-adapter.ts';
+export {
+  proposeWithRepair,
+  validateAgainstSchema,
+  type RepairOutcome,
+} from './repair.ts';
+export {
+  createRegistry,
+  type Registry,
+  type RegisteredAdapter,
+} from './registry.ts';
+export { createRouter, NoCapacityError, type Router } from './router.ts';
+export {
+  runProbe,
+  runP7,
+  runConformanceSuite,
+  type ProbeContext,
+  type P7Result,
+} from './conformance/harness.ts';

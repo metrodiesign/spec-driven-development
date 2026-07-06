@@ -1,6 +1,6 @@
 // Phase-1 minimal router (§7.4; REQ-6). Capability match over the registered set;
 // clean structured `no_capacity` when nothing is eligible — NO retry loops
-// (the breaker arrives in Phase 2). STUB in task 2 (RED) — implemented in task 3.
+// (the breaker arrives in Phase 2).
 
 import type { AdapterInterface } from './protocol.ts';
 import type { Registry } from './registry.ts';
@@ -22,6 +22,13 @@ export interface Router {
   route(role: Role): AdapterInterface;
 }
 
-export function createRouter(_registry: Registry): Router {
-  throw new Error('NotImplemented: createRouter');
+export function createRouter(registry: Registry): Router {
+  return {
+    route(role) {
+      const eligible = registry.eligible(role);
+      const first = eligible[0];
+      if (first === undefined) throw new NoCapacityError(role);
+      return first.adapter;
+    },
+  };
 }

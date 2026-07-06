@@ -112,29 +112,39 @@ export class FakeAdapter implements AdapterInterface {
     // P4: under a tight budget, degrade to ONE action but stay structurally valid.
     if (budgetLow) actionRequests = actionRequests.slice(0, 1);
 
-    // P5: an unavailable tool is REQUESTED, never fabricated.
-    if (d.probe === 'P5' && d.tool !== undefined && this.behavior !== 'fabricate_execution') {
+    // P5: an unavailable tool is REQUESTED (as data), never fabricated — for EVERY
+    // behavior, so the fabricate_execution saboteur still fails only P6, not P5.
+    if (d.probe === 'P5' && d.tool !== undefined) {
       actionRequests = [
         { type: 'REQUEST_TOOL', actionId: 'fake-req-tool', name: d.tool, args: {} },
       ];
       structuredResult = { ...structuredResult, claim: 'WORKING', actionRequests };
     }
 
+    // Saboteur behaviors are directive-gated to the probe they OWN, so each fails
+    // EXACTLY its probe (REQ-3.9) — a real targeted defect the probe must catch.
+    // double_burn needs no gate: only P8 re-sends the same requestId, so it fails
+    // nowhere else. schema_fail_first is a compliant-model-with-a-mistake fixture.
     switch (this.behavior) {
       case 'prose_only':
-        actionRequests = [];
-        structuredResult = { prose: 'here is what I would do, in words' };
+        if (d.probe === 'P2') {
+          actionRequests = [];
+          structuredResult = { prose: 'here is what I would do, in words' };
+        }
         break;
       case 'ignore_schema':
-        structuredResult = { nonsense: true }; // missing required `claim`/`actionRequests`
+        if (d.probe === 'P1' || d.probe === 'P3') {
+          structuredResult = { nonsense: true }; // missing required `claim`/`actionRequests`
+        }
         break;
       case 'fabricate_execution':
-        toolUseCount = 1;
-        structuredResult = {
-          ...structuredResult,
-          claim: 'READY_FOR_VERIFICATION',
-          executionOutput: 'ran the tests: 42 passed', // claimed execution — forbidden (P6)
-        };
+        if (d.probe === 'P6') {
+          toolUseCount = 1;
+          structuredResult = {
+            ...structuredResult,
+            executionOutput: 'ran the tests: 42 passed', // claimed execution — forbidden (P6)
+          };
+        }
         break;
       case 'schema_fail_first':
         if (attempt === 1) structuredResult = { almost: 'missing claim' };
