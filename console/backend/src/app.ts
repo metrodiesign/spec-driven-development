@@ -14,6 +14,15 @@ import { allTimestamps, readProjects, readSessions } from './claude-data.ts';
 import { buildEstimate, MONEY_DISCLAIMER, type UsageConfig } from './usage.ts';
 import { corsOriginAllowed, hostHeaderAllowed, redactText } from './security.ts';
 import { termAccessAllowed, type CreateSessionInput, type TermManager } from './term.ts';
+import {
+  installGuardRules,
+  permissionDecision,
+  resolveEffectiveSettings,
+  sha256 as govSha256,
+  writeSafe as writeSafeFile,
+  type PermRule,
+  type ScopeValues,
+} from './govern.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -220,6 +229,81 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return { killed: term.kill(req.params.id) };
     });
   }
+
+  // --- F-Set: Effective View resolver (REQ-14.3) ---
+  // The client posts the scope values it read live (INV-11); core computes the
+  // merge + provenance deterministically. Labeled "computed from files".
+  app.post<{ Body: { scopes?: ScopeValues[] } }>('/api/settings/effective', async (req) => {
+    const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes : [];
+    return { source: 'computed from files', effective: resolveEffectiveSettings(scopes) };
+  });
+
+  // --- F-Perm: simulator + idempotent guard install (REQ-15.2/15.3) ---
+  app.post<{ Body: { rules?: PermRule[]; tool?: string; path?: string } }>(
+    '/api/permissions/simulate',
+    async (req, reply) => {
+      const { rules, tool, path } = req.body ?? {};
+      if (!Array.isArray(rules) || typeof tool !== 'string' || typeof path !== 'string') {
+        return reply.code(400).send({ error: 'rules[], tool, path required' });
+      }
+      return permissionDecision(rules, tool, path);
+    },
+  );
+  app.post<{ Body: { rules?: PermRule[] } }>('/api/permissions/install-guards', async (req) => {
+    const rules = Array.isArray(req.body?.rules) ? req.body.rules : [];
+    return { rules: installGuardRules(rules) };
+  });
+
+  // --- F-Auth full (REQ-16): active method + shadowing (names, never values) +
+  // setup-token guidance. NO route returns/accepts/stores a token (REQ-16.5). ---
+  app.get('/api/auth/full', async () => {
+    const chain = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
+    const present = chain.filter((name) => (deps.env[name] ?? '').length > 0);
+    const shadowing = present.includes('ANTHROPIC_API_KEY') || present.includes('ANTHROPIC_AUTH_TOKEN');
+    const credentialFileExists = existsSync(join(deps.homeDir, '.claude', '.credentials.json'));
+    return {
+      activeMethod: shadowing ? 'env_var_override' : credentialFileExists ? 'subscription_login' : 'unknown',
+      // NAMES only — values are never read or returned (INV-12).
+      shadowingVars: present.filter((n) => n !== 'CLAUDE_CODE_OAUTH_TOKEN'),
+      severity: shadowing ? 'red' : 'ok',
+      guidance: shadowing
+        ? `unset ${present.join(' and ')} to bill your subscription; the platform never unsets env vars for you`
+        : null,
+      setupTokenHowTo:
+        'run `claude setup-token` yourself to create a 1-year token and set CLAUDE_CODE_OAUTH_TOKEN — ' +
+        'the platform never accepts, stores, or displays the token value',
+    };
+  });
+
+  // --- F-Mem: CLAUDE.md editor with the shared write-safety path (REQ-17.1) ---
+  const memPath = (scope: string, project: string | undefined): string | null => {
+    if (scope === 'user') return join(deps.homeDir, '.claude', 'CLAUDE.md');
+    if (scope === 'project' && typeof project === 'string' && !project.includes('..')) {
+      return join(deps.homeDir, project, 'CLAUDE.md');
+    }
+    return null;
+  };
+  app.get<{ Querystring: { scope?: string; project?: string } }>('/api/memory', async (req, reply) => {
+    const p = memPath(req.query.scope ?? 'user', req.query.project);
+    if (p === null) return reply.code(400).send({ error: 'bad scope/project' });
+    const content = existsSync(p) ? readFileSync(p, 'utf8') : '';
+    return { content, hash: content === '' ? null : govSha256(content), preview: content.slice(0, 4000) };
+  });
+  app.put<{ Body: { scope?: string; project?: string; content?: string; baseHash?: string | null } }>(
+    '/api/memory',
+    async (req, reply) => {
+      const b = req.body ?? {};
+      const p = memPath(b.scope ?? 'user', b.project);
+      if (p === null || typeof b.content !== 'string') return reply.code(400).send({ error: 'bad scope/project/content' });
+      mkdirSync(dirname(p), { recursive: true });
+      const result = writeSafeFile(p, b.content, b.baseHash ?? null);
+      if (!result.ok && result.reason === 'conflict') {
+        return reply.code(409).send({ error: 'conflict', currentHash: result.currentHash });
+      }
+      if (!result.ok) return reply.code(422).send({ error: result.detail });
+      return { saved: true, hash: result.newHash };
+    },
+  );
 
   // --- Static SPA (built console/web) — path-contained, no directory listing ---
   const dist = deps.webDistDir;

@@ -241,7 +241,7 @@
          Phase-0 spikes (A4). F-Term is wired ONLY on a loopback bind (impossible to expose
          remotely in Phase 1)
 
-- [ ] 9. Console governance — F-Set (multi-scope GET/PUT, managed RO by construction, schema
+- [x] 9. Console governance — F-Set (multi-scope GET/PUT, managed RO by construction, schema
      validate + baseHash 409 + atomic rename, Effective View full chain + provenance + CLI
      parity check — the CLI-parity half of REQ-14.3 is a recorded observation against the
      installed CLI where CI cannot drive a configured CLI, honest per A4), F-Perm (rules
@@ -252,6 +252,24 @@
      verify.
      Satisfies: REQ-14, REQ-15, REQ-16, REQ-17. Depends on: 8.
      Verify: `pnpm --filter console-backend test && pnpm --filter console-web test`.
+     Evidence:
+       - test: `pnpm --filter console-backend test` -> 51 (govern pure logic: writeSafe atomic +
+         baseHash-mismatch conflict leaves file untouched + validation reject; resolveEffective
+         full precedence + provenance; permissionDecision deny>allow>ask + glob + default ask;
+         installGuardRules protects test/golden + worktrees idempotently; endpoints via inject:
+         /api/settings/effective provenance, /api/permissions/simulate + install-guards idempotent,
+         /api/auth/full red-warns by NAME never leaks the value + setup-token guidance,
+         /api/memory write-safe 409-on-stale, negative guarantee: no route returns/accepts a
+         credential + no token-setting route (404))
+       - test: `pnpm --filter console-web test` -> 10 (provenance rows, permission preview, auth
+         banner red/ok)
+       - test: `pnpm typecheck && pnpm test && pnpm lint` -> 164 tests 0 fail; vendor check clean
+       - viewports: n/a here — SPA viewport check rides with task 11 browser verify
+       - deviations: settings/permissions/effective take the client-read scope values in the
+         request body (client reads files live per INV-11, core computes the merge/decision
+         deterministically) — keeps the logic pure + testable. Effective-View CLI-PARITY half of
+         REQ-14.3 is a recorded observation for task 11 (CI cannot drive a configured CLI, honest
+         per A4). F-Mem/settings live under console/backend (Ring 2 — vendor filenames legal)
 
 - [ ] 10. Console observability — F-Usage full (indexer day/project/model, estimates labeling,
      cwd-based interactive/autonomous split, alert thresholds + labels), F-Act (one-click hook
