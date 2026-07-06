@@ -176,7 +176,7 @@
          both rings so it lives in aal/test. Calibration harness MATH lives in core/calibration
          (unit-tested); real numbers are task 11 (live)
 
-- [ ] 7. anthropic adapter + live gating — `adapters/src/anthropic.ts` (pinned SDK, tools:[] +
+- [x] 7. anthropic adapter + live gating — `adapters/src/anthropic.ts` (pinned SDK, tools:[] +
      settingSources:[] + core-owned system prompt per D-004, fixed cwd agent-sessions, usage →
      costUnits estimate, transcript capture with bounded poll + null fallback, quota_limited
      no-self-retry, auth_unavailable construction probe, determinism 'none', durable replay
@@ -188,6 +188,27 @@
      Satisfies: REQ-4, REQ-8.1 (edge-parse half — yaml at composition root), REQ-11.3.
      Depends on: 3, 6.
      Verify: `pnpm --filter adapters test`; `platform loop run --live` in CI env exits refused.
+     Evidence:
+       - test: RED first (8 fail: NotImplemented createAnthropicAdapter); then GREEN —
+         `pnpm --filter adapters test` -> 9 tests 0 fail with a MOCK QueryFn (CI spends no quota):
+         D-004 isolation flags asserted from the captured query args (tools:[] + settingSources:[]
+         + core systemPrompt); assistant JSON -> structuredResult + actionRequests; usage
+         (1200+800)/1000 -> 2 costUnits; tool_use block counted (P6 signal); absent transcript ->
+         rawTranscriptRef null no crash; 429 -> quota_limited (no self-retry); 401 ->
+         auth_unavailable; durable disk replay serves a repeated requestId with query called once;
+         manifest executionBackend false + determinism none
+       - test: `pnpm --filter console-backend test` -> 27 (loop-cli: --live REFUSES in CI env +
+         without a TTY, interactive TTY -> typed-confirm, goal.yaml parsed at edge + frozen by
+         raw-byte hash in core); smoke: `CI=1 platform loop run --goal … --live` exits 2 refused;
+         no-`--live` exits 0 stub
+       - test: `pnpm typecheck && pnpm test && pnpm lint` -> 134 tests 0 fail across 6 packages;
+         vendor check Ring 0+1 clean (adapters/ is Ring 2 — vendor names legal there only)
+       - viewports: n/a — logic/CLI
+       - deviations: `yaml` dep added to console/backend ONLY (D-002 amendment); core stays
+         zero-dep. REQ-4.5 real transcript CAPTURE success path is deferred to task 11 (live) —
+         mocked tests cover the derivation + poll + null fallback. SDK `query` is dependency-
+         injected so CI uses a mock; production passes the real SDK. Full live loop wiring (real
+         adapter into runTaskLoop) lands in task 11 — this build's `loop run` refuses to spend quota
 
 - [ ] 8. Console F-Term end-to-end — backend PtyManager (node-pty spawn real `claude`,
      claude-only default / full-shell opt-in, backend-owned attach/detach/ring buffer/reap,
