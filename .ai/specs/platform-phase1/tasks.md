@@ -46,6 +46,12 @@
      recorded in Evidence. Done = suite runs, every scenario RED for the expected reason.
      Satisfies: REQ-1.1, REQ-1.2 (+REQ-3 scenarios authored RED). Depends on: 1.
      Verify: `pnpm --filter aal test` shows the scenarios failing with expected messages.
+     RED milestone (2026-07-06): reached and observed — `pnpm --filter aal test` -> tests 16,
+     pass 1 (index smoke), fail 15; all conformance/registry/router/repair scenarios RED with
+     `Error: NotImplemented: <fn>` (expected reason). protocol.ts + fake-adapter.ts (compliant +
+     4 saboteurs + schema_fail_first) are real; harness/registry/router/repair are stubs.
+     core typecheck/tests green (45), vendor check green (Ring 0+1). Checkbox stays [ ] until the
+     suite turns green — task-gate enforces green-on-[x]; flips with task 3 (RED-first §0.4).
 
 - [ ] 3. AAL core GREEN — implement `aal/repair.ts` (bounded 2-round schema repair),
      `aal/registry.ts` (refuse without P1–P6+P8 pass; P7 score stored; drift canary re-run →
