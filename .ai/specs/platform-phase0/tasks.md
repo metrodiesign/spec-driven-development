@@ -35,6 +35,13 @@
      runs, every scenario RED for the expected reason, RED output recorded in Evidence.
      Satisfies: REQ-11.3 (+DoD 1–9 authored). Verify: `pnpm --filter core test` shows 9 failing
      scenarios with expected messages.
+     RED milestone note (2026-07-06): reached and observed — `pnpm --filter core test` ->
+     tests 11, pass 1 (smoke), fail 10; all 9 DoD scenarios (DoD#6 split 6/6b) RED with
+     `Error: NotImplemented: openEventLog` (expected reason). typecheck/lint/vendor-check green.
+     Checkbox stays [ ] on purpose: the task-gate (correctly) refuses `[x]` while the repo
+     suite is red — this box flips WITH task 6 when the suite turns green, per RED-first §0.4.
+     Deviations so far: event types extended with CLAIM_RECORDED + ERROR; eslint gains
+     argsIgnorePattern '^_'.
 
 - [ ] 3. Core state layer — SQLite (WAL) append-only event log (INSERT-only API), `state.json`
      projection + rebuild-equality, `events.jsonl` export, content-addressed evidence store,
