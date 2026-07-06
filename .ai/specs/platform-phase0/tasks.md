@@ -167,13 +167,28 @@
          project param when none selected (400 in console) -> useFetch now accepts null;
          favicon 404 left as-is (cosmetic)
 
-- [ ] 9. §15 spikes 1–5 + evidence — runnable scripts in `spikes/` (SDK sessions, PTY parity
+- [x] 9. §15 spikes 1–5 + evidence — runnable scripts in `spikes/` (SDK sessions, PTY parity
      with node-pty preflight, query streaming + canUseTool, subscription billing proof, adapter
      isolation via indirect marker-probe); record each in `docs/spikes/SPIKE-<n>.md` with exact
      commands, observed output, verdict PASS/FAIL/PARTIAL(reason) — PARTIAL for any
      unautomatable step, never a hollow PASS.
      Satisfies: REQ-16. Depends on: 1. Verify: 5 SPIKE files exist, each with commands + output +
      verdict; scripts re-runnable.
+     Evidence:
+       - test: all 5 spikes run green on 2026-07-06 (sdk 0.3.200, node-pty 1.1.0, Node 26):
+         SPIKE1 PASS (25 sessions read), SPIKE2 PASS automated subset (TUI render, /status,
+         backend-owned PTY detach, --resume) + PARTIAL manual (permission-prompt keystroke,
+         /usage visual), SPIKE3 PASS (stream + canUseTool gates Write-deny), SPIKE4 PASS
+         automated (query succeeds with all auth env stripped; keychain credential present)
+         + PARTIAL manual (/usage before/after), SPIKE5 PASS (tools:[]+settingSources:[] ->
+         zero tools, no tool_use, no file, no canary leak, NO_CONFIG_VISIBLE)
+       - test: `pnpm --filter spikes typecheck && pnpm lint` -> green; node-pty preflight
+         (typeof pty.spawn === 'function') passed on Node 26
+       - docs: docs/spikes/SPIKE-1..5.md record exact output + honest PARTIAL remainders (A4)
+       - viewports: n/a — CLI/SDK
+       - deviations: D-004 recorded (tools:[] is the real isolation mechanism, not
+         allowedTools:[]; machine settings allow-rules shadow canUseTool -> settingSources:[]
+         required). Spikes 2/4 carry documented manual remainders — never claimed auto-passed.
 
 ## Suggested execution batches
 

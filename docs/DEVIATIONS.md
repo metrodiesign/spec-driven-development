@@ -27,6 +27,22 @@ how to reverse.
 - **Reverse:** Phase 1 adds the `yaml` dep and migrates the file; hash-into-evidence logic is
   format-agnostic.
 
+## D-004 — SDK isolation uses `tools: []`, not the spec's `allowedTools: []`
+
+- **What:** the §15.5 adapter-isolation spike (and, later, `adapters/anthropic.ts`) strips tool
+  DEFINITIONS with `tools: []`. The spec (§5.2 item 2, §15.5) writes `allowedTools: []`.
+- **Why (verified behavior, sdk 0.3.200, this machine):** `allowedTools: []` only auto-allows
+  permissions — the model is still OFFERED the tools and can emit `tool_use` blocks (the SDK even
+  warns `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`). `tools: []` removes the tool definitions entirely, so
+  the init message reports zero tools and no `tool_use` is ever produced — which is what INV-9 /
+  P6 (propose-only) actually require.
+- **Scope:** naming/mechanism only; the invariant is satisfied more strictly, not relaxed.
+- **Reverse:** none needed — this is the correct mechanism; the spec prose should be read as
+  "strip tool execution capability", which `tools: []` delivers.
+- **Related:** SPIKE-3 additionally records that machine `settings.json` allow-rules shadow
+  `canUseTool`; `settingSources: []` is required for the callback (or the empty tool set) to be
+  authoritative.
+
 ## D-003 — Fault-injection CI job pinned to a macOS runner
 
 - **What:** the `core` fault-injection suite (Phase 0 DoD) runs on a macOS runner in CI, not the
