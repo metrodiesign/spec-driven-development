@@ -9,13 +9,24 @@
 > FAILING tests; tasks 3–6 turn it green module by module. Never weaken a scenario
 > to pass it (INV-16).
 
-- [ ] 1. Monorepo scaffold + enforcement guards — pnpm workspaces (core/, console/backend,
+- [x] 1. Monorepo scaffold + enforcement guards — pnpm workspaces (core/, console/backend,
      console/web, spikes/), strict tsconfig, eslint minimal, `.ai/policies/gate-ladder.json`,
      `scripts/check-core-vendor-free.sh`, CI: vendor check on every job + fault-injection job
      pinned to macOS (D-003). Done = install/typecheck/lint green; vendor check passes and a
      planted vendor word demonstrably fails it.
      Satisfies: REQ-11.1, REQ-11.2. Verify: `pnpm install && pnpm -r typecheck && pnpm -r lint`;
      `scripts/check-core-vendor-free.sh` exit 0, planted-word run exit 1.
+     Evidence:
+       - test: `pnpm install && pnpm typecheck && pnpm lint && pnpm test` -> all 4 packages
+         typecheck Done, ESLint no issues, 3 smoke tests pass (core, console-backend, console-web)
+       - test: `scripts/check-core-vendor-free.sh` -> exit 0; planted vendor word in
+         core/src/*.tmp.ts -> exit 1 with file:line; removed -> exit 0 again
+       - test: `pnpm --filter console-web build` -> vite build OK (28 modules)
+       - viewports: n/a — scaffold/logic-only
+       - deviations: lint is a single root `eslint .` (flat config) instead of per-package
+         `pnpm -r lint`; `pnpm test` glob requires >=1 test file per package so each package
+         ships a smoke test from the scaffold commit; pnpm-workspace.yaml gained allowBuilds
+         esbuild:true (pnpm 11 build-script approval, needed by vite)
 
 - [ ] 2. Core public interfaces + fault-injection suite in RED — `core/src/ports.ts`
      (ProposalSource), Action DSL types, event/report types; synthetic target-repo fixture

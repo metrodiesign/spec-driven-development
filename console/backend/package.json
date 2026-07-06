@@ -1,0 +1,19 @@
+{
+  "name": "console-backend",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "platform": "./bin/platform.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test --test-reporter spec 'src/**/*.test.ts' 'test/**/*.test.ts'"
+  },
+  "dependencies": {
+    "fastify": "^5.7.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "core",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test --test-reporter spec 'src/**/*.test.ts' 'test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.9.3"
+  }
+}
