@@ -35,11 +35,15 @@ test('illegal transitions refuse with structured reason, never throw (REQ-7.4)',
   if (!r.ok) assert.equal(r.reason, 'illegal_transition');
 });
 
-test('post-REVIEWING triggers are phase-gated as not_enabled_phase0 (REQ-7.5)', () => {
-  for (const trigger of ['human_approved', 'merge_queued', 'audited', 'completed'] as const) {
-    const r = transition('REVIEWING', trigger);
+test('Phase 1 ENABLES human_approved (REVIEWING -> APPROVED); merge_queued/audited/completed stay gated as not_enabled_phase1 (REQ-10.2, REQ-11.5)', () => {
+  const approved = transition('REVIEWING', 'human_approved');
+  assert.ok(approved.ok && approved.next === 'APPROVED', 'human_approved is enabled in Phase 1');
+  const changes = transition('REVIEWING', 'changes_requested');
+  assert.ok(changes.ok && changes.next === 'CHANGES_REQUESTED');
+  for (const trigger of ['merge_queued', 'audited', 'completed'] as const) {
+    const r = transition('APPROVED', trigger);
     assert.equal(r.ok, false);
-    if (!r.ok) assert.equal(r.reason, 'not_enabled_phase0');
+    if (!r.ok) assert.equal(r.reason, 'not_enabled_phase1');
   }
 });
 

@@ -18,16 +18,19 @@ import { createRouter } from '../src/router.ts';
 import { FakeAdapter } from '../src/fake-adapter.ts';
 import { PASS_FAIL_PROBES, type AdapterInterface, type ConformanceRecord } from '../src/protocol.ts';
 import {
+  buildApprovalPackage,
   createBudget,
   createDefaultPathPolicy,
   createEvidenceStore,
   createExecutor,
   createGateRunner,
   denyNetworkSandbox,
+  handleHumanRequest,
   openEventLog,
   runTaskLoop,
+  transition,
 } from 'core';
-import type { BudgetLimits, Role, TaskContractExcerpt } from 'core';
+import type { ApprovalPackage, BudgetLimits, HandlerDeps, Role, TaskContractExcerpt, TaskState } from 'core';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -182,6 +185,68 @@ test('honest adapter writes the fix and reaches REVIEWING via core-run gates', a
     const result = await h.run();
     assert.equal(result.finalState, 'REVIEWING');
     assert.equal(result.terminalMarker, 'awaiting_human_phase0');
+    // Every GATE_RESULT is bound to a worktreeHash (REQ-11.1).
+    const gates = h.log.all({ type: 'GATE_RESULT' });
+    assert.ok(gates.length >= 1);
+    assert.ok(gates.every((g) => /^[0-9a-f]{40}$/.test(String(g.payload['worktreeHash']))));
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('E2E: REVIEWING -> Human Plane API approve -> APPROVED (REQ-10.2, REQ-11.1)', async () => {
+  const h = runWith((evidence) => new FakeAdapter({ id: 'honest', putContent: (s) => evidence.put(s) }));
+  try {
+    const result = await h.run();
+    assert.equal(result.finalState, 'REVIEWING');
+
+    // Build the approval package for the reviewed task.
+    const built = buildApprovalPackage({
+      id: 'A-1',
+      taskId: 'T-1',
+      runId: 'RUN-1',
+      goalExcerpt: CONTRACT.objective,
+      acIds: ['AC-1'],
+      diffRef: 'blob://diff',
+      diffLineCount: 10,
+      maxDiffBudget: 400,
+      gateReports: h.log.all({ type: 'GATE_RESULT' }).map((e) => String(e.payload['worktreeHash'])),
+      worktreeHash: 'h',
+      assumptions: [],
+      unresolvedRisks: [],
+      riskClass: 'L2',
+      createdAt: 1,
+    });
+    assert.equal(built.kind, 'package');
+    if (built.kind !== 'package') return;
+
+    // The API decision drives the REVIEWING -> APPROVED transition.
+    let state: TaskState = 'REVIEWING';
+    const deps: Omit<HandlerDeps, 'token'> & { token: string } = {
+      runId: 'RUN-1',
+      token: 'tok',
+      approvals: new Map<string, ApprovalPackage>([['A-1', built.package]]),
+      log: h.log,
+      onDecision: (_taskId, decision) => {
+        const t = transition('REVIEWING', decision === 'approve' ? 'human_approved' : 'changes_requested');
+        if (t.ok) state = t.next;
+        return t.ok ? { ok: true, state: t.next } : { ok: false, detail: t.detail };
+      },
+      onKill: () => {},
+      rateOk: () => true,
+    };
+    const res = handleHumanRequest(
+      {
+        method: 'POST',
+        path: '/approvals/A-1',
+        headers: { authorization: 'Bearer tok' },
+        body: JSON.stringify({ decision: 'approve', attestations: built.package.attestations }),
+      },
+      deps,
+    );
+    assert.equal(res.status, 200);
+    assert.equal(state, 'APPROVED', 'approval transitioned REVIEWING -> APPROVED');
+    assert.equal(h.log.all({ type: 'APPROVAL_RECORDED' }).length, 1);
   } finally {
     h.cleanup();
   }

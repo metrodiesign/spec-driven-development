@@ -141,7 +141,7 @@
          model's inline content to an evidence ref). Provenance is enforced on WRITE_FILE paths
          (REQ-5.4 path scope); free-text references remain a documented residual
 
-- [ ] 6. Human plane + supervised loop E2E (CI) — `core/src/human/`: ApprovalPackage generator
+- [x] 6. Human plane + supervised loop E2E (CI) — `core/src/human/`: ApprovalPackage generator
      (diff budget → split_required; attestations from goal approval_policy, default L2; timing
      recorded), Human Plane API on node:http (loopback-only, human-plane.json 0600, approvals
      drive REVIEWING→APPROVED / CHANGES_REQUESTED, redacted /events, kill full semantics with
@@ -152,6 +152,29 @@
      E2E + unit green.
      Satisfies: REQ-9, REQ-10, REQ-11.1, REQ-11.2, REQ-11.5. Depends on: 5.
      Verify: `pnpm --filter core test` (human plane + E2E scenarios).
+     Evidence:
+       - test: RED first (13 fail: NotImplemented redactSecrets/attestationsFor/
+         buildApprovalPackage/handleHumanRequest/createHumanPlaneServer + machine test rewritten
+         for Phase-1 enablement); then GREEN — `pnpm --filter core test` -> 71 tests 0 fail
+         (approval: under-budget package w/ risk-derived attestations, over-budget ->
+         split_required, attestation list grows L1->L3; api handler: 401 generic on missing/wrong
+         token, GET /approvals lists, approve w/ complete attestations -> APPROVAL_RECORDED +
+         onDecision, incomplete -> 400, steering -> 501 not_enabled_phase1, /kill -> onKill +
+         KILL_REQUESTED, /events redacted, 429 rate-limit; server smoke: binds 127.0.0.1:ephemeral,
+         writes human-plane.json 0600, real fetch 200; machine: human_approved ENABLED
+         REVIEWING->APPROVED, merge_queued/audited/completed stay not_enabled_phase1; redact:
+         token shapes -> [redacted], prose preserved; calibration MATH: pass-rate+range+repro)
+       - test: `pnpm --filter aal test` -> 23 (added E2E: honest loop -> REVIEWING with every
+         GATE_RESULT worktreeHash-bound -> API approve -> APPROVED + APPROVAL_RECORDED)
+       - test: `pnpm typecheck && pnpm test && pnpm lint` -> 121 tests 0 fail across 6 packages;
+         vendor check Ring 0+1 clean; core still zero runtime deps (node:http builtin, no framework)
+       - viewports: n/a — logic-only
+       - deviations: the loop still RETURNS at REVIEWING (awaiting_human_phase0 unchanged — INV-8);
+         the REVIEWING->APPROVED transition is driven by the Human Plane API's onDecision AFTER the
+         loop, not inside runTaskLoop. Machine reason enum gained `not_enabled_phase1`; machine.test
+         rewritten to assert Phase-1 enablement (a phase advance, not a weakened test). E2E spans
+         both rings so it lives in aal/test. Calibration harness MATH lives in core/calibration
+         (unit-tested); real numbers are task 11 (live)
 
 - [ ] 7. anthropic adapter + live gating — `adapters/src/anthropic.ts` (pinned SDK, tools:[] +
      settingSources:[] + core-owned system prompt per D-004, fixed cwd agent-sessions, usage →

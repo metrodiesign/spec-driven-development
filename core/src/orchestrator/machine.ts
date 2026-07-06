@@ -5,7 +5,11 @@ import type { TaskState } from '../types.ts';
 
 export type TransitionResult =
   | { ok: true; next: TaskState }
-  | { ok: false; reason: 'illegal_transition' | 'not_enabled_phase0'; detail: string };
+  | {
+      ok: false;
+      reason: 'illegal_transition' | 'not_enabled_phase0' | 'not_enabled_phase1';
+      detail: string;
+    };
 
 /** Trigger names are core-internal facts (gate results, human acts) — never agent claims. */
 export type Trigger =
@@ -61,13 +65,10 @@ const TABLE: Partial<Record<TaskState, Partial<Record<Trigger, TaskState>>>> = {
   AUDITED: { completed: 'COMPLETED' },
 };
 
-/** Enabled in a later phase only (REQ-7.5). Listing them keeps refusal explicit. */
-const PHASE_GATED: ReadonlySet<Trigger> = new Set([
-  'human_approved',
-  'merge_queued',
-  'audited',
-  'completed',
-]);
+// Phase 1 ENABLES human_approved (REVIEWING -> APPROVED) via the Human Plane API
+// (REQ-10.2). Post-APPROVED integration (merge queue / auditor) stays gated —
+// Phase 3 (REQ-11.5). Listing them keeps refusal explicit, never silent.
+const PHASE_GATED: ReadonlySet<Trigger> = new Set(['merge_queued', 'audited', 'completed']);
 
 /** Special transitions available from every active state (spec §6.3). */
 const UNIVERSAL: Partial<Record<Trigger, TaskState>> = {
@@ -83,8 +84,8 @@ export function transition(state: TaskState, trigger: Trigger): TransitionResult
   if (PHASE_GATED.has(trigger)) {
     return {
       ok: false,
-      reason: 'not_enabled_phase0',
-      detail: `trigger ${trigger} is enabled in a later phase (REQ-7.5)`,
+      reason: 'not_enabled_phase1',
+      detail: `trigger ${trigger} is enabled in a later phase (REQ-11.5)`,
     };
   }
   const universal = UNIVERSAL[trigger];

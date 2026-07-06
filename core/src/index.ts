@@ -39,3 +39,25 @@ export {
   ContractInvalidError,
   type TaskContract,
 } from './contract/contract.ts';
+export { redactSecrets } from './human/redact.ts';
+export {
+  attestationsFor,
+  buildApprovalPackage,
+  type ApprovalPackage,
+  type ApprovalInput,
+  type ApprovalResult,
+  type RiskClass,
+} from './human/approval.ts';
+export {
+  handleHumanRequest,
+  createHumanPlaneServer,
+  type HandlerDeps,
+  type HttpLike,
+  type HttpResult,
+  type HumanPlaneServer,
+} from './human/api.ts';
+export {
+  computeCalibration,
+  type CalibrationInput,
+  type CalibrationResult,
+} from './calibration/calibration.ts';
