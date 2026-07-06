@@ -55,6 +55,14 @@ check block "real -n after quoted msg"  'git commit -m "msg -n inside" -n'
 check block "real -n single-quoted msg" "git commit -m 'note -n here' -n"
 check block "-n after line continuation" 'git commit -m "the message" \
   -n'
+# global option between `git` and `commit` broke the adjacent anchor (same
+# injection class PR #38/#39 closed for destructive checks) — must still block
+check block "global -c opt + combined -nm" 'git -c user.x=y commit -nm x'
+check block "global --no-pager + -n"       'git --no-pager commit -n -m x'
+check block "global -C dir + -n"           'git -C . commit -n -m x'
+# attached form (no space after -c/-C) is equally valid git syntax — must block too
+check block "attached -cKEY=VAL + -nm"     'git -cuser.x=y commit -nm x'
+check block "attached -C. + -n"            'git -C. commit -n -m x'
 # finding #13+#9: guard/floor tamper must block independently of the git token —
 # the line-7 short-circuit previously ALLOWed any command lacking a `git` token
 check block "chmod -x pre-commit hook"  'chmod -x .githooks/pre-commit'
@@ -87,6 +95,8 @@ check allow "-n word mid-message"       'git commit -m "document the -n behavior
 # finding #2 baseline: a message that merely talks about -n, with NO real
 # trailing skip-verify flag, must still pass (no false positive)
 check allow "note about -n flag"        "git commit -m 'note about -n flag'"
+# global-option baseline: a global opt WITHOUT any skip-verify flag must pass
+check allow "global -c opt, clean commit" 'git -c user.x=y commit -m "normal"'
 check allow "git status"                'git status'
 check allow "git grep -n"               'git grep -n foo'
 # issue #27: read-only core.hooksPath queries are harmless and must NOT block

@@ -26,14 +26,15 @@ POS='(^|[;&|][[:space:]]*|\$\([[:space:]]*|[[:space:]])(rtk[[:space:]]+(proxy[[:
 
 # git global options ที่อยู่ระหว่าง `git` กับ subcommand (เช่น `git -C . push`,
 # `git -c user.name=x push --force`, `git --no-pager push`) เคยทำให้ anchor `git[[:space:]]+push`
-# ไม่ match -> bypass guard. GO ครอบ option run นี้: `-C/-c <arg>` (กิน arg ถัดมา), long option
+# ไม่ match -> bypass guard. GO ครอบ option run นี้: `-C/-c <arg>` ทั้ง space-separated และ
+# attached (`-cuser.x=y`, `-C.` — git รับทั้งสองรูป จึงต้อง `[[:space:]]*` ไม่ใช่ `+`), long option
 # ที่กินค่าแยก token (`--git-dir .git`, `--work-tree .`) -> ต้องกินค่าด้วย ไม่งั้น value token
 # ค้างทำให้ subcommand ไม่ match (bypass), `--flag[=val]` ทั่วไป, และ short pager flag `-p`/`-P`
 # (no-arg). value-taking long-opt alt
 # วางก่อน generic `--` เพื่อกินรูป space-separated; value token ตัวแรกห้ามขึ้น dash (กัน subcommand
 # โดน). (`-[cC]` ขึ้น dash เดี่ยว, `--` ขึ้นสอง dash -> ไม่ทับกัน). ใส่คั่นทุก git check ผ่าน
-# `git${GO}[[:space:]]+<subcommand>`.
-GO='([[:space:]]+(-[cC][[:space:]]+[^[:space:];&|]+|--(git-dir|work-tree|namespace|super-prefix|exec-path|config-env|attr-source|object-format)[[:space:]]+[^[:space:];&|-][^[:space:];&|]*|--[^[:space:];&|]+|-[pP]))*'
+# `git${GO}[[:space:]]+<subcommand>`. check-bypass.sh ก็อป GO ตัวนี้ไปตรงตัว — แก้ต้องแก้คู่.
+GO='([[:space:]]+(-[cC][[:space:]]*[^[:space:];&|]+|--(git-dir|work-tree|namespace|super-prefix|exec-path|config-env|attr-source|object-format)[[:space:]]+[^[:space:];&|-][^[:space:];&|]*|--[^[:space:];&|]+|-[pP]))*'
 
 block() {
   echo "Blocked: $1" >&2

@@ -57,6 +57,7 @@ next. Wait for explicit approval ("approved" / "continue"). The only exception i
   /spec-analyze           audit requirements for gaps/conflicts before design
   /spec-design            generate design.md
   /spec-tasks             generate tasks.md
+  /spec-quick <idea>      full workflow end-to-end WITHOUT approval gates (small features)
   /spec-implement <id|range|all>  implement one or more cohesive tasks, end-to-end
   /spec-bugfix <bug>      root-cause-first bug workflow
   /spec-pbt               extract properties and write property-based tests
