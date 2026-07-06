@@ -56,7 +56,7 @@ pnpm workspace (repo root = platform/ of §14)
 ├── adapters/                   # NEW — Ring 2 (vendor names legal ONLY here)
 │   └── src/
 │       ├── anthropic.ts        # primary adapter (§5.2, D-004) over pinned @anthropic-ai/claude-agent-sdk
-│       └── _template.ts        # wire-format-translation skeleton for future adapters
+│       └── _template.ts        # DEFERRED to the second adapter (Phase 3) — YAGNI with one adapter
 ├── console/
 │   ├── backend/                # + PTY manager (node-pty), term WS, settings/permissions/memory
 │   │                           #   editors, usage indexer, activity ingest, session search (FTS5)
