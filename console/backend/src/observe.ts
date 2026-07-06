@@ -70,15 +70,45 @@ export function evalAlerts(index: UsageIndex, thresholds: AlertThreshold[]): Ale
     }));
 }
 
-/** A fail-open activity hook entry (REQ-19.1): a short timeout and failures never
- *  block Claude Code. The timeout is bounded by the policy key. */
+/** Wrap a value in single quotes for safe POSIX-shell interpolation. */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+export class InvalidIngestUrlError extends Error {
+  constructor(detail: string) {
+    super(`invalid ingest URL: ${detail}`);
+    this.name = 'InvalidIngestUrlError';
+  }
+}
+
+/**
+ * A fail-open activity hook entry (REQ-19.1): a short timeout and failures never
+ * block Claude Code. The command is later executed as a shell hook on the
+ * operator's machine, so `ingestUrl` (client-supplied) is STRICTLY validated and
+ * every interpolated value is shell-quoted — no command injection (security-review
+ * finding). `timeoutMs` must be a finite positive number.
+ */
 export function activityHookEntry(ingestUrl: string, token: string, timeoutMs: number): Record<string, unknown> {
-  return {
-    type: 'command',
-    command: `curl -sS -m ${Math.max(1, Math.ceil(timeoutMs / 1000))} -H 'x-ingest-token: ${token}' -X POST ${ingestUrl} || true`,
-    failOpen: true,
-    timeoutMs,
-  };
+  let url: URL;
+  try {
+    url = new URL(ingestUrl);
+  } catch {
+    throw new InvalidIngestUrlError('not a URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new InvalidIngestUrlError('protocol must be http/https');
+  }
+  // Reject anything that isn't a plain URL character set (defense in depth: no
+  // shell metacharacters can reach the command even before quoting).
+  if (/[^A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]/.test(ingestUrl) || /[`$\\;|&<>\n\r"]/.test(ingestUrl)) {
+    throw new InvalidIngestUrlError('contains disallowed characters');
+  }
+  const seconds = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.max(1, Math.ceil(timeoutMs / 1000)) : 2;
+  const command =
+    `curl -sS -m ${seconds} -H ${shellQuote(`x-ingest-token: ${token}`)} ` +
+    `-X POST ${shellQuote(url.toString())} || true`;
+  return { type: 'command', command, failOpen: true, timeoutMs: seconds * 1000 };
 }
 
 /** Rebuildable FTS5 index over session text (REQ-20.1) — domain data, INV-11 legal. */

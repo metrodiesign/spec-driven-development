@@ -23,7 +23,7 @@ import {
   type PermRule,
   type ScopeValues,
 } from './govern.ts';
-import { activityHookEntry, buildSessionSearch, indexUsage, type UsageRecord } from './observe.ts';
+import { activityHookEntry, buildSessionSearch, indexUsage, InvalidIngestUrlError, type UsageRecord } from './observe.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -320,7 +320,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const ingestUrl = req.body?.ingestUrl;
     if (typeof ingestUrl !== 'string') return reply.code(400).send({ error: 'ingestUrl required' });
     const token = deps.activityToken ?? 'set-a-token';
-    return { entry: activityHookEntry(ingestUrl, token, req.body?.timeoutMs ?? 1500) };
+    try {
+      return { entry: activityHookEntry(ingestUrl, token, req.body?.timeoutMs ?? 1500) };
+    } catch (err) {
+      if (err instanceof InvalidIngestUrlError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
   });
   app.post('/api/events/ingest', async (req, reply) => {
     if (deps.activityToken === undefined || req.headers['x-ingest-token'] !== deps.activityToken) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { activityHookEntry, buildSessionSearch, evalAlerts, indexUsage, type UsageRecord } from './observe.ts';
+import { activityHookEntry, buildSessionSearch, evalAlerts, indexUsage, InvalidIngestUrlError, type UsageRecord } from './observe.ts';
 
 const AGENT_PREFIX = '/home/op/.ai/runs/agent-sessions';
 
@@ -37,6 +37,17 @@ test('activityHookEntry is fail-open with a bounded timeout (REQ-19.1)', () => {
   assert.equal(e['failOpen'], true);
   assert.match(String(e['command']), /\|\| true/, 'never blocks Claude Code on failure');
   assert.match(String(e['command']), /x-ingest-token: tok/);
+});
+
+test('activityHookEntry REJECTS a command-injection ingestUrl (security-review fix)', () => {
+  // A malicious URL must never become executable shell.
+  assert.throws(() => activityHookEntry('http://x/ingest; rm -rf ~', 'tok', 1500), InvalidIngestUrlError);
+  assert.throws(() => activityHookEntry('http://x/$(whoami)', 'tok', 1500), InvalidIngestUrlError);
+  assert.throws(() => activityHookEntry('file:///etc/passwd', 'tok', 1500), InvalidIngestUrlError);
+  assert.throws(() => activityHookEntry('not a url', 'tok', 1500), InvalidIngestUrlError);
+  // A benign URL still works and its interpolated values are single-quoted.
+  const ok = activityHookEntry('http://127.0.0.1:9119/api/events/ingest', "tok'; evil", 1500);
+  assert.match(String(ok['command']), /'x-ingest-token: tok'\\''; evil'/, 'token is shell-quoted');
 });
 
 test('FTS5 session search finds by content, rebuildable (REQ-20.1)', () => {
