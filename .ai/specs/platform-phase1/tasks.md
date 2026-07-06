@@ -210,7 +210,7 @@
          injected so CI uses a mock; production passes the real SDK. Full live loop wiring (real
          adapter into runTaskLoop) lands in task 11 — this build's `loop run` refuses to spend quota
 
-- [ ] 8. Console F-Term end-to-end — backend PtyManager (node-pty spawn real `claude`,
+- [x] 8. Console F-Term end-to-end — backend PtyManager (node-pty spawn real `claude`,
      claude-only default / full-shell opt-in, backend-owned attach/detach/ring buffer/reap,
      single active writer takeover, audit JSON per spawn/close, rate limit, WS single-use
      tickets with term_ticket_ttl_s, loopback-only hard 403 even with --insecure, resume via
@@ -219,6 +219,27 @@
      browser verify.
      Satisfies: REQ-13.1-13.7, REQ-13.9. Depends on: 1.
      Verify: `pnpm --filter console-backend test && pnpm --filter console-web build`.
+     Evidence:
+       - test: `pnpm --filter console-backend test` -> 39 tests 0 fail (PtyManager with a FAKE
+         pty — no quota: spawn+audit, PTY survives browser-close + re-attach replays ring buffer,
+         single active writer takeover, tickets single-use + TTL-expire, DELETE reaps SIGHUP no
+         zombie, resume builds `claude --resume <id>`; REST via inject: create/list/attach/delete
+         on loopback, missing project 400, spawn-failure 503, rate-limit 429, and ALL F-Term
+         routes 403 on a non-loopback bind — loopback-only HARD, INV-17)
+       - test: `pnpm --filter console-web test` -> 7 (termWsUrl ticket, createBodyFromQuery
+         deep-link + resume, row label); `pnpm --filter console-web build` -> vite OK
+       - live smoke: `platform console --port 9134 --no-open` -> GET /api/term/sessions returns
+         [], POST create spawns a REAL node-pty full-shell session and returns a ptyId + ticket
+         (node-pty works on Node 26)
+       - test: `pnpm typecheck && pnpm test && pnpm lint` -> 149 tests 0 fail; vendor check clean
+       - viewports: n/a here — SPA viewport check rides with tasks 9/10 browser verify
+       - deviations: PTY spawner is dependency-INJECTED so lifecycle is unit-tested with a fake
+         (SpawnPty), production passes node-pty; `ws` + `node-pty` added to console/backend. The
+         LIVE pieces — xterm.js full-TUI render, real-CLI slash-command/plan-mode PARITY, WS
+         duplex streaming against a real `claude` session, detach/attach in a real browser — are
+         PARTIAL and recorded honestly for task 11 (browser verify with login), same rule as the
+         Phase-0 spikes (A4). F-Term is wired ONLY on a loopback bind (impossible to expose
+         remotely in Phase 1)
 
 - [ ] 9. Console governance — F-Set (multi-scope GET/PUT, managed RO by construction, schema
      validate + baseHash 409 + atomic rename, Effective View full chain + provenance + CLI

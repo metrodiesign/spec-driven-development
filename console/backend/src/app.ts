@@ -13,6 +13,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { allTimestamps, readProjects, readSessions } from './claude-data.ts';
 import { buildEstimate, MONEY_DISCLAIMER, type UsageConfig } from './usage.ts';
 import { corsOriginAllowed, hostHeaderAllowed, redactText } from './security.ts';
+import { termAccessAllowed, type CreateSessionInput, type TermManager } from './term.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +29,10 @@ export interface AppDeps {
   cliVersion?(): Promise<string>;
   /** Built SPA directory; when present the app serves it at / (REQ-12.7 UI). */
   webDistDir?: string;
+  /** F-Term manager (Phase 1). When present, term routes register (loopback-only hard). */
+  termManager?: TermManager;
+  /** Per-source spawn rate limiter for F-Term (REQ-13.5); default allows all. */
+  termRateOk?(): boolean;
 }
 
 const DISCLAIMER =
@@ -164,6 +169,57 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return { saved: true, config };
     },
   );
+
+  // --- F-Term (REQ-13, INV-17): loopback-ONLY hard, even with --insecure ---
+  const term = deps.termManager;
+  if (term !== undefined) {
+    const guardTerm = async (reply: import('fastify').FastifyReply): Promise<boolean> => {
+      if (!termAccessAllowed(deps.bindHost)) {
+        await reply.code(403).send({
+          error: 'F-Term is loopback-only (INV-17): refused on a non-loopback bind even with --insecure',
+        });
+        return false;
+      }
+      return true;
+    };
+    app.post<{ Body: Partial<CreateSessionInput> }>('/api/term/sessions', async (req, reply) => {
+      if (!(await guardTerm(reply))) return reply;
+      if (deps.termRateOk !== undefined && !deps.termRateOk()) {
+        return reply.code(429).send({ error: 'too many terminal spawns; slow down' });
+      }
+      const body = req.body ?? {};
+      if (typeof body.project !== 'string' || body.project.length === 0) {
+        return reply.code(400).send({ error: 'project is required' });
+      }
+      const mode = body.mode === 'full-shell' ? 'full-shell' : 'claude-only';
+      const input: CreateSessionInput = { project: body.project, mode };
+      if (typeof body.resume === 'string') input.resume = body.resume;
+      try {
+        return term.create(input);
+      } catch (err) {
+        // node-pty throws when the `claude` binary is not on PATH (REQ-13.7).
+        return reply.code(503).send({
+          error: 'terminal unavailable: could not spawn the CLI',
+          detail: (err as Error).message,
+          hint: 'ensure the `claude` binary is installed and on PATH',
+        });
+      }
+    });
+    app.get('/api/term/sessions', async (_req, reply) => {
+      if (!(await guardTerm(reply))) return reply;
+      return term.list();
+    });
+    app.post<{ Params: { id: string } }>('/api/term/sessions/:id/attach', async (req, reply) => {
+      if (!(await guardTerm(reply))) return reply;
+      const re = term.attach(req.params.id);
+      if (re === null) return reply.code(404).send({ error: 'no such session' });
+      return re;
+    });
+    app.delete<{ Params: { id: string } }>('/api/term/sessions/:id', async (req, reply) => {
+      if (!(await guardTerm(reply))) return reply;
+      return { killed: term.kill(req.params.id) };
+    });
+  }
 
   // --- Static SPA (built console/web) — path-contained, no directory listing ---
   const dist = deps.webDistDir;

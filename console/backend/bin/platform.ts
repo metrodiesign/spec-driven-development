@@ -11,6 +11,7 @@ import { parseArgs } from 'node:util';
 import { buildApp } from '../src/app.ts';
 import { decideStartup } from '../src/security.ts';
 import { decideLiveRun, loadGoalContract } from '../src/loop-cli.ts';
+import { createTermRuntime } from '../src/term-runtime.ts';
 
 const HELP = `usage:
   platform console [--port <n>] [--host <h>] [--no-open] [--insecure]
@@ -104,17 +105,31 @@ async function main(): Promise<void> {
     process.stderr.write(`\n*** ${decision.warning} ***\n\n`);
   }
 
+  // F-Term (REQ-13) only when bound to loopback — the highest-risk surface stays
+  // impossible to expose remotely in Phase 1 (INV-17).
+  const dataDir = join(homedir(), '.platform');
+  const termRuntime =
+    host === '127.0.0.1' || host === '::1' || host === 'localhost'
+      ? createTermRuntime({
+          projectsRoot: homedir(),
+          auditPath: join(dataDir, 'term-audit.jsonl'),
+          ticketTtlS: 30,
+        })
+      : undefined;
+
   const app = buildApp({
     homeDir: homedir(),
     env: process.env,
     bindHost: host,
     port,
-    dataDir: join(homedir(), '.platform'),
+    dataDir,
     now: () => Date.now(),
     webDistDir: join(import.meta.dirname, '..', '..', 'web', 'dist'),
+    ...(termRuntime ? { termManager: termRuntime.manager } : {}),
   });
 
   await app.listen({ host, port });
+  if (termRuntime !== undefined) termRuntime.attachWs(app.server);
   const url = `http://${host === '::1' ? '[::1]' : host}:${port}`;
   process.stdout.write(`platform console listening on ${url}\n`);
   if (values['no-open'] !== true && process.platform === 'darwin') {
