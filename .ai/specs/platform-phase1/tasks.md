@@ -86,7 +86,7 @@
          requestId suffix so the FakeAdapter's replay cache doesn't return the stale invalid
          response mid-repair
 
-- [ ] 4. Core context builder + goal contract — `core/src/context/` (SEED→EXPAND→COMPRESS(v1
+- [x] 4. Core context builder + goal contract — `core/src/context/` (SEED→EXPAND→COMPRESS(v1
      whole-file+truncate)→GOVERN(core-own generic secret patterns, block+ESCALATED
      secret_in_context)→MARK(data markers + canary)→MANIFEST(evidence blob); recall/waste
      counters; machine-config exclusion), `core/src/contract/` (validate pre-parsed object,
@@ -96,6 +96,22 @@
      zero-dep, fault-injection suite still green.
      Satisfies: REQ-7, REQ-8. Depends on: 1.
      Verify: `pnpm --filter core test`; `scripts/check-core-vendor-free.sh`.
+     Evidence:
+       - test: RED observed first (11 fail, all `NotImplemented: buildContext/scanForSecret/
+         freezeContract`); then GREEN — `pnpm --filter core test` -> 56 tests, 56 pass, 0 fail
+         (context builder: determinism/byte-identical manifest, GOVERN blocks + names the secret
+         file, MARK canary in serialized wire, COMPRESS v1 truncation, machine-config exclusion
+         via injected predicate, recall/waste 0.5/0.5; secret-scan: sk/ghp/AKIA/PEM/JWT shapes +
+         high-entropy blob caught, ordinary code/prose not; contract: freeze+budget map+unknown-
+         key preserve, invalid rejected, mid-run byte mutation detected)
+       - test: `pnpm typecheck && pnpm test && pnpm lint` -> 6 packages green, 99 tests 0 fail;
+         `scripts/check-core-vendor-free.sh` -> Ring 0+1 clean; core still ZERO runtime deps
+       - viewports: n/a — logic-only
+       - deviations: REQ-7.7 machine-config exclusion is PARAMETERIZED — core cannot name vendor
+         config files (INV-7 grep hits 'CLAUDE'/'.claude'), so `buildContext` takes a caller-
+         supplied `excludePath` predicate; the vendor-specific list is wired at the composition
+         root in task 7. REQ-7.6 recall/waste is COMPUTED here (computeContextMetrics, unit-
+         tested); the CONTEXT_BUILT event emission is wired into the loop in task 5
 
 - [ ] 5. AALProposalSource + loop integration — `aal/src/source.ts` implementing core's
      ProposalSource (PROPOSAL_INTENT{requestId} before each send, crash-replay reuses id +
