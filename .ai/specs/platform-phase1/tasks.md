@@ -113,7 +113,7 @@
          root in task 7. REQ-7.6 recall/waste is COMPUTED here (computeContextMetrics, unit-
          tested); the CONTEXT_BUILT event emission is wired into the loop in task 5
 
-- [ ] 5. AALProposalSource + loop integration — `aal/src/source.ts` implementing core's
+- [x] 5. AALProposalSource + loop integration — `aal/src/source.ts` implementing core's
      ProposalSource (PROPOSAL_INTENT{requestId} before each send, crash-replay reuses id +
      accepts adapter replay, path-provenance context_violation rejection, AgentResponse →
      Proposal mapping); new fault-injection scenario: lying FakeAdapter behind AALProposalSource
@@ -121,6 +121,25 @@
      both packages.
      Satisfies: REQ-5, REQ-12.2, REQ-12.3, REQ-12.4. Depends on: 3, 4.
      Verify: `pnpm --filter core test && pnpm --filter aal test`.
+     Evidence:
+       - test: `pnpm --filter aal test` -> 22 tests, 22 pass, 0 fail (source unit: PROPOSAL_INTENT
+         recorded with requestId BEFORE the mapped Proposal + CONTEXT_BUILT recall/waste; WRITE to
+         an out-of-bundle path rejected context_violation with actions dropped; no eligible adapter
+         -> BLOCKED(no_capacity) + ESCALATED, no throw; seeded secret -> build blocked + ESCALATED
+         secret_in_context naming the file; integration: LYING adapter through the REAL loop never
+         records a REVIEWING transition and halts at ESCALATED via the budget backstop — DoD#1
+         survives the Ring0/Ring1 plumbing; HONEST adapter writes the fix and reaches REVIEWING +
+         awaiting_human_phase0 through core-run gates)
+       - test: `pnpm --filter core test` -> 56 tests 0 fail — the Phase-0 fault-injection suite is
+         UNCHANGED and green (INV-8 proof: core behavior identical under the new source);
+         `pnpm typecheck && pnpm lint` green; `scripts/check-core-vendor-free.sh` -> Ring 0+1 clean
+       - viewports: n/a — logic-only
+       - deviations: REQ-12.3's new scenario lives in `aal/test/integration.test.ts`, NOT
+         `core/test/` — core (Ring 0) may not import aal (Ring 1); the integration that spans both
+         rings must live where upward import is legal (INV-8). The FakeAdapter gained an optional
+         `putContent` so a full loop can execute its WRITE_FILE (a real adapter likewise maps the
+         model's inline content to an evidence ref). Provenance is enforced on WRITE_FILE paths
+         (REQ-5.4 path scope); free-text references remain a documented residual
 
 - [ ] 6. Human plane + supervised loop E2E (CI) — `core/src/human/`: ApprovalPackage generator
      (diff budget → split_required; attestations from goal approval_policy, default L2; timing

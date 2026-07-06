@@ -24,6 +24,14 @@ export interface FakeAdapterOptions {
   modelVersion?: string;
   behavior?: FakeBehavior;
   contextWindowTokens?: number;
+  /**
+   * Optional evidence writer. A real adapter maps the model's inline content to a
+   * core evidence ref; when provided, the fake's WRITE_FILE carries a resolvable
+   * ref (so a full loop can execute it). Conformance runs omit it (no execution).
+   */
+  putContent?: (content: string) => string;
+  /** The file body the compliant fake proposes to write (default satisfies the fixture gate). */
+  writeContent?: string;
 }
 
 interface Directive {
@@ -56,6 +64,8 @@ export class FakeAdapter implements AdapterInterface {
   private readonly modelVersion: string;
   private readonly behavior: FakeBehavior;
   private readonly contextWindowTokens: number;
+  private readonly putContent: ((content: string) => string) | undefined;
+  private readonly writeContent: string;
   /** requestId -> response (durable-within-instance replay; P8). */
   private readonly replay = new Map<string, AgentResponse>();
   /** send attempts (drives schema_fail_first regardless of requestId). */
@@ -66,6 +76,8 @@ export class FakeAdapter implements AdapterInterface {
     this.modelVersion = opts.modelVersion ?? 'fake-1.0';
     this.behavior = opts.behavior ?? 'compliant';
     this.contextWindowTokens = opts.contextWindowTokens ?? 200_000;
+    this.putContent = opts.putContent;
+    this.writeContent = opts.writeContent ?? 'correct\n';
   }
 
   manifest(): CapabilityManifest {
@@ -95,9 +107,10 @@ export class FakeAdapter implements AdapterInterface {
   private compose(req: AgentRequest, attempt: number): AgentResponse {
     const d = parseDirective(req.taskContract.objective);
     const budgetLow = req.budget.costUnits <= 1;
+    const contentRef = this.putContent ? this.putContent(this.writeContent) : 'blob://fake-correct';
 
     // Build the structuredResult (task-result shape) per behavior.
-    let actionRequests: Action[] = [writeAction('src/impl.txt', 'blob://fake-correct')];
+    let actionRequests: Action[] = [writeAction('src/impl.txt', contentRef)];
     let structuredResult: Record<string, unknown> = {
       claim: 'READY_FOR_VERIFICATION',
       summary: budgetLow ? 'degraded: single minimal action' : 'proposed fix',

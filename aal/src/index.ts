@@ -14,6 +14,7 @@ export {
   type RegisteredAdapter,
 } from './registry.ts';
 export { createRouter, NoCapacityError, type Router } from './router.ts';
+export { createAALProposalSource, type AALSourceDeps } from './source.ts';
 export {
   runProbe,
   runP7,
