@@ -91,10 +91,17 @@ fork or weaken these checks per harness.
 - **Enforced by:** `.ai/bin/check-bypass.sh` (exit 2 = block) via the harness pre-tool
   hook (Tier 2); the git + CI floor (Tier 1) re-checks on the server side regardless.
 - **What the bypass engine catches** (expanded — superseding the old "only inspects
-  git commands" description): a `-n`/`--no-verify` skip-verify flag at ANY position in a
-  `git commit`, including after a quoted commit message and after a `\` line
-  continuation (it strips quoted segments and flattens newlines before scanning), while
-  a commit message that merely mentions `-n` still passes. It also independently blocks
+  git commands" description): a `-n`/`--no-verify` skip-verify flag written UNQUOTED at
+  any position in a `git commit` — including preceded by git global options
+  (`git -c k=v commit -nm …`, `git --no-pager commit -n …`), after a quoted commit
+  message, and after a `\` line continuation (it strips quoted segments and flattens
+  newlines before scanning) — while a commit message that merely mentions `-n` still
+  passes. Because it inspects the command as a flat string, a flag deliberately WRAPPED
+  in quotes (`git commit "-nm" …`) is stripped along with the quoted segment and slips
+  this Tier-2 check; the Tier-1 CI secret scan (`check-secrets.sh --all`, below)
+  re-scans server-side regardless and is the durable backstop for that case. A commit
+  whose message text contains the literal substring `--no-verify` is over-blocked as a
+  fail-safe (rephrase the message). It also independently blocks
   tamper that disables or overwrites the enforcement floor — `chmod`/`mv`/`rm`/redirect
   against `.githooks/*`, `.ai/bin/check-*.sh`, `.ai/bin/gate-task.sh`, or pointing
   git's `core.hooksPath` / `hooksPath` away — even when the command contains no
@@ -107,6 +114,9 @@ fork or weaken these checks per harness.
 - Never merge past a failing check.
 - Never leave `.only` / `.skip` in committed tests.
 - Coverage must not drop below the project threshold.
+- The two test-hygiene rules above are wired by the DOWNSTREAM project's CI (via its
+  `SDD_TEST_CMD`-declared runner); this framework repo ships no app tests, so its own
+  CI does not gate them — they are procedural here, enforced where an app exists.
 - **Enforced by:** `.github/workflows/ci.yml` as a required check for ALL contributors
   (Tier 1), triggered on both `pull_request` and `push` to `main` AND `develop`.
   Server-side branch protection is the gate that cannot be skipped locally.

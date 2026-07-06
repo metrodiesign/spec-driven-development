@@ -124,5 +124,4 @@ OpenCode reads its MCP straight from `opencode.json`; Pi has no MCP host.
 
 ## Related top-level docs (not moved)
 
-- `../PROMPT.md` — the originating prompt / brief for this project.
 - `../claude-code-spec-driven-workflow.md` — the long-form spec-driven workflow guide.

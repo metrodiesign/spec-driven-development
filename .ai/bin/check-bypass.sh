@@ -68,8 +68,17 @@ echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
 # collapse newlines to spaces FIRST so a quoted message spanning a literal newline is
 # a single line when de-quoted — otherwise sed (line-oriented) leaves an in-message -n
 # behind and false-blocks (issue #28). real -n/--no-verify outside quotes still survives.
+# GO = git global options ระหว่าง `git` กับ subcommand (`git -c user.x=y commit -nm`)
+# — anchor ติดกันเคยหลุด (bypass คลาสเดียวกับ PR #38/#39); pattern ก็อปตรงจาก
+# check-destructive.sh (single source of the tested regex)
+GO='([[:space:]]+(-[cC][[:space:]]*[^[:space:];&|]+|--(git-dir|work-tree|namespace|super-prefix|exec-path|config-env|attr-source|object-format)[[:space:]]+[^[:space:];&|-][^[:space:];&|]*|--[^[:space:];&|]+|-[pP]))*'
 DQ=$(printf '%s' "$C" | tr '\n' ' ' | sed -e "s/'[^']*'/ /g" -e 's/"[^"]*"/ /g')
-echo "$DQ" | grep -qE 'git[[:space:]]+commit.*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$)' &&
+# ponytail: flat-string de-quote — a flag WRAPPED in quotes (`git commit "-nm"`) is
+# stripped together with its quoted span and slips this Tier-2 check. Not fixable by
+# regex without false-blocking every message that contains `-n` (issue #28, why we
+# de-quote at all); a real fix needs shell tokenization, out of scope for a string
+# guard. Tier-1 CI `check-secrets.sh --all` re-scans server-side and is the backstop.
+echo "$DQ" | grep -qE "git${GO}[[:space:]]+commit.*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|\$)" &&
   block 'git commit -n (--no-verify) ข้าม secret-guard — commit ตามปกติ'
 
 exit 0

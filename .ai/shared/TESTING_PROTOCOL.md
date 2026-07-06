@@ -38,7 +38,9 @@ layering in [ARCHITECTURE.md](ARCHITECTURE.md).
   fix and GREEN after (the F-IDs), (b) a 1:1 assertion for every B-ID, (c) each
   assertion checks the observable failure mode.
 - No `.only` / `.skip` may be committed. Coverage must not fall below the project
-  threshold. (Both are CI-enforced — see [SECURITY_RULES.md](SECURITY_RULES.md).)
+  threshold. (Both are wired by the DOWNSTREAM project's CI — the framework provides the
+  `SDD_TEST_CMD` hook pattern; this framework repo ships no app tests, so its own CI does
+  not gate them. See [SECURITY_RULES.md](SECURITY_RULES.md) for what its CI does run.)
 
 ## UI verification
 

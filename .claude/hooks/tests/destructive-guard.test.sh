@@ -78,6 +78,9 @@ check block "push HEAD:main"         'git push origin HEAD:main'
 # global options between `git` and subcommand must NOT slip the guard (bypass regression)
 check block "git -C . push develop"     'git -C . push origin develop'
 check block "git -c kv push --force"    'git -c user.name=x push --force origin feat'
+# attached form (no space after -c/-C) is equally valid git syntax — must block too
+check block "git -ckv push --force"     'git -cuser.name=x push --force origin feat'
+check block "git -C. reset --hard"      'git -C. reset --hard HEAD~1'
 check block "git --no-pager push +main" 'git --no-pager push origin +main'
 check block "git -C . reset --hard"     'git -C . reset --hard HEAD~1'
 # long global option with a SEPARATE-token value must not slip the guard (codex P1)
