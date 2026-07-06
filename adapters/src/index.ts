@@ -8,3 +8,4 @@ export {
   type QueryFn,
   type SdkMessage,
 } from './anthropic.ts';
+export { createLiveAnthropicAdapter } from './live.ts';

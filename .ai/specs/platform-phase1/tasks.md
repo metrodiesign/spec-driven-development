@@ -311,6 +311,23 @@
      Satisfies: REQ-11.4, REQ-11.6, REQ-13.8, REQ-4.5 (live success path), REQ-2.1 + REQ-3
      (live-adapter verification; harness ownership stays with task 3). Depends on: 6, 7, 8.
      Verify: evidence files exist with observed output + honest PARTIAL remainders.
+     Status (goal-mode AFK, 2026-07-07) — STAYS [ ] pending the human live run (correct per the
+     goal: "ไม่เร่งให้เสร็จโดยข้ามการพิสูจน์"; live is manual-only by user decision #2, `--live`
+     structurally refuses in CI / non-TTY, `/usage` is TUI-only). What is DONE + verified here
+     (no quota):
+       - capstone composition wired: `console/backend/src/loop-run.ts` (core + AAL + context +
+         adapter -> runTaskLoop on a synthetic fixture) — E2E test reaches REVIEWING + computes
+         calibration MATH; also runs via the bin:
+         `node console/backend/bin/platform.ts loop run --goal .ai/calibration/fixture-goal.yaml`
+         -> `-> REVIEWING (1 iterations); calibration is HARNESS MATH only`
+       - real Claude adapter wired over the SDK: `adapters/src/live.ts createLiveAnthropicAdapter`
+         (D-004 flags), gated behind the typed `RUN-LIVE` confirmation + a conformance record
+       - `.ai/calibration/fixture-goal.yaml` authored; `docs/calibration/RUNBOOK.md` records the
+         exact live commands + PASS/PARTIAL checklists for the human
+     What REMAINS (human, budgeted — see RUNBOOK): live conformance P1–P8 on the real adapter,
+     the live supervised-loop calibration numbers (range), billing proof (/usage before/after),
+     the F-Term parity manual checklist + live WS/xterm render, live transcript capture, and the
+     SPA viewport check. Flip [x] only after the RUNBOOK is filled with observed results.
 
 ## Suggested execution batches
 
