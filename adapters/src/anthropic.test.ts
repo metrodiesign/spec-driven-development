@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { createAnthropicAdapter, type QueryFn, type SdkMessage } from './anthropic.ts';
+import { createAnthropicAdapter, normalizeActions, unfence, type QueryFn, type SdkMessage } from './anthropic.ts';
 import { AdapterError } from 'aal';
 import type { AgentRequest } from 'aal';
 
@@ -65,6 +65,40 @@ function harness(query: QueryFn) {
   });
   return { adapter, root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
+
+test('model-inline WRITE_FILE content is mapped to a minted contentRef (wire->core translation, observed live)', () => {
+  const blobs: string[] = [];
+  const put = (c: string): string => { blobs.push(c); return `blob://${blobs.length - 1}`; };
+  const out = normalizeActions(
+    [
+      { type: 'WRITE_FILE', path: 'src/impl.txt', content: 'correct\n' },
+      { type: 'REQUEST_TOOL', name: 'fusion.deliberate' },
+    ],
+    put,
+  );
+  assert.deepEqual(out[0], { actionId: 'a-0', type: 'WRITE_FILE', path: 'src/impl.txt', contentRef: 'blob://0' });
+  assert.equal(blobs[0], 'correct\n');
+  assert.deepEqual(out[1], { actionId: 'a-1', type: 'REQUEST_TOOL', name: 'fusion.deliberate' });
+  assert.deepEqual(normalizeActions('not-an-array', put), [], 'non-array degrades to empty');
+});
+
+test('a markdown-fenced JSON reply is unwrapped before parsing (wire normalization, observed live P2)', async () => {
+  assert.equal(unfence('```json\n{"a":1}\n```'), '{"a":1}');
+  assert.equal(unfence('```\n{"a":1}\n```'), '{"a":1}');
+  assert.equal(unfence('{"a":1}'), '{"a":1}', 'raw JSON passes through');
+  assert.equal(unfence('prose ```json\n{}\n```'), 'prose ```json\n{}\n```', 'only a whole-message fence unwraps');
+  const fenced: SdkMessage[] = [
+    { type: 'system', subtype: 'init', session_id: 'sess-1', tools: [] },
+    { type: 'assistant', message: { content: [{ type: 'text', text: '```json\n' + ASSISTANT_JSON + '\n```' }] } },
+    { type: 'result', subtype: 'success', usage: { input_tokens: 10, output_tokens: 10 } },
+  ];
+  const h = harness(mockQuery({ messages: fenced }));
+  try {
+    const resp = await h.adapter.send(req('req-fence'));
+    assert.equal((resp.structuredResult as { claim?: string }).claim, 'READY_FOR_VERIFICATION');
+    assert.equal(resp.actionRequests.length, 1);
+  } finally { h.cleanup(); }
+});
 
 test('sends the D-004 isolation flags + core system prompt (REQ-4.1)', async () => {
   const capture: { args?: unknown } = {};

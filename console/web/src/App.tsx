@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 
 import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo } from './logic/format.ts';
+import { TerminalPanel } from './TerminalPanel.tsx';
 
 interface Status {
   disclaimer: string;
@@ -157,6 +158,8 @@ export function App() {
           </ul>
         )}
       </section>
+
+      {selected !== null && <TerminalPanel project={selected} />}
 
       {selected !== null && (
         <section aria-label="Sessions">

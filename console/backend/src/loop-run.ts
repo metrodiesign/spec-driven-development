@@ -92,11 +92,14 @@ export async function runSupervisedLoop(opts: {
   adapterFactory: (putEvidence: (s: string) => string) => AdapterInterface;
   conformanceRecord?: ConformanceRecord;
   nowMs: number;
+  /** Keep events.db + evidence here (a live run's record, REQ-11.4/4.5) — default is inside the throwaway fixture root. */
+  persistDir?: string;
 }): Promise<LoopRunResult> {
   const fx = makeFixtureRepo();
   const clock = { now: () => opts.nowMs };
-  const log = openEventLog(join(fx.root, 'events.db'), clock);
-  const evidence = createEvidenceStore(join(fx.root, 'evidence'));
+  const stateDir = opts.persistDir ?? fx.root; // fixture root is rm'd in finally; persistDir survives
+  const log = openEventLog(join(stateDir, 'events.db'), clock);
+  const evidence = createEvidenceStore(join(stateDir, 'evidence'));
   try {
     const adapter = opts.adapterFactory((s) => evidence.put(s));
     const reg = createRegistry();

@@ -5,12 +5,13 @@
 
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 import { spawn as ptySpawn } from 'node-pty';
 import { WebSocketServer } from 'ws';
 import type { Server } from 'node:http';
 
+import { readProjects } from './claude-data.ts';
 import { createTermManager, type CreateSessionInput, type PtyLike, type SpawnPty, type TermManager } from './term.ts';
 
 /** Build the `claude` invocation for a session. claude-only spawns the binary
@@ -57,7 +58,10 @@ export function createTermRuntime(opts: { projectsRoot: string; auditPath: strin
     ticketTtlS: opts.ticketTtlS,
     buildCommand,
     audit,
-    cwdFor: (project) => join(opts.projectsRoot, project),
+    // `project` is the MUNGED ~/.claude/projects dir id — the real cwd is
+    // recovered from the project's session JSONL (claude-data), never joined raw.
+    cwdFor: (project) =>
+      readProjects(opts.projectsRoot).projects.find((p) => p.id === project)?.cwd ?? opts.projectsRoot,
   });
 
   function attachWs(server: Server): void {
@@ -80,6 +84,8 @@ export function createTermRuntime(opts: { projectsRoot: string; auditPath: strin
           return;
         }
         ws.send(re.buffer); // replay ring buffer on (re)attach (REQ-13.2)
+        const off = manager.onData(ptyId, (d) => ws.send(d)); // live stream (REQ-13.2)
+        ws.on('close', off);
         ws.on('message', (data: Buffer) => manager.write(ptyId, re.ticket, data.toString('utf8')));
       });
     });

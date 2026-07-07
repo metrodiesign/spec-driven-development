@@ -42,6 +42,8 @@ interface Session {
   alive: boolean;
   /** The single active writer's ticket; a new attach takes over (REQ-13.9). */
   writerTicket: string | null;
+  /** Live output taps (WS bridges). Reads are unrestricted; writes stay single-writer. */
+  taps: Set<(data: string) => void>;
 }
 
 export interface TermManagerDeps {
@@ -63,6 +65,8 @@ export interface TermManager {
   attach(ptyId: string): { ticket: string; buffer: string } | null;
   /** Consume a ticket for a WS connection; returns false if invalid/expired/reused. */
   redeemTicket(ptyId: string, ticket: string): boolean;
+  /** Tap live PTY output (REQ-13.2 streaming). Returns an unsubscribe. */
+  onData(ptyId: string, cb: (data: string) => void): () => void;
   write(ptyId: string, ticket: string, data: string): boolean;
   list(): { ptyId: string; project: string; mode: TermMode; alive: boolean }[];
   kill(ptyId: string): boolean;
@@ -90,9 +94,10 @@ export function createTermManager(deps: TermManagerDeps): TermManager {
       const { file, args } = deps.buildCommand(input);
       const pty = deps.spawn(file, args, { cwd: deps.cwdFor(input.project), env: { TERM: 'xterm-256color' } });
       const id = deps.nextId();
-      const s: Session = { id, project: input.project, mode: input.mode, pty, ring: '', alive: true, writerTicket: null };
+      const s: Session = { id, project: input.project, mode: input.mode, pty, ring: '', alive: true, writerTicket: null, taps: new Set() };
       pty.onData((d) => {
         s.ring = (s.ring + d).slice(-RING_BYTES);
+        for (const tap of s.taps) tap(d);
       });
       pty.onExit(() => {
         s.alive = false;
@@ -119,6 +124,13 @@ export function createTermManager(deps: TermManagerDeps): TermManager {
       tickets.delete(ticket); // single-use, always consumed on redeem
       if (t === undefined || t.ptyId !== ptyId) return false;
       return t.expiresAt >= deps.now();
+    },
+
+    onData(ptyId, cb) {
+      const s = sessions.get(ptyId);
+      if (s === undefined) return () => {};
+      s.taps.add(cb);
+      return () => s.taps.delete(cb);
     },
 
     write(ptyId, ticket, data) {

@@ -295,7 +295,7 @@
          project/model/cwd extraction from live transcripts is a thin loader; the INDEXING math
          is what's proven here). WS broadcast of ingested activity is runtime (task 11)
 
-- [ ] 11. Live conformance + calibration + Phase-1 DoD closure — FIRST run conformance P1–P8
+- [x] 11. Live conformance + calibration + Phase-1 DoD closure — FIRST run conformance P1–P8
      against the LIVE anthropic adapter (budget-capped, ~10 requests) and persist its real
      ConformanceRecord — this is the §14 "conformance ผ่าน" DoD gate and the REQ-12.4
      prerequisite (registering from a mocked record would make the gate theater); THEN the
@@ -311,23 +311,46 @@
      Satisfies: REQ-11.4, REQ-11.6, REQ-13.8, REQ-4.5 (live success path), REQ-2.1 + REQ-3
      (live-adapter verification; harness ownership stays with task 3). Depends on: 6, 7, 8.
      Verify: evidence files exist with observed output + honest PARTIAL remainders.
-     Status (goal-mode AFK, 2026-07-07) — STAYS [ ] pending the human live run (correct per the
-     goal: "ไม่เร่งให้เสร็จโดยข้ามการพิสูจน์"; live is manual-only by user decision #2, `--live`
-     structurally refuses in CI / non-TTY, `/usage` is TUI-only). What is DONE + verified here
-     (no quota):
-       - capstone composition wired: `console/backend/src/loop-run.ts` (core + AAL + context +
-         adapter -> runTaskLoop on a synthetic fixture) — E2E test reaches REVIEWING + computes
-         calibration MATH; also runs via the bin:
-         `node console/backend/bin/platform.ts loop run --goal .ai/calibration/fixture-goal.yaml`
-         -> `-> REVIEWING (1 iterations); calibration is HARNESS MATH only`
-       - real Claude adapter wired over the SDK: `adapters/src/live.ts createLiveAnthropicAdapter`
-         (D-004 flags), gated behind the typed `RUN-LIVE` confirmation + a conformance record
-       - `.ai/calibration/fixture-goal.yaml` authored; `docs/calibration/RUNBOOK.md` records the
-         exact live commands + PASS/PARTIAL checklists for the human
-     What REMAINS (human, budgeted — see RUNBOOK): live conformance P1–P8 on the real adapter,
-     the live supervised-loop calibration numbers (range), billing proof (/usage before/after),
-     the F-Term parity manual checklist + live WS/xterm render, live transcript capture, and the
-     SPA viewport check. Flip [x] only after the RUNBOOK is filled with observed results.
+     Status: CLOSED 2026-07-07 — live steps executed by the Claude agent driving a real iTerm
+     TTY under explicit user delegation ("run the RUNBOOK live steps"), the sanctioned path per
+     the REQ-11.3 residual; every spend has initiator + typed-RUN-LIVE evidence. Full observed
+     results in `docs/calibration/RUNBOOK.md` (source of truth for this task's live evidence).
+     Evidence:
+       - test: `node console/backend/bin/platform.ts conformance --live` (new subcommand) ->
+         3 runs kept as history in `.ai/calibration/`: run 1 P1/P2/P5 FAIL (wire never stated
+         the protocol), run 2 all-PASS after Ring-2 fixes, run 3 all-PASS under the FINAL
+         shipped prompt = active record `conformance-claude-2026-07-07T04-20-18-843Z.json`;
+         P7 susceptibility 0 in all runs; verdicts + sabotage self-test untouched (INV-16)
+       - test: `platform loop run --goal .ai/calibration/fixture-goal.yaml --live` -> run 1
+         BLOCKED (proposal vocabulary unstated — root-caused, fixed in Ring 2, kept honest);
+         run 2 REVIEWING (1 iteration), held-out range [0.00, 1.00] (n=1), reproducibility
+         1.00; REQ-12.4 gate now loads the REAL persisted record pre-confirmation (refuses
+         when absent/corrupt); run evidence persists in ~/.ai/runs/RUN-1783398086761
+       - test: billing proof — /usage BEFORE session 21% / week-Fable 40% -> AFTER 23% / 41%,
+         ANTHROPIC_API_KEY unset throughout (Max OAuth keychain only); platform spend measured
+         from adapter raw usage: 27 requests / 20,478 tokens (attribution caveat in RUNBOOK)
+       - test: transcript capture (REQ-4.5) — rawTranscriptRef NON-NULL on every live probe +
+         loop response (JSONL derived from session id, polled, copied to evidence store)
+       - test: F-Term parity — /model picker, mode cycling to plan mode, permission prompt
+         answered by keystroke `1` (file created), --resume replayed a Jul-6 session,
+         detach -> alive:true -> re-attach ring replay + live streaming; defects found live
+         and fixed: onData streaming tap (was replay-only), cwdFor munged-id resolution,
+         missing web Terminal page (task-8 reconciliation below), WS listener leak
+       - test: `pnpm typecheck && pnpm lint && pnpm test` -> 6 workspaces green, 182 tests
+         0 fail (core 71, aal 23, adapters 11, backend 65, web 12); vendor check Ring 0+1
+         clean; `scripts/spec-trace.sh platform-phase1` -> 94/94 + EARS lint OK
+       - viewports: 375 OK (clientWidth 375, no h-overflow) | 768 OK | 1440 OK — xterm canvas
+         scrolls inside its own overflow-x container, page never scrolls horizontally
+       - deviations: task-8 reconciliation — its claimed "web Terminal page (xterm.js …)" was
+         NOT on disk (only logic helpers + backend); built here minimally (`TerminalPanel.tsx`,
+         `@xterm/xterm` MIT added to console-web) since task 11's parity checklist needs it.
+         Ring-2 wire fixes (fence-strip, protocol vocabulary incl. WRITE_FILE inline-content ->
+         minted contentRef mirroring FakeAdapter.putContent) — probe/scenario verdicts
+         unchanged. Known non-blocking issues carried to backlog (pre-live adversarial review,
+         13 confirmed findings): repair-round tokens not charged to budget (spend can exceed
+         counted costUnits; bounded by maxIterations), frozen nowMs clock never trips the
+         wallclock budget, first attach after --resume create can render blank until re-attach,
+         nested claude under an agent-launched backend leaves no session JSONL
 
 ## Suggested execution batches
 

@@ -18,6 +18,7 @@ function stubTerm(): TermManager {
     create: (input) => { const id = `pty-${++n}`; sessions.set(id, { project: input.project, mode: input.mode }); return { ptyId: id, ticket: 'tk-1' }; },
     attach: (id) => (sessions.has(id) ? { ticket: 'tk-2', buffer: 'replayed' } : null),
     redeemTicket: () => true,
+    onData: () => () => {},
     write: () => true,
     list: () => [...sessions.entries()].map(([ptyId, s]) => ({ ptyId, project: s.project, mode: s.mode, alive: true })),
     kill: (id) => sessions.delete(id),

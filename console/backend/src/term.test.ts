@@ -50,6 +50,20 @@ test('F-Term is loopback-only hard, even conceptually with --insecure (REQ-13.4)
   assert.equal(termAccessAllowed('192.168.1.5'), false);
 });
 
+test('onData taps live PTY output until unsubscribed; ring buffer still fills (REQ-13.2 streaming)', () => {
+  const h = mgr();
+  const { ptyId } = h.m.create({ project: 'p', mode: 'claude-only' });
+  const seen: string[] = [];
+  const off = h.m.onData(ptyId, (d) => seen.push(d));
+  h.ptys[0]!.emit('hello ');
+  off();
+  h.ptys[0]!.emit('world');
+  assert.deepEqual(seen, ['hello '], 'tap receives only while subscribed');
+  const re = h.m.attach(ptyId);
+  assert.equal(re?.buffer, 'hello world', 'ring buffer keeps everything');
+  assert.equal(typeof h.m.onData('absent', () => {}), 'function', 'unknown pty returns a no-op unsubscribe');
+});
+
 test('create spawns, audits, returns a ptyId + writer ticket (REQ-13.1/13.5)', () => {
   const h = mgr();
   const { ptyId, ticket } = h.m.create({ project: 'p', mode: 'claude-only' });
