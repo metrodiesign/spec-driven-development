@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 import { serializeBundle } from 'core';
 import { AdapterError } from 'aal';
-import type { AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
+import type { AdapterHealth, AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
 import type { Action } from 'core';
 
 export interface SdkMessage {
@@ -47,7 +47,20 @@ export interface AnthropicAdapterOptions {
   pollIntervalMs?: number;
   pollAttempts?: number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Quota estimate injected by the composition root from the console usage
+   * estimator (REQ-2.5) — the adapter itself stays estimation-free. Returns
+   * per-window ESTIMATES (AZ-19) or null when no estimate is available.
+   */
+  quotaProbe?: () => Promise<{ fiveHourPct: number; weeklyPct: number } | null>;
+  /** Health flips not-ok when either window's estimate meets this (default 85%). */
+  quotaThresholdPct?: number;
 }
+
+/** The Claude adapter plus its (optional) quota-aware health probe for the registry. */
+export type AnthropicAdapter = AdapterInterface & {
+  healthProbe?: () => Promise<AdapterHealth>;
+};
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -85,13 +98,29 @@ function classify(err: unknown): AdapterError {
   return new AdapterError('transport', msg);
 }
 
-export function createAnthropicAdapter(opts: AnthropicAdapterOptions): AdapterInterface {
+export function createAnthropicAdapter(opts: AnthropicAdapterOptions): AnthropicAdapter {
   const id = opts.id ?? 'claude';
   const per1k = opts.costUnitsPer1k ?? 1;
   const sleep = opts.sleep ?? realSleep;
   const pollAttempts = opts.pollAttempts ?? 10;
   const pollIntervalMs = opts.pollIntervalMs ?? 200;
+  const quotaThresholdPct = opts.quotaThresholdPct ?? 85;
   const replayPath = (requestId: string): string => join(opts.replayDir, `${encodeURIComponent(requestId)}.json`);
+
+  // Map the injected estimate to an AdapterHealth (probe vs threshold) — the only
+  // "quota logic" the adapter holds is the comparison; the estimate itself is the
+  // injected closure's job (REQ-2.5, INV-13 claim discipline).
+  const healthProbe: (() => Promise<AdapterHealth>) | undefined =
+    opts.quotaProbe === undefined
+      ? undefined
+      : async (): Promise<AdapterHealth> => {
+          const w = await opts.quotaProbe!();
+          if (w === null) return { ok: false, reason: 'probe_failed' };
+          const max = Math.max(w.fiveHourPct, w.weeklyPct);
+          return max >= quotaThresholdPct
+            ? { ok: false, reason: 'quota_threshold', windows: w }
+            : { ok: true, windows: w };
+        };
 
   async function captureTranscript(sessionId: string | null): Promise<string | null> {
     if (sessionId === null || opts.transcriptDir === undefined) return null;
@@ -124,6 +153,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): AdapterIn
   }
 
   return {
+    ...(healthProbe ? { healthProbe } : {}),
     manifest(): CapabilityManifest {
       return {
         adapterId: id,

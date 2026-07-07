@@ -6,6 +6,8 @@ export interface BudgetTracker {
   noteIteration(costUnits: number): void;
   /** False while inside budget; otherwise names the first exceeded limit. */
   exceeded(): false | { limit: 'iterations' | 'costUnits' | 'wallclock' };
+  /** Cost units still available (never negative) — the real remaining budget (REQ-6.3). */
+  remaining(): number;
 }
 
 export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker {
@@ -23,6 +25,9 @@ export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker 
       if (costUnits > limits.maxCostUnits) return { limit: 'costUnits' };
       if (clock.now() - startedAt > limits.maxWallclockMs) return { limit: 'wallclock' };
       return false;
+    },
+    remaining() {
+      return Math.max(0, limits.maxCostUnits - costUnits);
     },
   };
 }

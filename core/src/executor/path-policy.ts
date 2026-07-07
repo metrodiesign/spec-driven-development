@@ -21,6 +21,8 @@ const WRITE_PREFIXES: Record<Role, string[]> = {
   planner: [],
   test_designer: [`test${sep}ai-generated${sep}`],
   implementer: [`src${sep}`, `test${sep}ai-generated${sep}`],
+  // Diagnostician reads + runs probe RUN_COMMANDs; it never writes (REQ-4.3).
+  diagnostician: [],
 };
 
 /** Normalize to a worktree-relative path, or null when it escapes the worktree. */

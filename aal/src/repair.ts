@@ -10,6 +10,12 @@ export interface RepairOutcome {
   repairRounds: number;
   valid: boolean;
   errors: string[];
+  /**
+   * Usage summed across the initial send AND every repair round (backlog #1,
+   * REQ-6.1). `response.usage` is only the LAST round; the budget must be charged
+   * the total, or a schema-repair burn is invisible to the backstop.
+   */
+  totalUsage: { costUnits: number };
 }
 
 type JsonType = 'object' | 'array' | 'string' | 'number' | 'boolean';
@@ -77,12 +83,20 @@ export async function proposeWithRepair(
   maxRounds: number,
 ): Promise<RepairOutcome> {
   let response = await adapter.send(req);
+  let totalCost = response.usage.costUnits;
   let check = validateAgainstSchema(response.structuredResult, req.outputSchema);
   let rounds = 0;
   while (!check.valid && rounds < maxRounds) {
     rounds += 1;
     response = await adapter.send(repairRequest(req, check.errors, rounds));
+    totalCost += response.usage.costUnits;
     check = validateAgainstSchema(response.structuredResult, req.outputSchema);
   }
-  return { response, repairRounds: rounds, valid: check.valid, errors: check.errors };
+  return {
+    response,
+    repairRounds: rounds,
+    valid: check.valid,
+    errors: check.errors,
+    totalUsage: { costUnits: totalCost },
+  };
 }

@@ -164,6 +164,51 @@ test('auth error -> AdapterError auth_unavailable (REQ-4.8)', async () => {
   } finally { h.cleanup(); }
 });
 
+test('injected quotaProbe -> healthProbe maps estimate vs threshold; adapter stays estimation-free (REQ-2.5)', async () => {
+  function build(windows: { fiveHourPct: number; weeklyPct: number } | null) {
+    const root = mkdtempSync(join(tmpdir(), 'anth-q-'));
+    const adapter = createAnthropicAdapter({
+      id: 'claude',
+      query: mockQuery({}),
+      systemPrompt: SYS,
+      cwd: root,
+      replayDir: join(root, 'replay'),
+      putEvidence: (c) => c,
+      quotaProbe: () => Promise.resolve(windows),
+      quotaThresholdPct: 85,
+    });
+    return { adapter, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  }
+
+  const under = build({ fiveHourPct: 40, weeklyPct: 60 });
+  try {
+    const h = await under.adapter.healthProbe?.();
+    assert.equal(h?.ok, true, 'below threshold -> ok');
+    assert.deepEqual(h?.windows, { fiveHourPct: 40, weeklyPct: 60 });
+  } finally { under.cleanup(); }
+
+  const over = build({ fiveHourPct: 90, weeklyPct: 10 });
+  try {
+    const h = await over.adapter.healthProbe?.();
+    assert.equal(h?.ok, false, 'either window >= threshold -> not-ok');
+    assert.equal(h?.reason, 'quota_threshold');
+  } finally { over.cleanup(); }
+
+  const none = build(null);
+  try {
+    const h = await none.adapter.healthProbe?.();
+    assert.equal(h?.ok, false, 'no estimate -> probe_failed');
+    assert.equal(h?.reason, 'probe_failed');
+  } finally { none.cleanup(); }
+});
+
+test('no quotaProbe -> no healthProbe (always-ok adapter)', () => {
+  const h = harness(mockQuery({}));
+  try {
+    assert.equal(h.adapter.healthProbe, undefined);
+  } finally { h.cleanup(); }
+});
+
 test('durable replay: same requestId served from disk, query called once (REQ-4.9/P8)', async () => {
   let calls = 0;
   const counting: QueryFn = (args) => { calls += 1; return mockQuery({})(args); };

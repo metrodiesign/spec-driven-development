@@ -2,16 +2,29 @@
 export const RING = 1 as const;
 
 export * from './protocol.ts';
-export { FakeAdapter, type FakeAdapterOptions, type FakeBehavior } from './fake-adapter.ts';
+export { FakeAdapter, type FakeAdapterOptions, type FakeBehavior, type FakeFault } from './fake-adapter.ts';
 export {
   proposeWithRepair,
   validateAgainstSchema,
   type RepairOutcome,
 } from './repair.ts';
 export {
+  createBreaker,
+  breakerKey,
+  DEFAULT_BREAKER_OPTIONS,
+  type Breaker,
+  type BreakerOptions,
+  type BreakerState,
+  type BreakerSink,
+  type BreakerTransition,
+} from './breaker.ts';
+export {
   createRegistry,
   type Registry,
   type RegisteredAdapter,
+  type RegistryOptions,
+  type HealthChange,
+  type AdapterHealth,
 } from './registry.ts';
 export { createRouter, NoCapacityError, type Router } from './router.ts';
 export { createAALProposalSource, type AALSourceDeps } from './source.ts';

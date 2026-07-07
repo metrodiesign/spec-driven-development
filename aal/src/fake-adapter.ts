@@ -8,7 +8,8 @@
 // the same requests exercise a real model too (the model reads the words; the
 // fake parses the tag).
 
-import type { AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from './protocol.ts';
+import { AdapterError } from './protocol.ts';
+import type { AdapterHealth, AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from './protocol.ts';
 import type { Action } from 'core/types';
 
 export type FakeBehavior =
@@ -19,10 +20,19 @@ export type FakeBehavior =
   | 'double_burn' // fails P8: no replay cache, usage charged twice
   | 'schema_fail_first'; // compliant-with-mistake: invalid first send, valid after (drives repair)
 
+/**
+ * Survivability fault knobs (REQ-1/2/3) — orthogonal to the conformance
+ * behaviors above. `throw_*` make send() raise a typed AdapterError so the
+ * breaker + degraded re-route can be exercised deterministically; `health_unhealthy`
+ * exposes a not-ok healthProbe so quota-aware routing skips this adapter.
+ */
+export type FakeFault = 'throw_quota_limited' | 'throw_transport' | 'health_unhealthy';
+
 export interface FakeAdapterOptions {
   id?: string;
   modelVersion?: string;
   behavior?: FakeBehavior;
+  fault?: FakeFault;
   contextWindowTokens?: number;
   /**
    * Optional evidence writer. A real adapter maps the model's inline content to a
@@ -63,6 +73,7 @@ export class FakeAdapter implements AdapterInterface {
   private readonly id: string;
   private readonly modelVersion: string;
   private readonly behavior: FakeBehavior;
+  private readonly fault: FakeFault | undefined;
   private readonly contextWindowTokens: number;
   private readonly putContent: ((content: string) => string) | undefined;
   private readonly writeContent: string;
@@ -70,14 +81,26 @@ export class FakeAdapter implements AdapterInterface {
   private readonly replay = new Map<string, AgentResponse>();
   /** send attempts (drives schema_fail_first regardless of requestId). */
   private attempts = 0;
+  /** A not-ok quota/health probe when fault === 'health_unhealthy'; the registry consumes it. */
+  readonly healthProbe: (() => Promise<AdapterHealth>) | undefined;
 
   constructor(opts: FakeAdapterOptions = {}) {
     this.id = opts.id ?? 'fake';
     this.modelVersion = opts.modelVersion ?? 'fake-1.0';
     this.behavior = opts.behavior ?? 'compliant';
+    this.fault = opts.fault;
     this.contextWindowTokens = opts.contextWindowTokens ?? 200_000;
     this.putContent = opts.putContent;
     this.writeContent = opts.writeContent ?? 'correct\n';
+    this.healthProbe =
+      opts.fault === 'health_unhealthy'
+        ? () =>
+            Promise.resolve<AdapterHealth>({
+              ok: false,
+              reason: 'quota_threshold',
+              windows: { fiveHourPct: 99, weeklyPct: 80 },
+            })
+        : undefined;
   }
 
   manifest(): CapabilityManifest {
@@ -92,6 +115,14 @@ export class FakeAdapter implements AdapterInterface {
   }
 
   async send(req: AgentRequest): Promise<AgentResponse> {
+    // Survivability faults raise a typed AdapterError BEFORE any replay/compose so
+    // the source records the breaker failure and re-routes (REQ-3.1). No self-retry.
+    if (this.fault === 'throw_quota_limited') {
+      throw new AdapterError('quota_limited', `fake fault: quota_limited (${this.id})`);
+    }
+    if (this.fault === 'throw_transport') {
+      throw new AdapterError('transport', `fake fault: transport (${this.id})`);
+    }
     // P8: a compliant adapter serves a repeated requestId from its replay record
     // with usage counted once. double_burn skips the cache and re-charges.
     if (this.behavior !== 'double_burn') {

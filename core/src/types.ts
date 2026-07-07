@@ -1,7 +1,9 @@
 // Ring 0 shared types (unified-platform-spec.md §6). Vendor-neutral by law (INV-7).
 
 /** Roles and their write rights come from policy config (REQ-1.6, spec §6.1). */
-export type Role = 'planner' | 'test_designer' | 'implementer';
+// `diagnostician` (Phase 2, REQ-4) drives a DIAGNOSING round: reasoning + probe
+// RUN_COMMANDs only, empty write-prefix list (see executor/path-policy).
+export type Role = 'planner' | 'test_designer' | 'implementer' | 'diagnostician';
 
 /** Action DSL (spec §6.1). Content/diff travel as blob refs into the evidence store. */
 export type Action =
@@ -72,7 +74,26 @@ export type EventType =
   | 'APPROVAL_RECORDED'
   | 'KILL_REQUESTED'
   | 'CONTEXT_BUILT'
-  | 'CONFORMANCE_RECORDED';
+  | 'CONFORMANCE_RECORDED'
+  // Phase 2 additions (append-only, INV-10). GOVERNANCE_CHANGE (above) gains its
+  // first producers; governance events live in the durable .ai/governance log.
+  | 'BREAKER_STATE_CHANGED'
+  | 'QUOTA_PROBE'
+  | 'HYPOTHESIS_PROPOSED'
+  | 'PROBE_RUN'
+  | 'HYPOTHESIS_CONFIRMED'
+  | 'HYPOTHESIS_REFUTED'
+  | 'PAUSE_REQUESTED'
+  | 'GUIDANCE_INJECTED'
+  | 'RESUMED'
+  | 'AUTO_APPROVED'
+  | 'AUDIT_SAMPLED'
+  | 'AUDIT_RESULT'
+  | 'CANARY_TRIPPED'
+  | 'DATA_POLICY_VIOLATION'
+  | 'AUTOMATION_DEFERRED'
+  | 'AUTOMATION_OVERRIDE'
+  | 'GOVERNANCE_PROPOSED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

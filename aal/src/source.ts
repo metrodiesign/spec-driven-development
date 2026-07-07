@@ -1,14 +1,18 @@
 // AALProposalSource (§7.1, REQ-5) — the Ring-1 implementation of core's
 // ProposalSource port (INV-8: core's port/orchestrator are unchanged). Each
-// round it builds context (core/context), records a PROPOSAL_INTENT before the
-// adapter call so crash-replay reuses the requestId (P8), routes to an eligible
-// adapter, drives the bounded repair loop, enforces action-path provenance
-// (context_violation), and records CONTEXT_BUILT with recall/waste counters.
+// round it builds context (core/context), refreshes adapter health, records a
+// PROPOSAL_INTENT before the adapter call so crash-replay reuses the requestId
+// (P8), routes to an eligible adapter, drives the bounded repair loop, and — on
+// an AdapterError — records the failure with the breaker and re-routes ONCE to
+// the next eligible adapter before a clean BLOCKED(no_capacity) (REQ-3).
 
 import { buildContext, computeContextMetrics } from 'core';
 import { SecretInContextError } from 'core';
-import { proposeWithRepair } from './repair.ts';
-import { NoCapacityError, type Router } from './router.ts';
+import { breakerKey, type Breaker } from './breaker.ts';
+import { AdapterError } from './protocol.ts';
+import { proposeWithRepair, type RepairOutcome } from './repair.ts';
+import type { RegisteredAdapter } from './registry.ts';
+import type { Router } from './router.ts';
 import type { EvidenceStore } from 'core';
 import type {
   Action,
@@ -18,15 +22,15 @@ import type {
   ProposalClaim,
   ProposalInput,
   ProposalSource,
-  Role,
   TaskContractExcerpt,
 } from 'core';
 
 export interface AALSourceDeps {
   runId: string;
   taskId: string;
-  role: Role;
   router: Router;
+  /** Records send outcomes per adapter+model key; the router alone never sees the send (REQ-3.1). */
+  breaker: Breaker;
   worktreeDir: string;
   taskContract: TaskContractExcerpt;
   seedPaths: string[];
@@ -37,6 +41,8 @@ export interface AALSourceDeps {
   outputSchema: Record<string, unknown>;
   maxRepairRounds: number;
   excludePath?: (relPath: string) => boolean;
+  /** The task's real remaining budget, sent in AgentRequest.budget (REQ-6.3). */
+  budgetRemaining?: () => number;
 }
 
 function pathOf(a: Action): string | null {
@@ -48,6 +54,8 @@ function asClaim(v: unknown): ProposalClaim {
   return v === 'READY_FOR_VERIFICATION' || v === 'BLOCKED' ? v : 'WORKING';
 }
 
+const keyOf = (r: RegisteredAdapter): string => breakerKey(r.record.adapterId, r.record.modelVersion);
+
 export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
   // Paths the model has legitimately requested via READ_FILE accumulate across
   // rounds and expand the provenance-allowed set (REQ-5.4).
@@ -55,6 +63,8 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
 
   return {
     async propose(input: ProposalInput): Promise<Proposal> {
+      const role = input.role; // per-call role, not a construction-time bind (REQ-4.1)
+
       // Build context; a secret in a piece BLOCKS the build (REQ-7.3).
       let bundle: ContextBundle;
       let manifestRef: string;
@@ -83,21 +93,37 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
         throw err;
       }
 
-      // Route; nothing eligible -> BLOCKED(no_capacity), NO retry (REQ-6.2).
-      let adapter;
-      try {
-        adapter = deps.router.route(deps.role);
-      } catch (err) {
-        if (err instanceof NoCapacityError) {
-          deps.log.append({
-            runId: deps.runId,
-            taskId: deps.taskId,
-            type: 'ESCALATED',
-            payload: { why: 'no_capacity', role: deps.role },
-          });
-          return { claim: 'BLOCKED', actions: [], costUnits: 0 };
-        }
-        throw err;
+      // Refresh adapter health once per round BEFORE routing; emit QUOTA_PROBE on
+      // change (labeled estimate — INV-13). Probes are timeout-bounded in the
+      // registry, so this await never hangs the loop (AZ-14).
+      const healthChanges = await deps.router.refreshHealth();
+      for (const c of healthChanges) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'QUOTA_PROBE',
+          payload: {
+            adapterId: c.adapterId,
+            ok: c.health.ok,
+            reason: c.health.reason ?? null,
+            fiveHourPct: c.health.windows?.fiveHourPct ?? null,
+            weeklyPct: c.health.windows?.weeklyPct ?? null,
+            estimate: true,
+          },
+        });
+      }
+
+      // The ordered eligible set (breaker- and health-filtered). Empty -> clean
+      // BLOCKED(no_capacity), NO retry (REQ-3.3/REQ-6.2).
+      const eligible = deps.router.eligibleAdapters(role);
+      if (eligible.length === 0) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'ESCALATED',
+          payload: { why: 'no_capacity', role },
+        });
+        return { claim: 'BLOCKED', actions: [], costUnits: 0 };
       }
 
       // Fold prior-round feedback in as an untrusted-data piece (marked, not free text upstream).
@@ -122,24 +148,56 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
         runId: deps.runId,
         taskId: deps.taskId,
         type: 'PROPOSAL_INTENT',
-        payload: { requestId, role: deps.role },
+        payload: { requestId, role },
       });
 
-      const out = await proposeWithRepair(
-        adapter,
-        {
-          requestId,
-          agentRole: deps.role,
-          taskContract: deps.taskContract,
-          contextBundle: bundle,
-          manifestRef,
-          outputSchema: deps.outputSchema,
-          toolDefs: [],
-          budget: { costUnits: 500 },
-        },
-        deps.maxRepairRounds,
-      );
-      const costUnits = out.response.usage.costUnits;
+      const req = {
+        requestId,
+        agentRole: role,
+        taskContract: deps.taskContract,
+        contextBundle: bundle,
+        manifestRef,
+        outputSchema: deps.outputSchema,
+        toolDefs: [],
+        // Real remaining budget replaces the hardcoded 500 (REQ-6.3); P4 degraded
+        // behavior now reacts to truth.
+        budget: { costUnits: deps.budgetRemaining ? deps.budgetRemaining() : 500 },
+      };
+
+      // Send with a single degraded re-route on AdapterError (REQ-3.2): record the
+      // failure with the breaker, then try the next eligible adapter EXCLUDING every
+      // key that already failed this round regardless of breaker state (AZ-4).
+      const failed = new Set<string>();
+      let chosen = eligible[0] as RegisteredAdapter;
+      let rerouted = false;
+      let out: RepairOutcome;
+      for (;;) {
+        const key = keyOf(chosen);
+        try {
+          out = await proposeWithRepair(chosen.adapter, req, deps.maxRepairRounds);
+          deps.breaker.recordSuccess(key);
+          break;
+        } catch (err) {
+          if (!(err instanceof AdapterError)) throw err;
+          deps.breaker.recordFailure(key, err.kind);
+          failed.add(key);
+          const next = rerouted ? undefined : eligible.find((a) => !failed.has(keyOf(a)));
+          if (next === undefined) {
+            // No eligible left, or the single re-route also failed -> clean BLOCKED (REQ-3.3).
+            deps.log.append({
+              runId: deps.runId,
+              taskId: deps.taskId,
+              type: 'ESCALATED',
+              payload: { why: 'no_capacity', role, detail: 'adapter_failure', kind: err.kind },
+            });
+            return { claim: 'BLOCKED', actions: [], costUnits: 0 };
+          }
+          rerouted = true;
+          chosen = next;
+        }
+      }
+
+      const costUnits = out.totalUsage.costUnits;
 
       if (!out.valid) {
         // Repair exhausted -> structured invalid_response; the round still counts (REQ-1.5).

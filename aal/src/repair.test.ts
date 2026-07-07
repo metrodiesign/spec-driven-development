@@ -40,3 +40,12 @@ test('repair loop: ignore_schema exhausts the bound and fails structured', async
   assert.equal(out.repairRounds, 2);
   assert.ok(out.errors.length >= 1);
 });
+
+test('totalUsage sums cost across ALL repair rounds, not just the last (backlog #1, REQ-6.1)', async () => {
+  const adapter = new FakeAdapter({ behavior: 'schema_fail_first' });
+  const out = await proposeWithRepair(adapter, request({ objective: '[probe:P3]' }), 2);
+  assert.equal(out.valid, true);
+  assert.equal(out.repairRounds, 1);
+  assert.equal(out.response.usage.costUnits, 2, 'response.usage is only the final round');
+  assert.equal(out.totalUsage.costUnits, 4, 'round-0 (invalid, 2) + round-1 (valid, 2) both charged');
+});

@@ -24,7 +24,17 @@ import {
   type CalibrationResult,
   type TaskContract,
 } from 'core';
-import { createAALProposalSource, createRegistry, createRouter, PASS_FAIL_PROBES, type AdapterInterface, type ConformanceRecord } from 'aal';
+import {
+  createAALProposalSource,
+  createBreaker,
+  createRegistry,
+  createRouter,
+  DEFAULT_BREAKER_OPTIONS,
+  PASS_FAIL_PROBES,
+  type AdapterHealth,
+  type AdapterInterface,
+  type ConformanceRecord,
+} from 'aal';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -102,13 +112,20 @@ export async function runSupervisedLoop(opts: {
   const evidence = createEvidenceStore(join(stateDir, 'evidence'));
   try {
     const adapter = opts.adapterFactory((s) => evidence.put(s));
-    const reg = createRegistry();
-    reg.register(adapter, opts.conformanceRecord ?? passingRecord(adapter.manifest().adapterId));
+    // Breaker + quota-aware routing (REQ-1/2/3): transitions become events; a live
+    // adapter may expose a health probe (REQ-2.5), the Fake has none (always-ok).
+    const breaker = createBreaker(DEFAULT_BREAKER_OPTIONS, () => clock.now(), (t) =>
+      log.append({ runId: 'RUN-LIVE', taskId: 'T-1', type: 'BREAKER_STATE_CHANGED', payload: { ...t } }),
+    );
+    const reg = createRegistry({ breaker });
+    const healthProbe = (adapter as { healthProbe?: () => Promise<AdapterHealth> }).healthProbe;
+    reg.register(adapter, opts.conformanceRecord ?? passingRecord(adapter.manifest().adapterId), healthProbe);
+    const budget = createBudget(opts.contract.budget, clock);
     const source = createAALProposalSource({
       runId: 'RUN-LIVE',
       taskId: 'T-1',
-      role: 'implementer',
       router: createRouter(reg),
+      breaker,
       worktreeDir: fx.wt,
       taskContract: {
         goalId: opts.contract.goal.id,
@@ -122,6 +139,7 @@ export async function runSupervisedLoop(opts: {
       ids: { requestId: () => `req-${randomUUID()}`, canary: () => `CANARY-${randomUUID()}` },
       outputSchema: { type: 'object', required: ['claim', 'actionRequests'], properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } } },
       maxRepairRounds: 2,
+      budgetRemaining: () => budget.remaining(),
     });
     const result = await runTaskLoop({
       runId: 'RUN-LIVE',
@@ -140,7 +158,7 @@ export async function runSupervisedLoop(opts: {
       }),
       gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: 'RUN-LIVE', taskId: 'T-1', log, evidence, clock }),
       log,
-      budget: createBudget(opts.contract.budget, clock),
+      budget,
       clock,
     });
     // Held-out (golden) verification passed iff the loop reached REVIEWING.

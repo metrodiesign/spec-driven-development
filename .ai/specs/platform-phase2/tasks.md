@@ -8,7 +8,7 @@
 > Upstream: design.md + requirements.md both approved 2026-07-07 (AZ-1..AZ-20 applied).
 > RED-first per area (§0.4); all CI on FakeAdapter; live runs manual only.
 
-- [ ] 1. AAL survivability: breaker + quota-aware routing + degraded source — `aal/src/breaker.ts`
+- [x] 1. AAL survivability: breaker + quota-aware routing + degraded source — `aal/src/breaker.ts`
      (closed/open/half-open per adapterId@modelVersion, injected clock, sink events), registry
      `healthProbe`/`refreshHealth` cached snapshot + probe timeout, eligible/route filter order,
      source per-call role from `ProposalInput.role` + catches `AdapterError` (breaker record →
@@ -20,6 +20,27 @@
      incl. benign baseline (compliant adapter never trips), P3/P4 conformance verdicts unchanged.
      Satisfies: REQ-1 (all), REQ-2 (all), REQ-3 (all), REQ-4 (all), REQ-6.1-6.3.
      Verify: pnpm -r test (aal + adapters); conformance suite on FakeAdapter all-pass.
+     Evidence:
+       - test: `pnpm -r test` -> 199 passed / 0 failed (core 71, aal 38 [+15], adapters 13 [+2],
+         console/backend 65, console/web 12); P1–P8 conformance harness green (P3/P4 unchanged).
+       - typecheck: `pnpm -r typecheck` -> all 6 projects Done. lint: `pnpm lint` clean;
+         `pnpm vendor-check` -> core/ + aal/ vendor-name-free (INV-7).
+       - new tests: `aal/src/breaker.test.ts` (window/half-open single-flight/per-key/sink-only),
+         registry (open-breaker excluded, refreshHealth not-ok + hung-probe timeout=probe_failed,
+         diagnostician eligible), source (adapter_failure→BLOCKED, switch_to_next_eligible,
+         benign baseline no-trip, quota-unhealthy excluded+QUOTA_PROBE estimate-labeled),
+         repair totalUsage=4, anthropic quotaProbe→healthProbe (under/over/null).
+       - viewports: n/a — logic-only.
+       - deviations: (1) breaker trips only on a FULL window (windowSize samples) per "failure
+         rate over the sliding window" — a lone failure is recorded but does not open; the
+         re-route test asserts via claim + no-escalation, not breaker state. (2) REQ-6.3 wired
+         through an optional `budgetRemaining()` closure in `AALSourceDeps` (composition passes
+         `budget.remaining()`); core's `ProposalInput` port is unchanged (INV-8). (3) anthropic
+         returns `AnthropicAdapter = AdapterInterface & { healthProbe? }`; `AdapterInterface`
+         (send/manifest) unchanged, composition hands `adapter.healthProbe` to `register`.
+         (4) all Phase-2 `EventType`s added at once (single append-only declaration point,
+         INV-10); producers land per task. Full loop composition (real clock, Human Plane,
+         auto-merge) stays Task 5/9 per plan.
 
 - [ ] 2. Hypothesis-driven repair — `.ai/schemas/hypothesis` + `core/src/repair/hypothesis.ts`
      (validate proposal, probes cheapest-first short-circuit via core executor `network:'none'`,

@@ -84,6 +84,17 @@ export class AdapterError extends Error {
   }
 }
 
+/**
+ * Quota/health snapshot for one adapter (§5.4, REQ-2). `windows` are per-window
+ * usage ESTIMATES (five-hour + weekly, AZ-19), never one collapsed number and
+ * never a hard measurement (INV-13 claim discipline). An absent probe = always-ok.
+ */
+export interface AdapterHealth {
+  ok: boolean;
+  reason?: 'quota_threshold' | 'probe_failed';
+  windows?: { fiveHourPct: number; weeklyPct: number };
+}
+
 export interface AdapterInterface {
   manifest(): CapabilityManifest;
   /** Sends one request. Throws AdapterError (typed) — NEVER retries itself (INV-5). */
