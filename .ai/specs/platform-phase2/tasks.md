@@ -370,7 +370,7 @@
          (REQ-17.1) — parsing client-resize control messages over the WS is out of REQ-17 scope
          (needs a control/data byte protocol) and is not added.
 
-- [ ] 9. Automation guards + composition preflight + CI E2E DoD proof — `console/backend/src/
+- [x] 9. Automation guards + composition preflight + CI E2E DoD proof — `console/backend/src/
      guards.ts` pure `decideAutomationStart` ({fiveHourPct,weeklyPct}|null; max ≥ threshold
      default 85% → defer with tripping-window reset as `until`; null → fail-closed
      `estimate_unavailable`; `--force-quota-override` bypasses refusal only + `AUTOMATION_
@@ -392,6 +392,50 @@
      Satisfies: REQ-16 (all), REQ-18.2, REQ-18.4-18.5 (+ carried REQ-5 production, REQ-7.1/7.4
      wiring). Depends on: 1-8.
      Verify: pnpm -r test; scripts/spec-trace.sh platform-phase2; CI workflow green on both jobs.
+     Evidence:
+       - test: `pnpm -r test` -> 322 passed / 0 failed / 0 skipped (core 144, aal 42 [+1],
+         adapters 16, console/backend 105 [+13: guards 10 + loop-run E2E 3]); `scripts/spec-trace.sh
+         platform-phase2` -> 108 REQs covered, EARS lint pass. E2E `an L1 task auto-merges + the
+         sampled audit reproduces -> COMPLETED` green (REQ-18.4); E2E `FAILS, self-repairs via a
+         confirmed hypothesis, then auto-merges -> COMPLETED` green (REQ-5 production; darwin-gated).
+       - typecheck: `pnpm -r typecheck` -> all 6 Done; lint: `pnpm lint` clean;
+         `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-name-free (INV-7).
+       - new: `.ai/policies/automation.json` (production auditSampleRate 25, Sonnet, threshold 85);
+         `console/backend/src/guards.ts` (pure `decideAutomationStart` + `loadAutomationConfig`) +
+         `guards.test.ts` (10). New tests: `aal/src/source.test.ts` (+1: diagnostician round ->
+         Proposal.hypotheses), `console/backend/src/loop-run.test.ts` (+3: L1->COMPLETED sampled-audit,
+         repairable diagnosis->COMPLETED [darwin], L2 default -> approval package REVIEWING).
+       - bin smoke (manual): `platform loop run --goal <L1>` -> governance preflight refuses
+         (`policy_unapproved`, exit 5, prints `platform governance approve <id>`) -> approve -> re-run
+         -> loop -> `COMPLETED` (auto-merge on the throwaway fixture). Runtime `.ai/governance/
+         events.jsonl` removed after: the repo ships an EMPTY governance log — the first real run gates
+         policy and the operator approves once (never a committed fake-human approval).
+       - viewports: n/a — logic-only (composition/CLI; console web surfaces were Task 7).
+       - deviations: (1) CI E2E runs inside `pnpm test` on the existing macos-latest `platform` job
+         (no CI YAML change). The E2E passes `auditSampleRate:100` + `risk:'L1'` DIRECTLY to
+         `runSupervisedLoop` (governance-preflight-free — preflight is bin-only per REQ-18.2), meeting
+         the deterministic sampled-COMPLETED intent (AZ-15); governance seeding/preflight is covered by
+         `core/governance/policy.test.ts` + the bin smoke, not re-seeded in the E2E. (2) "commit the
+         work" (review #6): `runSupervisedLoop` commits the worktree onto `task/<taskId>` before
+         `runAutoMerge` — the executor snapshots BEFORE each write (rollback), so the final write is
+         uncommitted at REVIEWING. Auto-merge ALWAYS runs post-REVIEWING; a null/absent risk defaults to
+         L2 -> approval package (finalState REVIEWING), so the two Phase-1 loop-run tests are unaffected.
+         (3) FakeAdapter write actionId is now per-attempt unique (`fake-<path>-<attempt>`) — the
+         executor dedups by actionId (crash replay), so a task writing the same path across rounds
+         (repairable) needs distinct ids; P8 replay-by-requestId still dedups (cached response carries
+         the same attempt). (4) Automation guard estimate is `null` in the bin (honest INV-13: no
+         operator-calibrated cap -> no percentage), so a live run fail-closes and passes
+         `--force-quota-override` after checking `/usage`; the pure `decideAutomationStart` is fully
+         unit-tested over both estimate shapes. AUTOMATION_DEFERRED/OVERRIDE + MODEL_OVERRIDE recorded to
+         `~/.platform/audit.jsonl` (the trail REQ-18.3 extends). (5) REQ-18.3 loop-side audit mirror
+         (approvals/steering/kill/governance) is an injected `auditSink` echoing the authoritative core
+         event log; the handlers are unit-tested in `core/human/api.test.ts` and the mirror is a thin
+         echo — not driven via HTTP in loop-run.test (would race a fast loop). Console-originated writes
+         (hook/retention) were audited in Task 7. (6) `.ai/policies/automation.json` created (was the
+         Task-4 `absent` sentinel): changes the real policy snapshot, so the first real run refuses
+         `policy_unapproved` until approved once. (7) REQ-16.3: default model = automation.json
+         `autonomousModel` (Sonnet) + a logged `--model` per-run override; conformance --live also uses
+         the policy default.
 
 ## Suggested execution batches
 

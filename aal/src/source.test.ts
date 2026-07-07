@@ -244,6 +244,27 @@ test('an out-of-policy context path escalates data_policy_violation and sends no
   }
 });
 
+test('a diagnostician round lifts the response into Proposal.hypotheses, not task actions (REQ-5.1 production)', async () => {
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' } });
+  try {
+    const p = await h.source.propose({ taskId: 'T-1', state: 'DIAGNOSING', role: 'diagnostician', feedback: null });
+    // The source produced hypotheses (core probes them) — NOT actions to execute (INV-1).
+    assert.equal(p.actions.length, 0);
+    assert.ok(Array.isArray(p.hypotheses));
+    assert.equal(p.hypotheses?.length, 1);
+    const hyp = p.hypotheses?.[0];
+    assert.equal(typeof hyp?.statement, 'string');
+    assert.equal(hyp?.probes[0]?.cmd, 'cat src/impl.txt');
+    assert.equal(hyp?.probes[0]?.expected, 'wrong');
+    assert.equal(typeof hyp?.ifConfirmed.patchPlan, 'string');
+    // Still a real send — PROPOSAL_INTENT recorded, no provenance rejection.
+    assert.equal(h.log.all({ type: 'PROPOSAL_INTENT' }).at(-1)?.payload['role'], 'diagnostician');
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test('an in-policy bundle is unaffected by the data policy (benign baseline, REQ-11.6)', async () => {
   const h = harness({
     seedFiles: { 'src/impl.txt': 'wrong\n' },

@@ -4,13 +4,15 @@
 // to start; --insecure is never a default and always warns loudly.
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { ensureGovernanceApproved } from 'core';
 import { buildApp } from '../src/app.ts';
 import { decideStartup } from '../src/security.ts';
+import { decideAutomationStart, loadAutomationConfig, type AutomationConfig } from '../src/guards.ts';
 import {
   decideLiveRun,
   latestConformanceRecordPath,
@@ -37,9 +39,12 @@ const HELP = `usage:
     --goal      path to goal.yaml (frozen by raw-byte hash in core)
     --live      use the REAL model adapter — refused in CI / non-TTY, requires typed confirmation
     --task      run a single task id
+    --model     override the autonomous model (default: automation.json autonomousModel = Sonnet; logged)
+    --force-quota-override  bypass the automation quota guard's refusal ONLY (hard budget caps still apply)
   conformance:
     --live      run P1-P8 against the REAL adapter (~10 requests) and persist the
                 ConformanceRecord to .ai/calibration/ — same structural guards as loop --live
+    --force-quota-override  bypass the automation quota guard's refusal ONLY
 `;
 
 // Core-owned system prompt for the autonomous adapter (D-004) — shared by the
@@ -76,6 +81,74 @@ function runGovernance(rest: string[]): void {
   process.exit(result.code);
 }
 
+/** Append-only console audit trail (REQ-18.3): pre-run guard decisions + loop operability calls. */
+function auditAppend(entry: Record<string, unknown>): void {
+  const p = join(homedir(), '.platform', 'audit.jsonl');
+  mkdirSync(dirname(p), { recursive: true });
+  appendFileSync(p, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+}
+
+/**
+ * Governance preflight (REQ-18.2, REQ-9.1/9.2): hash the policy inputs, compare to
+ * the last approved snapshot in the durable log. A mismatch refuses the run and
+ * prints the exact `platform governance approve <id>` command — approval never
+ * depends on a server the refused run didn't start. Runs before ANY adapter.
+ */
+function governancePreflight(): void {
+  const res = ensureGovernanceApproved({
+    policyDir: join(aiDir(), 'policies'),
+    logPath: join(aiDir(), 'governance', 'events.jsonl'),
+    clock: { now: () => Date.now() },
+  });
+  if (!res.ok) {
+    process.stderr.write(
+      'platform: policy unapproved — governance gate (REQ-9.2). ' +
+        `proposal ${res.proposal.id} recorded in .ai/governance/events.jsonl.\n` +
+        `  approve with: ${res.approveCommand}\n`,
+    );
+    process.exit(5);
+  }
+}
+
+/**
+ * Automation guard (REQ-18.2, REQ-16): AFTER governance, BEFORE any adapter, for
+ * LIVE autonomous runs only. Honest INV-13 posture — without an operator-calibrated
+ * cap the estimator yields no percentage, so the estimate is `null` and the guard
+ * fail-closes; a real live run confirms quota via `/usage` and passes
+ * `--force-quota-override`. Returns the loaded policy (auditSampleRate + model).
+ */
+function automationGuard(override: boolean): AutomationConfig {
+  const cfg = loadAutomationConfig(join(aiDir(), 'policies', 'automation.json'));
+  const decision = decideAutomationStart({ estimate: null, thresholdPercent: cfg.thresholdPercent, override });
+  if ('defer' in decision) {
+    auditAppend({ event: 'AUTOMATION_DEFERRED', reason: decision.reason, window: decision.window, percent: decision.percent, until: decision.until });
+    process.stderr.write(
+      `platform: automation deferred (${decision.reason}) — check /usage, then re-run with ` +
+        '--force-quota-override once the window has headroom (REQ-16.2/16.6).\n',
+    );
+    process.exit(6);
+  }
+  if (decision.overridden) {
+    auditAppend({ event: 'AUTOMATION_OVERRIDE', command: 'loop run --live' });
+    process.stderr.write(
+      'platform: --force-quota-override set — starting despite the quota guard (hard budget caps still apply, REQ-16.4).\n',
+    );
+  }
+  return cfg;
+}
+
+/** The governance-pinned manifest/lockfile pattern list, shared with dep-policy (AZ-17). */
+function depManifestPatterns(): string[] {
+  try {
+    const parsed = JSON.parse(readFileSync(join(aiDir(), 'policies', 'security-plane.json'), 'utf8')) as {
+      depManifestPatterns?: unknown;
+    };
+    return Array.isArray(parsed.depManifestPatterns) ? (parsed.depManifestPatterns as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Where Claude Code writes session JSONL for that cwd (REQ-4.5 transcript capture). */
 function agentTranscriptDir(): string {
   return join(homedir(), '.claude', 'projects', mungeProjectDir(agentSessionsCwd()));
@@ -94,7 +167,10 @@ function initiatorRecord(command: string): string {
 
 /** `platform conformance --live` — P1-P8 against the real adapter, record persisted (REQ-2, REQ-12.4 prerequisite). */
 async function runConformance(rest: string[]): Promise<void> {
-  const { values } = parseArgs({ args: rest, options: { live: { type: 'boolean', default: false } } });
+  const { values } = parseArgs({
+    args: rest,
+    options: { live: { type: 'boolean', default: false }, 'force-quota-override': { type: 'boolean', default: false } },
+  });
   const decision = decideLiveRun({
     live: values.live as boolean,
     ciEnv: process.env['CI'] !== undefined && process.env['CI'] !== '',
@@ -110,6 +186,9 @@ async function runConformance(rest: string[]): Promise<void> {
     process.stderr.write(`platform conformance: ${decision.reason}\n`);
     process.exit(2);
   }
+  // Preflight order (REQ-18.2): governance, then the automation guard, BEFORE any adapter.
+  governancePreflight();
+  const cfg = automationGuard(values['force-quota-override'] as boolean);
   process.stdout.write(`live conformance P1-P8: ~10 real requests (Max quota).\n${decision.prompt} `);
   const line = await readLine();
   if (line.trim() !== LIVE_CONFIRM_PHRASE) {
@@ -127,7 +206,7 @@ async function runConformance(rest: string[]): Promise<void> {
   const { createLiveAnthropicAdapter } = await import('adapters');
   const adapter = createLiveAnthropicAdapter({
     id: 'claude',
-    model: 'sonnet', // automation defaults to Sonnet; Opus stays for interactive (§10.2)
+    model: cfg.autonomousModel, // policy default (Sonnet); Opus stays interactive (§10.2, REQ-16.3)
     systemPrompt: LIVE_SYSTEM_PROMPT,
     cwd: agentSessionsCwd(),
     // PER-RUN dir (gitignored): every conformance run must probe the REAL model —
@@ -159,6 +238,8 @@ async function runLoop(rest: string[]): Promise<void> {
       goal: { type: 'string' },
       live: { type: 'boolean', default: false },
       task: { type: 'string' },
+      'force-quota-override': { type: 'boolean', default: false },
+      model: { type: 'string' }, // per-run model override (logged); default = policy autonomousModel (REQ-16.3)
     },
   });
   if (values.goal === undefined) {
@@ -176,7 +257,16 @@ async function runLoop(rest: string[]): Promise<void> {
     process.exit(2);
   }
   const contract = loadGoalContract(values.goal as string);
+  // Preflight order (REQ-18.2): governance gate first, for EVERY run (stub or live)
+  // — an unapproved policy never runs. The automation guard is live-only (below).
+  governancePreflight();
+  const forceOverride = values['force-quota-override'] as boolean;
   if (decision.action === 'confirm') {
+    // Automation guard (REQ-16): live-only, AFTER governance, BEFORE adapter construction.
+    const cfg = automationGuard(forceOverride);
+    // Default model = policy autonomousModel (Sonnet); a per-run override is logged (REQ-16.3).
+    const model = (values.model as string | undefined) ?? cfg.autonomousModel;
+    if (values.model !== undefined) auditAppend({ event: 'MODEL_OVERRIDE', model, default: cfg.autonomousModel });
     // Pre-flight BEFORE the typed confirmation: the live adapter registers ONLY
     // through the registry's conformance gate with a REAL persisted record
     // (REQ-12.4) — a synthetic pass here would make the gate theater, and a
@@ -211,10 +301,12 @@ async function runLoop(rest: string[]): Promise<void> {
       clock: { now: () => Date.now() },
       conformanceRecord,
       persistDir: runDir, // live evidence (events.db, transcripts) survives — the fixture root does not
+      autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
+      auditSink: auditAppend,
       adapterFactory: (put) =>
         createLiveAnthropicAdapter({
           id: 'claude',
-          model: 'sonnet', // automation defaults to Sonnet; Opus stays for interactive (§10.2)
+          model, // policy default (Sonnet) or the logged per-run override (REQ-16.3)
           systemPrompt: LIVE_SYSTEM_PROMPT,
           cwd: agentSessionsCwd(),
           replayDir: join(runDir, 'replay'),
@@ -232,12 +324,17 @@ async function runLoop(rest: string[]): Promise<void> {
     return;
   }
 
-  // STUB (default, CI-safe): run the REAL loop with the FakeAdapter — no quota.
+  // STUB (default, CI-safe): run the REAL loop with the FakeAdapter — no quota. No
+  // automation guard (no live spend); governance still gated above. Auto-merge runs
+  // per the contract's risk (L0/L1 auto-merge on the throwaway fixture, else approval).
+  const cfg = loadAutomationConfig(join(aiDir(), 'policies', 'automation.json'));
   const { runSupervisedLoop } = await import('../src/loop-run.ts');
   const { FakeAdapter } = await import('aal');
   const result = await runSupervisedLoop({
     contract,
     clock: { now: () => Date.now() },
+    autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
+    auditSink: auditAppend,
     adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
   });
   process.stdout.write(

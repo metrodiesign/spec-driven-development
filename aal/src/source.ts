@@ -18,6 +18,7 @@ import type {
   Action,
   ContextBundle,
   EventLog,
+  Hypothesis,
   Proposal,
   ProposalClaim,
   ProposalInput,
@@ -59,6 +60,17 @@ function pathOf(a: Action): string | null {
 
 function asClaim(v: unknown): ProposalClaim {
   return v === 'READY_FOR_VERIFICATION' || v === 'BLOCKED' ? v : 'WORKING';
+}
+
+/**
+ * Lift a diagnostician response's `structuredResult.hypotheses` into
+ * `Proposal.hypotheses` (REQ-5.1 production). The array is UNTRUSTED — core's
+ * hypothesis engine validates each entry's shape and caps probes (REQ-5.7); the
+ * source only extracts the array (a non-array yields none).
+ */
+function asHypotheses(structuredResult: unknown): Hypothesis[] {
+  const h = (structuredResult as { hypotheses?: unknown } | null)?.hypotheses;
+  return Array.isArray(h) ? (h as Hypothesis[]) : [];
 }
 
 const keyOf = (r: RegisteredAdapter): string => breakerKey(r.record.adapterId, r.record.modelVersion);
@@ -249,6 +261,13 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
           payload: { reason: 'invalid_response', errors: out.errors, repairRounds: out.repairRounds },
         });
         return { claim: 'BLOCKED', actions: [], costUnits };
+      }
+
+      // Diagnostician round (REQ-5.1): the response carries hypotheses, not a task
+      // result — lift them for core to probe. No provenance/action handling applies;
+      // core never executes the agent's actions (INV-1), it runs the probes itself.
+      if (role === 'diagnostician') {
+        return { claim: 'WORKING', actions: [], hypotheses: asHypotheses(out.response.structuredResult), costUnits };
       }
 
       // Provenance: a WRITE to a path neither in the bundle nor previously READ is

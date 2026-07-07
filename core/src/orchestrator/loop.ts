@@ -27,6 +27,12 @@ export interface LoopResult {
   finalState: TaskState;
   iterations: number;
   terminalMarker?: 'awaiting_human_phase0';
+  /**
+   * The T1 report the loop produced when it reached REVIEWING — the input the
+   * auto-merge audit must reproduce (REQ-8.2/8.6). Present only on the REVIEWING
+   * happy path; absent for every other terminal (append-only — INV-8).
+   */
+  lastGateReport?: GateReport;
 }
 
 /** Policy bounds for the hypothesis-driven repair cycle (REQ-5.6/5.7/5.8). */
@@ -267,7 +273,7 @@ export async function runTaskLoop(opts: LoopOptions): Promise<LoopResult> {
           type: 'TASK_STATE',
           payload: { state, marker: 'awaiting_human_phase0' },
         });
-        return { finalState: state, iterations, terminalMarker: 'awaiting_human_phase0' };
+        return { finalState: state, iterations, terminalMarker: 'awaiting_human_phase0', lastGateReport: t1 };
       }
 
       move('gate_failed');

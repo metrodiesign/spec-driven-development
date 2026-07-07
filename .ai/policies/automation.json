@@ -1,0 +1,6 @@
+{
+  "_comment": "Governance-pinned automation policy (REQ-16, INV-13). Read by the console automation guard (console/backend/src/guards.ts) at every autonomous entry point. thresholdPercent: an estimate whose max window meets/exceeds this defers the live run (default 85%). autonomousModel: default model for autonomous runs (Sonnet; Opus stays interactive, REQ-16.3). auditSampleRate: production percent of auto-merged tasks re-verified from a clean checkout (REQ-8.1); the CI fixture overrides this to 100 so the sampled path runs deterministically (REQ-18.4). This file is hashed into the governance policy snapshot (REQ-9.1) — creating/changing it is itself a gated change.",
+  "thresholdPercent": 85,
+  "autonomousModel": "sonnet",
+  "auditSampleRate": 25
+}

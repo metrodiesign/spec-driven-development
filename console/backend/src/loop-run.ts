@@ -26,11 +26,14 @@ import {
   openEventLog,
   pendingQuarantines,
   readGovernanceLog,
+  runAutoMerge,
   runTaskLoop,
   transition,
   type CalibrationResult,
   type Clock,
   type HandlerDeps,
+  type MappedAc,
+  type RiskClass,
   type TaskContract,
   type TaskState,
 } from 'core';
@@ -51,6 +54,11 @@ function git(cwd: string, ...args: string[]): void {
 }
 function sha256(b: Uint8Array): string {
   return createHash('sha256').update(b).digest('hex');
+}
+
+/** Read the per-task risk class from the frozen contract; anything unrecognized → null (→ L2, REQ-7.6). */
+function parseRisk(v: unknown): RiskClass | null {
+  return v === 'L0' || v === 'L1' || v === 'L2' || v === 'L3' || v === 'L4' ? v : null;
 }
 
 /** A synthetic target repo whose tests pass iff src/impl.txt contains `correct`. */
@@ -122,6 +130,21 @@ export async function runSupervisedLoop(opts: {
    * plane (governance preflight ordering itself is Task 9).
    */
   governanceLogPath?: string;
+  /**
+   * Auto-merge policy (REQ-7/8). When present, a task that reaches REVIEWING with an
+   * L0/L1 risk (from the frozen contract's `risk`) + golden-backed ACs + no
+   * dependency-touching diff auto-merges `task/<taskId>` into the fixture main and a
+   * deterministic sample is re-audited from a clean checkout. Absent → auto-merge
+   * still runs but a null/absent risk defaults to L2 → the approval-package path
+   * (finalState stays REVIEWING), so existing single-task callers are unaffected.
+   */
+  autoMerge?: { auditSampleRate: number; depManifestPatterns: string[] };
+  /**
+   * Console audit mirror (REQ-18.3): every approval, steering (pause/inject/resume),
+   * kill, and governance decision is echoed here in addition to the durable core
+   * event log. Absent → no mirror (the core event log remains authoritative).
+   */
+  auditSink?: (entry: Record<string, unknown>) => void;
 }): Promise<LoopRunResult> {
   const fx = makeFixtureRepo();
   const clock = opts.clock;
@@ -130,6 +153,7 @@ export async function runSupervisedLoop(opts: {
   const evidence = createEvidenceStore(join(stateDir, 'evidence'));
   const RUN_ID = 'RUN-LIVE';
   const TASK_ID = 'T-1';
+  const TASK_BRANCH = `task/${TASK_ID}`;
   try {
     // Deferred quarantine (REQ-9.5): a flaky_quarantine approved via the CLI while no
     // run was live takes effect when the next run LOADS that task — never runs it.
@@ -140,6 +164,10 @@ export async function runSupervisedLoop(opts: {
         return { finalState: 'QUARANTINED', iterations: 0, calibration: computeCalibration({ heldOut: [false], reruns: [] }) };
       }
     }
+    // Merge topology (REQ-7.1): each task runs on its own `task/<taskId>` branch,
+    // created from the fixture main BEFORE the loop so the executor's snapshot commits
+    // land on it; auto-merge merges it into main with --no-ff (one revert target).
+    git(fx.wt, 'checkout', '-q', '-b', TASK_BRANCH);
     const adapter = opts.adapterFactory((s) => evidence.put(s));
     // Breaker + quota-aware routing (REQ-1/2/3): transitions become events; a live
     // adapter may expose a health probe (REQ-2.5), the Fake has none (always-ok).
@@ -177,18 +205,23 @@ export async function runSupervisedLoop(opts: {
     // read from the event log's last TASK_STATE — the single source both sides share.
     const controller = createLoopController();
     const guidanceQueue: string[] = [];
+    // REQ-18.3: mirror every operability call into the console audit trail (the core
+    // event log stays authoritative; this is the §13.3 audit JSONL the console owns).
+    const audit = (entry: Record<string, unknown>): void => opts.auditSink?.({ at: clock.now(), ...entry });
     const currentState = (): TaskState =>
       (log.all({ type: 'TASK_STATE' }).at(-1)?.payload['state'] as TaskState) ?? 'PROPOSED';
     const onDecision: HandlerDeps['onDecision'] = (taskId, decision) => {
       const tr = transition(currentState(), decision === 'approve' ? 'human_approved' : 'changes_requested');
       if (!tr.ok) return { ok: false, detail: tr.reason };
       log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: tr.next, trigger: decision } });
+      audit({ event: 'approval', taskId, decision, state: tr.next });
       return { ok: true, state: tr.next };
     };
     const onInject: HandlerDeps['onInject'] = (guidance) => {
       const evidenceRef = evidence.put(guidance);
       log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GUIDANCE_INJECTED', payload: { evidenceRef } });
       guidanceQueue.push(guidance);
+      audit({ event: 'steer_inject', taskId: TASK_ID, evidenceRef });
       return { ok: true, evidenceRef };
     };
     const govLog = opts.governanceLogPath;
@@ -201,6 +234,7 @@ export async function runSupervisedLoop(opts: {
             if (tr.ok) log.append({ runId: RUN_ID, taskId: tid, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'quarantine' } });
           },
         });
+        if (res.ok) audit({ event: 'governance_decision', id, kind: res.kind });
         return res.ok ? { ok: true, kind: res.kind } : { ok: false, detail: res.reason };
       },
     };
@@ -211,11 +245,20 @@ export async function runSupervisedLoop(opts: {
         approvals: new Map(),
         log,
         onDecision,
-        onKill: () => controller.requestKill(),
+        onKill: () => {
+          audit({ event: 'kill' });
+          controller.requestKill();
+        },
         rateOk: () => true,
         steeringState: currentState,
-        onPause: () => controller.requestPause(),
-        onResume: () => controller.requestResume(),
+        onPause: () => {
+          audit({ event: 'steer_pause' });
+          controller.requestPause();
+        },
+        onResume: () => {
+          audit({ event: 'steer_resume' });
+          controller.requestResume();
+        },
         onInject,
         ...governance,
       },
@@ -249,10 +292,51 @@ export async function runSupervisedLoop(opts: {
         control: controller.port,
         takeGuidance: () => guidanceQueue.splice(0),
       });
-      // Held-out (golden) verification passed iff the loop reached REVIEWING.
-      const heldOut = result.finalState === 'REVIEWING';
-      const calibration = computeCalibration({ heldOut: [heldOut], reruns: heldOut ? [true] : [] });
-      return { finalState: result.finalState, iterations: result.iterations, calibration };
+      // Held-out (golden) verification passed iff the loop reached REVIEWING —
+      // captured BEFORE auto-merge, which may carry the state on to COMPLETED.
+      const reachedReviewing = result.finalState === 'REVIEWING';
+      const calibration = computeCalibration({ heldOut: [reachedReviewing], reruns: reachedReviewing ? [true] : [] });
+
+      // Post-REVIEWING auto-merge L0/L1 (REQ-7/8). The pure gate ignores the agent
+      // claim by construction; risk comes from the frozen contract, gatesGreen from
+      // the loop's own T1, ACs (golden flags) from the contract. L2+/non-golden/
+      // dep-touching → approval package (state unchanged) so single-task callers that
+      // pass no risk keep the Phase-1 REVIEWING terminal.
+      let finalState: string = result.finalState;
+      if (reachedReviewing && result.lastGateReport !== undefined) {
+        // Commit the work (review #6): the executor snapshots BEFORE each write for
+        // rollback, so the final write is still uncommitted in the worktree at
+        // REVIEWING. Commit it onto task/<taskId> so auto-merge has a real branch tip
+        // to merge (and `git checkout main` is not blocked by the dirty worktree).
+        git(fx.wt, 'add', '-A');
+        git(fx.wt, 'commit', '-q', '--allow-empty', '-m', `task ${TASK_ID} work`);
+        const acceptanceCriteria: MappedAc[] = opts.contract.acceptanceCriteria.map((a) => ({
+          id: a.id,
+          ...(a.golden !== undefined ? { golden: a.golden } : {}),
+        }));
+        const merge = await runAutoMerge({
+          runId: RUN_ID,
+          taskId: TASK_ID,
+          state: 'REVIEWING',
+          repoDir: fx.wt,
+          taskBranch: TASK_BRANCH,
+          mainBranch: 'main',
+          decision: {
+            riskClass: parseRisk(opts.contract.raw['risk']),
+            gatesGreen: true,
+            acceptanceCriteria,
+            depManifestPatterns: opts.autoMerge?.depManifestPatterns ?? [],
+          },
+          originalReport: result.lastGateReport,
+          gateConfigRelPath: 'gate-ladder.json',
+          auditSampleRate: opts.autoMerge?.auditSampleRate ?? 0,
+          log,
+          evidence,
+          clock,
+        });
+        finalState = merge.finalState;
+      }
+      return { finalState, iterations: result.iterations, calibration };
     } finally {
       await server.close();
     }
