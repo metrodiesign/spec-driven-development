@@ -308,7 +308,9 @@ function performApply(
     action.cwd === undefined
       ? opts.worktreeDir
       : (resolveContained(opts.worktreeDir, action.cwd) as string);
-  const res = spawnSync(cmd, args, { cwd, env: COMMAND_ENV, encoding: 'utf8', timeout: 120_000 });
+  // Policy-pinned per-probe bound when set (REQ-5.8); otherwise the default ceiling.
+  const timeout = action.timeoutMs !== undefined ? action.timeoutMs : 120_000;
+  const res = spawnSync(cmd, args, { cwd, env: COMMAND_ENV, encoding: 'utf8', timeout });
   const output = `exit:${res.status}\n--- stdout ---\n${res.stdout ?? ''}\n--- stderr ---\n${res.stderr ?? ''}`;
   const outputRef = opts.evidence.put(output);
   return {

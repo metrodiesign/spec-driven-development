@@ -23,7 +23,18 @@ export { createGateRunner, type GateRunner } from './gates/runner.ts';
 export { computeGoldenManifest, verifyGoldenManifest, type GoldenVerdict } from './gates/golden.ts';
 export { createBudget, type BudgetTracker } from './budget/budget.ts';
 export { transition, type TransitionResult, type Trigger } from './orchestrator/machine.ts';
-export { runTaskLoop, type LoopOptions, type LoopResult } from './orchestrator/loop.ts';
+export {
+  runTaskLoop,
+  type LoopOptions,
+  type LoopResult,
+  type RepairPolicy,
+} from './orchestrator/loop.ts';
+export {
+  evaluateHypotheses,
+  summarizeHypothesisLog,
+  type HypothesisEngineDeps,
+  type HypothesisOutcome,
+} from './repair/hypothesis.ts';
 export { scanForSecret, type SecretHit } from './context/secret-scan.ts';
 export {
   buildContext,

@@ -15,6 +15,8 @@ export type Action =
       cmd: string;
       cwd?: string;
       network: 'none' | `allowlist:${string}`;
+      /** Policy-pinned wall-time bound for this command (ms). Hypothesis probes set it (REQ-5.8). */
+      timeoutMs?: number;
     }
   | { type: 'READ_FILE'; actionId: string; path: string }
   | { type: 'REQUEST_TOOL'; actionId: string; name: string; args: unknown };
@@ -29,6 +31,46 @@ export interface ActionRejection {
     | 'sandbox_unavailable'
     | 'unsupported_action_phase0';
   detail: string;
+}
+
+/**
+ * Hypothesis-driven repair (spec §9.3, REQ-5). A DIAGNOSING round returns these
+ * as UNTRUSTED data (INV-3); core validates the shape, caps probes, and runs each
+ * probe ITSELF through the executor (the agent never executes — INV-1).
+ */
+export interface HypothesisProbe {
+  /** Shell command run as RUN_COMMAND, network:'none', diagnostician role. */
+  cmd: string;
+  cwd?: string;
+  /** Substring the probe's captured output must contain to CONFIRM (REQ-5.4). */
+  expected: string;
+}
+
+export interface Hypothesis {
+  statement: string;
+  /** Cheapest-first (array order); core stops at the first confirming probe (REQ-5.3). */
+  probes: HypothesisProbe[];
+  ifConfirmed: { patchPlan: string; estimatedBlastRadius: string };
+}
+
+export interface HypothesisVerdict {
+  hypothesis: Hypothesis;
+  /** `undecided` = a probe errored/timed out (REQ-5.8): counts toward the cap, never a refutation. */
+  verdict: 'confirmed' | 'refuted' | 'undecided';
+  /** Captured probe output text, in probe order (the confirming/last probe last). */
+  probeOutputs: string[];
+  /** Content-addressed evidence ref per probe run — carried in escalation instead of a raw dump (REQ-5.6). */
+  probeRefs: string[];
+}
+
+/**
+ * A confirmed hypothesis' patch plan, folded into the next implementer round as
+ * MARKED untrusted data (REQ-5.4) — travels as structured feedback, never free text.
+ */
+export interface RepairGuidance {
+  kind: 'patch_plan';
+  patchPlan: string;
+  estimatedBlastRadius: string;
 }
 
 /** Task states (spec §6.3). Post-REVIEWING transitions are phase-gated. */

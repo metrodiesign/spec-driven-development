@@ -42,7 +42,7 @@
          INV-10); producers land per task. Full loop composition (real clock, Human Plane,
          auto-merge) stays Task 5/9 per plan.
 
-- [ ] 2. Hypothesis-driven repair — `.ai/schemas/hypothesis` + `core/src/repair/hypothesis.ts`
+- [x] 2. Hypothesis-driven repair — `.ai/schemas/hypothesis` + `core/src/repair/hypothesis.ts`
      (validate proposal, probes cheapest-first short-circuit via core executor `network:'none'`,
      policy-capped probes default 5, per-probe timeout, errored probe = `undecided` never
      refuted, budget/wallclock checks between probes), loop wiring FAILED → DIAGNOSING
@@ -53,6 +53,32 @@
      green, refuted hypotheses persisted, fault-injection suite unchanged green.
      Satisfies: REQ-5 (all), REQ-6.7. Depends on: 1.
      Verify: pnpm -r test (core); core/test/fault-injection.test.ts unchanged green.
+     Evidence:
+       - test: `pnpm -r test` -> 209 passed / 0 failed (core 81 [+10], aal 38, adapters 13,
+         console/backend 65, console/web 12); fault-injection suite (9 DoD scenarios) unchanged green.
+       - typecheck: `pnpm -r typecheck` -> all 6 projects Done. lint: `pnpm lint` clean;
+         `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-name-free (INV-7).
+       - new tests: `core/src/repair/hypothesis.test.ts` (confirm+short-circuit, cheapest-first,
+         refute+persist, undecided-on-error/timeout, probe-cap reject, max_hypotheses, between-probe
+         wallclock stop), `core/test/repair-loop.test.ts` (confirmed→REPAIRING+patchPlan-folded→REVIEWING,
+         all-refuted→ESCALATED hypotheses_exhausted with dump-free ref log, REQ-6.7 exact-zero budget).
+       - viewports: n/a — logic-only.
+       - deviations: (1) AAL hypothesis PRODUCTION (diagnostician adapter response → `Proposal.hypotheses`)
+         + FakeAdapter diagnostician behavior deferred to composition (Task 5/9), per plan's "full loop
+         composition stays Task 5/9"; Task 2 delivers the core engine + loop wiring + schema, loop-path
+         test uses a stub source returning the exact `Proposal.hypotheses` contract the AAL will fill.
+         All existing composition/integration tests stay green (honest adapters never fail gates → never
+         diagnose; lying adapters escalate either way — via hypotheses_exhausted now vs budget before).
+         (2) per-probe timeout wired via a new optional `RUN_COMMAND.timeoutMs` threaded to `spawnSync`
+         (REQ-5.8); default 120s preserved when unset. (3) `undecided` = executor rejected OR no clean
+         exit status (exitCode < 0 = spawn-fail/timeout-kill); a clean run whose output lacks `expected`
+         feeds refutation. (4) `expected` matched as a substring only (design "substring|regex" — regex
+         not implemented, YAGNI). (5) repair policy (maxHypotheses 3 / maxProbes 5 / probeTimeout 30s)
+         is a `LoopOptions.repairPolicy` with defaults; sourcing max_hypotheses_per_failure from the
+         frozen contract deferred to composition (no contract field added here). (6) `LoopOptions.evidence`
+         /`ids` optional (append-only, INV-8): a harness without them treats a diagnostician round as
+         vacuously exhausted; loop-run.ts wires them. (7) core port extended append-only —
+         `Proposal.hypotheses?` + `RepairGuidance` in the `ProposalInput.feedback` union.
 
 - [ ] 3. State machine + auto-merge L0–L1 + sampling audit — `machine.ts` (`auto_approved:
      REVIEWING→APPROVED` core-only, `merge_queued`/`audited`/`completed` out of PHASE_GATED,

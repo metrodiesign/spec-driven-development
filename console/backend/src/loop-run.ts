@@ -160,6 +160,10 @@ export async function runSupervisedLoop(opts: {
       log,
       budget,
       clock,
+      // Repair engine deps: a DIAGNOSING round runs its probes through the executor
+      // and reads their output from the evidence store (REQ-5).
+      evidence,
+      ids: { next: (prefix) => `${prefix}-${randomUUID()}` },
     });
     // Held-out (golden) verification passed iff the loop reached REVIEWING.
     const heldOut = result.finalState === 'REVIEWING';
