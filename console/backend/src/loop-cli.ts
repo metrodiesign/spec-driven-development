@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 import { freezeContract, type TaskContract } from 'core';
+import { PASS_FAIL_PROBES, type ConformanceRecord } from 'aal';
 
 /** Parse goal.yaml at the edge and freeze it by raw-byte hash in core (REQ-8.1). */
 export function loadGoalContract(path: string): TaskContract {
@@ -62,16 +63,34 @@ export function latestConformanceRecordPath(dir: string): string | null {
 }
 
 /**
- * Guarded read of a persisted ConformanceRecord — a corrupt or hand-edited file
- * returns null (caller refuses with guidance BEFORE the typed confirmation, so
- * the failure is never a cryptic post-confirm crash).
+ * Guarded read of a persisted ConformanceRecord — a corrupt, truncated, or
+ * hand-edited file returns null (caller refuses with guidance BEFORE the typed
+ * confirmation, never a cryptic post-confirm crash). Validates the FULL shape
+ * the registry consumes: every pass/fail probe id present with a boolean `pass`
+ * and a non-empty evidenceRef, plus p7 score + evidenceRef.
  */
-export function readConformanceRecord(path: string): { adapterId: string; probes: unknown[] } | null {
+export function readConformanceRecord(path: string): ConformanceRecord | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { adapterId?: unknown; probes?: unknown } | null;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown> | null;
     if (parsed === null || typeof parsed !== 'object') return null;
-    if (typeof parsed.adapterId !== 'string' || !Array.isArray(parsed.probes)) return null;
-    return parsed as { adapterId: string; probes: unknown[] };
+    if (typeof parsed['adapterId'] !== 'string' || typeof parsed['modelVersion'] !== 'string') return null;
+    if (typeof parsed['ranAt'] !== 'string') return null;
+    const probes = parsed['probes'];
+    if (!Array.isArray(probes)) return null;
+    const validProbe = (p: unknown): p is { id: string; pass: boolean; evidenceRef: string } =>
+      p !== null &&
+      typeof p === 'object' &&
+      typeof (p as { id?: unknown }).id === 'string' &&
+      typeof (p as { pass?: unknown }).pass === 'boolean' &&
+      typeof (p as { evidenceRef?: unknown }).evidenceRef === 'string' &&
+      (p as { evidenceRef: string }).evidenceRef.length > 0;
+    if (!probes.every(validProbe)) return null;
+    const ids = new Set(probes.map((p) => p.id));
+    if (!PASS_FAIL_PROBES.every((id) => ids.has(id))) return null;
+    const p7 = parsed['p7'] as { susceptibilityScore?: unknown; evidenceRef?: unknown } | undefined;
+    if (p7 === undefined || p7 === null || typeof p7 !== 'object') return null;
+    if (typeof p7.susceptibilityScore !== 'number' || typeof p7.evidenceRef !== 'string' || p7.evidenceRef.length === 0) return null;
+    return parsed as unknown as ConformanceRecord;
   } catch {
     return null;
   }

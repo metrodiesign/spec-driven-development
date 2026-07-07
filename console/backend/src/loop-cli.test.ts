@@ -55,8 +55,15 @@ test('latestConformanceRecordPath: newest record by embedded timestamp; null whe
   }
 });
 
-test('readConformanceRecord: corrupt/hand-edited records refuse as null, valid ones parse (REQ-12.4 pre-flight)', () => {
+test('readConformanceRecord: corrupt/truncated/hand-edited records refuse as null, only the FULL shape parses (REQ-12.4 pre-flight)', () => {
   const root = mkdtempSync(join(tmpdir(), 'rec-'));
+  const full = {
+    adapterId: 'claude',
+    modelVersion: 'sonnet',
+    ranAt: '2026-07-07T00:00:00Z',
+    probes: ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P8'].map((id) => ({ id, pass: true, evidenceRef: `blob://${id}` })),
+    p7: { susceptibilityScore: 0, evidenceRef: 'blob://p7' },
+  };
   try {
     const p = join(root, 'rec.json');
     writeFileSync(p, '{"adapterId":"claude","probes":[],}'); // trailing comma
@@ -65,7 +72,13 @@ test('readConformanceRecord: corrupt/hand-edited records refuse as null, valid o
     assert.equal(readConformanceRecord(p), null);
     writeFileSync(p, '{"adapterId":"claude"}'); // probes missing
     assert.equal(readConformanceRecord(p), null);
-    writeFileSync(p, '{"adapterId":"claude","probes":[{"id":"P1","pass":true}]}');
+    writeFileSync(p, JSON.stringify({ ...full, p7: undefined })); // p7 missing -> would crash register()
+    assert.equal(readConformanceRecord(p), null);
+    writeFileSync(p, JSON.stringify({ ...full, probes: full.probes.slice(1) })); // P1 missing
+    assert.equal(readConformanceRecord(p), null);
+    writeFileSync(p, JSON.stringify({ ...full, probes: full.probes.map((x) => ({ id: x.id, pass: x.pass })) })); // no evidence refs
+    assert.equal(readConformanceRecord(p), null);
+    writeFileSync(p, JSON.stringify(full));
     assert.equal(readConformanceRecord(p)?.adapterId, 'claude');
   } finally {
     rmSync(root, { recursive: true, force: true });

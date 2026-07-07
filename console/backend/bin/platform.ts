@@ -9,8 +9,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import type { ConformanceRecord } from 'aal';
-
 import { buildApp } from '../src/app.ts';
 import { decideStartup } from '../src/security.ts';
 import {
@@ -112,9 +110,11 @@ async function runConformance(rest: string[]): Promise<void> {
     model: 'sonnet', // automation defaults to Sonnet; Opus stays for interactive (§10.2)
     systemPrompt: LIVE_SYSTEM_PROMPT,
     cwd: agentSessionsCwd(),
-    // STABLE dir (not per-run): a crash mid-suite replays completed probes free
-    // on rerun (REQ-4.9 crash-resume). For a fresh drift-canary run, delete it.
-    replayDir: join(calDir, 'replay', 'live'),
+    // PER-RUN dir (gitignored): every conformance run must probe the REAL model —
+    // a reusable/committed replay dir would let a "live" record mint from canned
+    // responses (gate theater, defeats the drift canary). P8's within-run retry
+    // still replays from this dir at zero extra quota.
+    replayDir: join(calDir, 'replay', stamp),
     transcriptDir: agentTranscriptDir(),
     putEvidence: (s) => evidence.put(s),
   });
@@ -162,7 +162,7 @@ async function runLoop(rest: string[]): Promise<void> {
     // (REQ-12.4) — a synthetic pass here would make the gate theater, and a
     // missing/corrupt record must refuse clearly, not crash post-confirm.
     const recPath = latestConformanceRecordPath(calibrationDir());
-    const conformanceRecord = recPath === null ? null : (readConformanceRecord(recPath) as ConformanceRecord | null);
+    const conformanceRecord = recPath === null ? null : readConformanceRecord(recPath);
     if (recPath === null || conformanceRecord === null) {
       process.stderr.write(
         recPath === null
