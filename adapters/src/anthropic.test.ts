@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { createAnthropicAdapter, unfence, type QueryFn, type SdkMessage } from './anthropic.ts';
+import { createAnthropicAdapter, normalizeActions, unfence, type QueryFn, type SdkMessage } from './anthropic.ts';
 import { AdapterError } from 'aal';
 import type { AgentRequest } from 'aal';
 
@@ -65,6 +65,22 @@ function harness(query: QueryFn) {
   });
   return { adapter, root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
+
+test('model-inline WRITE_FILE content is mapped to a minted contentRef (wire->core translation, observed live)', () => {
+  const blobs: string[] = [];
+  const put = (c: string): string => { blobs.push(c); return `blob://${blobs.length - 1}`; };
+  const out = normalizeActions(
+    [
+      { type: 'WRITE_FILE', path: 'src/impl.txt', content: 'correct\n' },
+      { type: 'REQUEST_TOOL', name: 'fusion.deliberate' },
+    ],
+    put,
+  );
+  assert.deepEqual(out[0], { actionId: 'a-0', type: 'WRITE_FILE', path: 'src/impl.txt', contentRef: 'blob://0' });
+  assert.equal(blobs[0], 'correct\n');
+  assert.deepEqual(out[1], { actionId: 'a-1', type: 'REQUEST_TOOL', name: 'fusion.deliberate' });
+  assert.deepEqual(normalizeActions('not-an-array', put), [], 'non-array degrades to empty');
+});
 
 test('a markdown-fenced JSON reply is unwrapped before parsing (wire normalization, observed live P2)', async () => {
   assert.equal(unfence('```json\n{"a":1}\n```'), '{"a":1}');
