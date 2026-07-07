@@ -6,6 +6,7 @@ import type {
   Action,
   ActionRejection,
   GateReport,
+  GuidanceFeedback,
   Hypothesis,
   RepairGuidance,
   Role,
@@ -19,10 +20,11 @@ export interface ProposalInput {
   state: TaskState;
   role: Role;
   /**
-   * Structured feedback from the previous round — rejections, a gate report, or a
-   * confirmed hypothesis' patch plan (REQ-5.4). Never free text.
+   * Structured feedback from the previous round — rejections, a gate report, a
+   * confirmed hypothesis' patch plan (REQ-5.4), or operator guidance injected while
+   * paused (REQ-10.5). Never free text.
    */
-  feedback: ActionRejection[] | GateReport | RepairGuidance | null;
+  feedback: ActionRejection[] | GateReport | RepairGuidance | GuidanceFeedback | null;
 }
 
 export interface Proposal {
@@ -40,4 +42,16 @@ export interface Proposal {
 
 export interface ProposalSource {
   propose(input: ProposalInput): Promise<Proposal>;
+}
+
+/**
+ * Operator steering signal, polled by the loop at ITERATION boundaries only —
+ * after the current atomic action completes, never mid-action (REQ-10.1). The
+ * Human Plane drives it (pause/resume/kill); the loop is the sole consumer.
+ * `waitResume` blocks a paused loop until the operator resumes or kills (REQ-10.7).
+ * Append-only addition — existing sources/callers are unaffected (INV-8).
+ */
+export interface LoopControl {
+  poll(): 'none' | 'pause' | 'kill';
+  waitResume(): Promise<'resume' | 'kill'>;
 }

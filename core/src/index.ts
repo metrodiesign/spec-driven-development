@@ -22,7 +22,8 @@ export {
 export { createGateRunner, type GateRunner } from './gates/runner.ts';
 export { computeGoldenManifest, verifyGoldenManifest, type GoldenVerdict } from './gates/golden.ts';
 export { createBudget, type BudgetTracker } from './budget/budget.ts';
-export { transition, type TransitionResult, type Trigger } from './orchestrator/machine.ts';
+export { ACTIVE_STATES, resumeTransition, transition, type TransitionResult, type Trigger } from './orchestrator/machine.ts';
+export { createLoopController, type LoopController } from './orchestrator/control.ts';
 export {
   runTaskLoop,
   type LoopOptions,

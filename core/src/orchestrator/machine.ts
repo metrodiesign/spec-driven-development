@@ -39,7 +39,9 @@ export type Trigger =
 
 // MERGE_QUEUED and AUDITED are ACTIVE (REQ-7.8) so `escalate`/`roll_back` are legal
 // from them — the merge_conflict (REQ-7.5) and audit_mismatch (REQ-8.3) paths.
-const ACTIVE_STATES: TaskState[] = [
+// Exported: PAUSED is entered from EVERY active state (REQ-10.2) and resume must
+// restore one of these (REQ-10.3); the steering property test iterates the set.
+export const ACTIVE_STATES: TaskState[] = [
   'PROPOSED',
   'ANALYZING',
   'READY',
@@ -89,7 +91,10 @@ const UNIVERSAL: Partial<Record<Trigger, TaskState>> = {
 export function transition(state: TaskState, trigger: Trigger): TransitionResult {
   const universal = UNIVERSAL[trigger];
   if (universal !== undefined) {
-    if (ACTIVE_STATES.includes(state)) return { ok: true, next: universal };
+    // Universal escapes are legal from every active state and from PAUSED — a paused
+    // task can still be killed/escalated (REQ-10.7: kill while paused terminates via
+    // `cancel`), never from a terminal state.
+    if (ACTIVE_STATES.includes(state) || state === 'PAUSED') return { ok: true, next: universal };
     return {
       ok: false,
       reason: 'illegal_transition',
@@ -105,4 +110,20 @@ export function transition(state: TaskState, trigger: Trigger): TransitionResult
     };
   }
   return { ok: true, next };
+}
+
+/**
+ * Resume from a pause (REQ-10.3). The target is DATA — the pre-pause state recorded
+ * in `PAUSE_REQUESTED {prePauseState}` — not a static trigger, so it lives beside
+ * `transition()`. Legal ONLY from PAUSED and ONLY to a member of ACTIVE_STATES
+ * (PAUSED is a dead-end in the table otherwise; a terminal is never a resume target).
+ */
+export function resumeTransition(state: TaskState, prePauseState: TaskState): TransitionResult {
+  if (state !== 'PAUSED') {
+    return { ok: false, reason: 'illegal_transition', detail: `resume not allowed from ${state}` };
+  }
+  if (!ACTIVE_STATES.includes(prePauseState)) {
+    return { ok: false, reason: 'illegal_transition', detail: `resume target ${prePauseState} is not an active state` };
+  }
+  return { ok: true, next: prePauseState };
 }

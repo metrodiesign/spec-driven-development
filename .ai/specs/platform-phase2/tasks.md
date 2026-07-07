@@ -173,7 +173,7 @@
          proposal/seed (mkdir -p in appendRecord) — no empty durable log committed yet; it begins when
          the first governance event is recorded (Task 9 fixture seeds it).
 
-- [ ] 5. Steering + loop operability — `LoopControl` port polled at iteration boundaries,
+- [x] 5. Steering + loop operability — `LoopControl` port polled at iteration boundaries,
      `pause` → PAUSED + `PAUSE_REQUESTED {prePauseState}`, `resumeTransition(prePauseState)`
      (PAUSED-only, ACTIVE_STATES targets) + `RESUMED {resumedTo}`, `/steering/pause|inject|
      resume` replace Phase-1 501s (inject PAUSED-only 409; steering from MERGE_QUEUED onward
@@ -186,6 +186,47 @@
      ACTIVE_STATE (property test), wallclock trip test green under tickable clock.
      Satisfies: REQ-10 (all), REQ-6.4-6.6, REQ-18.1. Depends on: 3.
      Verify: pnpm -r test (core + console/backend); loop-run wallclock-trip + steering tests.
+     Evidence:
+       - test: `pnpm -r test` -> 260 passed / 0 failed (core 126 [+18], aal 38, adapters 13,
+         console/backend 71 [+1], console/web 12); `pnpm -r typecheck` all 6 Done; `pnpm lint`
+         clean; `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-name-free (INV-7).
+       - new tests: `core/src/orchestrator/machine.test.ts` (+2: pause/resume round-trips from
+         EVERY ACTIVE_STATE property; resumeTransition legal PAUSED-only + active-target-only),
+         `core/src/orchestrator/control.test.ts` (4: idle/pause+resume/kill-wins/kill-before-wait),
+         `core/src/budget/budget.test.ts` (+1: ACTIVE wallclock excludes noted intervals — REQ-6.5),
+         `core/test/steering-loop.test.ts` (5: pause@boundary→PAUSED{prePauseState}+guidance-folds+
+         RESUMED{resumedTo}→REVIEWING; kill@boundary→CANCELLED; kill-while-paused→CANCELLED;
+         wallclock trip under tickable clock; idle control inert), `core/src/human/api.test.ts`
+         (+6: pause 202; inject PAUSED-only 409/202; resume 202; MERGE_QUEUED+ 409 structured;
+         no-guidance 400; task-approval-while-PAUSED 409 — REQ-10.9), `console/backend/src/
+         loop-run.test.ts` (+1: run reaches REVIEWING + human-plane.json 0600 [REQ-18.1];
+         governance-approved deferred flaky_quarantine → QUARANTINED on load [REQ-9.5]).
+       - viewports: n/a — logic-only.
+       - deviations: (1) SCOPE (human decision, this session): implemented the REQ-faithful lean
+         Task 5 — steering(REQ-10) + injected Clock/active-wallclock(REQ-6.4-6.6) + Human Plane
+         server + governance compose + steering/kill→control port(REQ-18.1). The two composition-
+         backlog items that are NOT Task-5 REQs — AAL hypothesis PRODUCTION (REQ-5, Task 2's
+         deferral) and task-branch + `runAutoMerge` WIRING (REQ-7/8, Task 3's deferral) — move to
+         Task 9, where the E2E DoD (REQ-18.4: one L1 task → COMPLETED) forces AND tests them; this
+         avoids ad-hoc integration tests here that Task 9 would redo. (2) REQ-18.1 `onDecision`
+         (task approval → `human_approved`/`changes_requested` transition over the log's last
+         TASK_STATE) is WIRED into the live server but not exercised end-to-end here: no approval
+         package is produced without the auto-merge routing (Task 9), so the reachable-via-HTTP
+         path is the handler unit test. (3) machine: universal escapes (cancel/escalate/…) are now
+         legal from PAUSED too (append to the guard) — needed so kill-while-PAUSED terminates via
+         `cancel` (REQ-10.7); pause-from-every-ACTIVE_STATE property + terminal-refusal tests
+         unchanged. (4) guidance folds into the next round via a new append-only
+         `GuidanceFeedback {kind:'guidance'}` in the `ProposalInput.feedback` union (INV-8); the
+         AAL source already stringifies+marks any feedback value, so no AAL change was needed. The
+         loop drains a guidance queue at the boundary and lets guidance take precedence for that
+         round (ponytail: the pause boundary sits between clean rounds, pending feedback normally
+         null). (5) `steeringState()` reads the event log's last TASK_STATE — the single state
+         source the loop and the Human Plane share — so no new loop→server state callback was
+         added. (6) REQ-6.6 (verdicts/hashes independent of timestamps) satisfied by construction:
+         the Clock change touches only the wallclock budget + event metadata; no gate verdict or
+         evidenceRef reads the clock (auto-merge `reproduces()` already excludes ts, Task 3).
+         (7) `governanceLogPath` is an optional runSupervisedLoop param (governance plane +
+         deferred quarantine on load); the governance PREFLIGHT ordering at startup stays Task 9.
 
 - [ ] 6. Security plane completions — canary tripwire helper + source check post-repair
      (`CANARY_TRIPPED` + structured reject, round consumed), dep-policy in executor
@@ -232,7 +273,17 @@
      COMPLETED (auto-merge + sampled audit) with FakeAdapter on macOS runner, live guards
      unchanged (CI/non-TTY refuse; manual + budget cap). Done = E2E green in CI; guard unit
      tests incl. null-estimate and override paths.
-     Satisfies: REQ-16 (all), REQ-18.2, REQ-18.4-18.5. Depends on: 1-8.
+     CARRIED from Task 5 (lean-scope decision 2026-07-07): this task ALSO owns the two
+     composition-backlog items Task 5 did not absorb, because the L1→COMPLETED E2E forces + tests
+     them — (a) AAL hypothesis PRODUCTION: `aal/source.ts` turning a diagnostician adapter
+     response into `Proposal.hypotheses` (per-role hypothesis schema, NOT task-result) +
+     FakeAdapter emitting hypotheses when `agentRole==='diagnostician'` (core consume-side already
+     proven, Task 2); (b) real branch topology in `runSupervisedLoop`: create `task/<taskId>` from
+     fixture main BEFORE the loop, executor worktree tracks it, commit the work, call `runAutoMerge`
+     after REVIEWING (risk from the frozen contract — add a parsed `risk?` to `freezeContract` or
+     read `raw['risk']`; gatesGreen from the core-run T0+T1; ACs/originalReport from the contract).
+     Satisfies: REQ-16 (all), REQ-18.2, REQ-18.4-18.5 (+ carried REQ-5 production, REQ-7.1/7.4
+     wiring). Depends on: 1-8.
      Verify: pnpm -r test; scripts/spec-trace.sh platform-phase2; CI workflow green on both jobs.
 
 ## Suggested execution batches

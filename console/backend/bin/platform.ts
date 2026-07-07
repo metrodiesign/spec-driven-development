@@ -208,7 +208,7 @@ async function runLoop(rest: string[]): Promise<void> {
     const { runSupervisedLoop } = await import('../src/loop-run.ts');
     const result = await runSupervisedLoop({
       contract,
-      nowMs: Date.now(),
+      clock: { now: () => Date.now() },
       conformanceRecord,
       persistDir: runDir, // live evidence (events.db, transcripts) survives — the fixture root does not
       adapterFactory: (put) =>
@@ -237,7 +237,7 @@ async function runLoop(rest: string[]): Promise<void> {
   const { FakeAdapter } = await import('aal');
   const result = await runSupervisedLoop({
     contract,
-    nowMs: Date.now(),
+    clock: { now: () => Date.now() },
     adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
   });
   process.stdout.write(

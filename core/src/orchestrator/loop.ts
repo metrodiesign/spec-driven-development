@@ -3,18 +3,19 @@
 // Claims are recorded as data (CLAIM_RECORDED) and never cause transitions.
 // REVIEWING is the happy-path terminal in this phase (awaiting_human_phase0).
 
-import { transition, type Trigger } from './machine.ts';
+import { resumeTransition, transition, type Trigger } from './machine.ts';
 import { evaluateHypotheses, summarizeHypothesisLog, type HypothesisOutcome } from '../repair/hypothesis.ts';
 import type { BudgetTracker } from '../budget/budget.ts';
 import type { EventLog } from '../state/event-log.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import type { Executor } from '../executor/executor.ts';
 import type { GateRunner } from '../gates/runner.ts';
-import type { ProposalSource } from '../ports.ts';
+import type { LoopControl, ProposalSource } from '../ports.ts';
 import type {
   ActionRejection,
   Clock,
   GateReport,
+  GuidanceFeedback,
   Hypothesis,
   IdSource,
   RepairGuidance,
@@ -59,6 +60,16 @@ export interface LoopOptions {
   evidence?: EvidenceStore;
   ids?: IdSource;
   repairPolicy?: RepairPolicy;
+  /**
+   * Operator steering, polled at each iteration boundary (REQ-10.1). Absent → the
+   * loop runs unsteerable exactly as before (append-only).
+   */
+  control?: LoopControl;
+  /**
+   * Drains guidance injected while paused (REQ-10.5); folded into the next round as
+   * marked untrusted data. Absent → no guidance channel.
+   */
+  takeGuidance?: () => string[];
 }
 
 export async function runTaskLoop(opts: LoopOptions): Promise<LoopResult> {
@@ -130,9 +141,60 @@ export async function runTaskLoop(opts: LoopOptions): Promise<LoopResult> {
   move('start_implementing');
 
   let iterations = 0;
-  let feedback: ActionRejection[] | GateReport | RepairGuidance | null = null;
+  let feedback: ActionRejection[] | GateReport | RepairGuidance | GuidanceFeedback | null = null;
 
   for (;;) {
+    // Steering boundary (REQ-10.1): poll the control port AFTER the previous atomic
+    // action, BEFORE starting a new round. Kill terminates cleanly; pause blocks
+    // here until resume/kill and does not count against the ACTIVE wallclock (REQ-6.5).
+    if (opts.control !== undefined) {
+      const signal = opts.control.poll();
+      if (signal === 'kill') {
+        move('cancel');
+        return { finalState: state, iterations };
+      }
+      if (signal === 'pause') {
+        const prePauseState = state;
+        move('pause'); // -> PAUSED (universal)
+        opts.log.append({
+          runId: opts.runId,
+          taskId: opts.taskId,
+          type: 'PAUSE_REQUESTED',
+          payload: { prePauseState },
+        });
+        const pausedAt = opts.clock.now();
+        const outcome = await opts.control.waitResume();
+        opts.budget.noteExcludedMs(opts.clock.now() - pausedAt);
+        if (outcome === 'kill') {
+          move('cancel'); // legal from PAUSED (REQ-10.7)
+          return { finalState: state, iterations };
+        }
+        // Restore the recorded pre-pause state (REQ-10.3) — replayable from the log.
+        const resumed = resumeTransition(state, prePauseState);
+        if (resumed.ok) {
+          state = resumed.next;
+          opts.log.append({
+            runId: opts.runId,
+            taskId: opts.taskId,
+            type: 'TASK_STATE',
+            payload: { state, trigger: 'resume' },
+          });
+          opts.log.append({
+            runId: opts.runId,
+            taskId: opts.taskId,
+            type: 'RESUMED',
+            payload: { resumedTo: state },
+          });
+        }
+      }
+    }
+
+    // Fold operator guidance injected while paused into this round as MARKED data (REQ-10.5).
+    // ponytail: guidance takes precedence for the round; the pause boundary sits
+    // between clean rounds, so pending feedback is normally null here.
+    const guidance = opts.takeGuidance?.() ?? [];
+    if (guidance.length > 0) feedback = { kind: 'guidance', guidance: guidance.join('\n---\n') };
+
     const over = opts.budget.exceeded();
     if (over !== false) {
       opts.log.append({

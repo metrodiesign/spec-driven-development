@@ -12,6 +12,18 @@ import { redactSecrets } from './redact.ts';
 import type { EventLog } from '../state/event-log.ts';
 import type { ApprovalPackage } from './approval.ts';
 import type { GovernanceKind, GovernanceProposal } from '../governance/policy.ts';
+import type { TaskState } from '../types.ts';
+
+/**
+ * Steering has an iteration boundary only in the pre-merge working states (+ PAUSED);
+ * from MERGE_QUEUED onward the merge/audit path is short, deterministic, core-only
+ * work with no boundary, so a steering request there is refused rather than silently
+ * unreachable (REQ-10.8).
+ */
+const STEERABLE: ReadonlySet<TaskState> = new Set<TaskState>([
+  'PROPOSED', 'ANALYZING', 'READY', 'IMPLEMENTING', 'VERIFYING', 'FAILED',
+  'DIAGNOSING', 'REPAIRING', 'PASSED', 'REVIEWING', 'CHANGES_REQUESTED', 'PAUSED',
+]);
 
 export interface HandlerDeps {
   runId: string;
@@ -32,6 +44,18 @@ export interface HandlerDeps {
    * quarantine transition for its taskId — the callback owns both effects.
    */
   onGovernanceApprove?(id: string): { ok: boolean; kind?: GovernanceKind; detail?: string };
+  /**
+   * Steering (REQ-10). All optional and wired together by the composition root; a
+   * server started without them keeps the Phase-1 501 behavior. `steeringState`
+   * reports the current task state so the handler can enforce the pause/inject
+   * windows; `onPause`/`onResume` signal the loop control port; `onInject` stores
+   * guidance in the evidence store, records GUIDANCE_INJECTED, and queues it for the
+   * next round.
+   */
+  steeringState?(): TaskState;
+  onPause?(): void;
+  onResume?(): void;
+  onInject?(guidance: string): { ok: true; evidenceRef: string } | { ok: false; reason: string };
 }
 
 export interface HttpLike {
@@ -87,6 +111,11 @@ export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult
     if (decision !== 'approve' && decision !== 'reject') {
       return { status: 400, body: { error: 'decision must be approve|reject' } };
     }
+    // A task-approval decision arriving while PAUSED is refused — resume first, then
+    // decide (the pause window and the decision must not race, REQ-10.9).
+    if (deps.steeringState?.() === 'PAUSED') {
+      return { status: 409, body: { error: 'paused_resume_first' } };
+    }
     if (decision === 'approve') {
       const given = new Set(Array.isArray(parsed.attestations) ? parsed.attestations.map(String) : []);
       const complete = pkg.attestations.every((a) => given.has(a));
@@ -117,7 +146,45 @@ export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult
   }
 
   if (req.method === 'POST' && path.startsWith('/steering/')) {
-    return { status: 501, body: { error: 'not_enabled_phase1', detail: 'steering arrives in Phase 2' } };
+    // A plane without the steering callbacks behaves as in Phase 1 (501).
+    if (deps.onPause === undefined) {
+      return { status: 501, body: { error: 'not_enabled_phase1', detail: 'steering not composed' } };
+    }
+    const state = deps.steeringState?.();
+
+    if (path === '/steering/pause') {
+      if (state !== undefined && !STEERABLE.has(state)) {
+        return { status: 409, body: { error: 'not_steerable', state } };
+      }
+      deps.onPause();
+      return { status: 202, body: { state: 'pause_requested' } };
+    }
+
+    if (path === '/steering/resume') {
+      deps.onResume?.();
+      return { status: 202, body: { state: 'resumed' } };
+    }
+
+    if (path === '/steering/inject') {
+      // Guidance is atomic with the pause window (REQ-10.4).
+      if (state !== 'PAUSED') return { status: 409, body: { error: 'not_paused', state } };
+      let guidance: unknown;
+      try {
+        guidance = (JSON.parse(req.body) as { guidance?: unknown }).guidance;
+      } catch {
+        return { status: 400, body: { error: 'bad_json' } };
+      }
+      if (typeof guidance !== 'string' || guidance.length === 0) {
+        return { status: 400, body: { error: 'guidance must be a non-empty string' } };
+      }
+      const res = deps.onInject?.(guidance);
+      if (res === undefined || !res.ok) {
+        return { status: 409, body: { error: res?.reason ?? 'inject_failed' } };
+      }
+      return { status: 202, body: { evidenceRef: res.evidenceRef } };
+    }
+
+    return { status: 404, body: { error: 'not_found' } };
   }
 
   return { status: 404, body: { error: 'not_found' } };

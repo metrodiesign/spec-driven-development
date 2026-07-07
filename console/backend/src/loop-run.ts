@@ -12,17 +12,27 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
 import {
+  applyGovernanceApproval,
   computeCalibration,
   createBudget,
   createDefaultPathPolicy,
   createEvidenceStore,
   createExecutor,
   createGateRunner,
+  createHumanPlaneServer,
+  createLoopController,
   denyNetworkSandbox,
+  listPendingProposals,
   openEventLog,
+  pendingQuarantines,
+  readGovernanceLog,
   runTaskLoop,
+  transition,
   type CalibrationResult,
+  type Clock,
+  type HandlerDeps,
   type TaskContract,
+  type TaskState,
 } from 'core';
 import {
   createAALProposalSource,
@@ -101,16 +111,35 @@ export async function runSupervisedLoop(opts: {
   contract: TaskContract;
   adapterFactory: (putEvidence: (s: string) => string) => AdapterInterface;
   conformanceRecord?: ConformanceRecord;
-  nowMs: number;
+  /** Injected time source (REQ-6.4): production `{ now: () => Date.now() }`, tickable in tests. */
+  clock: Clock;
   /** Keep events.db + evidence here (a live run's record, REQ-11.4/4.5) — default is inside the throwaway fixture root. */
   persistDir?: string;
+  /**
+   * Durable governance log (`.ai/governance/events.jsonl`, REQ-9.1). When set, the
+   * Human Plane lists/handles governance proposals and a deferred flaky_quarantine
+   * approved via the CLI takes effect on load (REQ-9.4/9.5). Absent → no governance
+   * plane (governance preflight ordering itself is Task 9).
+   */
+  governanceLogPath?: string;
 }): Promise<LoopRunResult> {
   const fx = makeFixtureRepo();
-  const clock = { now: () => opts.nowMs };
+  const clock = opts.clock;
   const stateDir = opts.persistDir ?? fx.root; // fixture root is rm'd in finally; persistDir survives
   const log = openEventLog(join(stateDir, 'events.db'), clock);
   const evidence = createEvidenceStore(join(stateDir, 'evidence'));
+  const RUN_ID = 'RUN-LIVE';
+  const TASK_ID = 'T-1';
   try {
+    // Deferred quarantine (REQ-9.5): a flaky_quarantine approved via the CLI while no
+    // run was live takes effect when the next run LOADS that task — never runs it.
+    if (opts.governanceLogPath !== undefined) {
+      const deferred = pendingQuarantines(readGovernanceLog(opts.governanceLogPath));
+      if (deferred.includes(TASK_ID)) {
+        log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: 'QUARANTINED', trigger: 'quarantine', deferred: true } });
+        return { finalState: 'QUARANTINED', iterations: 0, calibration: computeCalibration({ heldOut: [false], reruns: [] }) };
+      }
+    }
     const adapter = opts.adapterFactory((s) => evidence.put(s));
     // Breaker + quota-aware routing (REQ-1/2/3): transitions become events; a live
     // adapter may expose a health probe (REQ-2.5), the Fake has none (always-ok).
@@ -141,34 +170,92 @@ export async function runSupervisedLoop(opts: {
       maxRepairRounds: 2,
       budgetRemaining: () => budget.remaining(),
     });
-    const result = await runTaskLoop({
-      runId: 'RUN-LIVE',
-      taskId: 'T-1',
-      role: 'implementer',
-      source,
-      executor: createExecutor({
-        worktreeDir: fx.wt,
+    // Operability (REQ-18.1): a live Human Plane server makes the loop steerable and
+    // killable while it runs. onDecision → machine transitions (task approvals);
+    // steering/kill → the loop control port; governance approvals append to the
+    // durable log only (never a task transition, REQ-9.4). The current task state is
+    // read from the event log's last TASK_STATE — the single source both sides share.
+    const controller = createLoopController();
+    const guidanceQueue: string[] = [];
+    const currentState = (): TaskState =>
+      (log.all({ type: 'TASK_STATE' }).at(-1)?.payload['state'] as TaskState) ?? 'PROPOSED';
+    const onDecision: HandlerDeps['onDecision'] = (taskId, decision) => {
+      const tr = transition(currentState(), decision === 'approve' ? 'human_approved' : 'changes_requested');
+      if (!tr.ok) return { ok: false, detail: tr.reason };
+      log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: tr.next, trigger: decision } });
+      return { ok: true, state: tr.next };
+    };
+    const onInject: HandlerDeps['onInject'] = (guidance) => {
+      const evidenceRef = evidence.put(guidance);
+      log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GUIDANCE_INJECTED', payload: { evidenceRef } });
+      guidanceQueue.push(guidance);
+      return { ok: true, evidenceRef };
+    };
+    const govLog = opts.governanceLogPath;
+    const governance: Partial<HandlerDeps> = govLog === undefined ? {} : {
+      governanceProposals: () => listPendingProposals(readGovernanceLog(govLog)),
+      onGovernanceApprove: (id) => {
+        const res = applyGovernanceApproval({ logPath: govLog, id, clock }, {
+          fireQuarantine: (tid) => {
+            const tr = transition(currentState(), 'quarantine');
+            if (tr.ok) log.append({ runId: RUN_ID, taskId: tid, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'quarantine' } });
+          },
+        });
+        return res.ok ? { ok: true, kind: res.kind } : { ok: false, detail: res.reason };
+      },
+    };
+    const server = await createHumanPlaneServer({
+      runDir: stateDir,
+      deps: {
+        runId: RUN_ID,
+        approvals: new Map(),
+        log,
+        onDecision,
+        onKill: () => controller.requestKill(),
+        rateOk: () => true,
+        steeringState: currentState,
+        onPause: () => controller.requestPause(),
+        onResume: () => controller.requestResume(),
+        onInject,
+        ...governance,
+      },
+    });
+    try {
+      const result = await runTaskLoop({
         runId: 'RUN-LIVE',
         taskId: 'T-1',
+        role: 'implementer',
+        source,
+        executor: createExecutor({
+          worktreeDir: fx.wt,
+          runId: 'RUN-LIVE',
+          taskId: 'T-1',
+          log,
+          evidence,
+          policy: createDefaultPathPolicy(),
+          sandbox: denyNetworkSandbox(process.platform),
+          clock,
+        }),
+        gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: 'RUN-LIVE', taskId: 'T-1', log, evidence, clock }),
         log,
-        evidence,
-        policy: createDefaultPathPolicy(),
-        sandbox: denyNetworkSandbox(process.platform),
+        budget,
         clock,
-      }),
-      gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: 'RUN-LIVE', taskId: 'T-1', log, evidence, clock }),
-      log,
-      budget,
-      clock,
-      // Repair engine deps: a DIAGNOSING round runs its probes through the executor
-      // and reads their output from the evidence store (REQ-5).
-      evidence,
-      ids: { next: (prefix) => `${prefix}-${randomUUID()}` },
-    });
-    // Held-out (golden) verification passed iff the loop reached REVIEWING.
-    const heldOut = result.finalState === 'REVIEWING';
-    const calibration = computeCalibration({ heldOut: [heldOut], reruns: heldOut ? [true] : [] });
-    return { finalState: result.finalState, iterations: result.iterations, calibration };
+        // Repair engine deps: a DIAGNOSING round runs its probes through the executor
+        // and reads their output from the evidence store (REQ-5).
+        evidence,
+        ids: { next: (prefix) => `${prefix}-${randomUUID()}` },
+        // Steering (REQ-10): the loop polls the control port at each boundary and
+        // folds guidance injected while paused into the next round as marked data.
+        control: controller.port,
+        takeGuidance: () => guidanceQueue.splice(0),
+      });
+      // Held-out (golden) verification passed iff the loop reached REVIEWING.
+      const heldOut = result.finalState === 'REVIEWING';
+      const calibration = computeCalibration({ heldOut: [heldOut], reruns: heldOut ? [true] : [] });
+      return { finalState: result.finalState, iterations: result.iterations, calibration };
+    } finally {
+      await server.close();
+    }
   } finally {
     log.close();
     fx.cleanup();

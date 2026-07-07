@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { transition } from './machine.ts';
+import { ACTIVE_STATES, resumeTransition, transition } from './machine.ts';
 
 test('happy path walks the §6.3 chain (REQ-7.1)', () => {
   let s = transition('PROPOSED', 'analyze');
@@ -84,4 +84,26 @@ test('universal escapes work from active states only (spec §6.3)', () => {
   assert.ok(fromActive.ok && fromActive.next === 'PAUSED');
   const fromTerminal = transition('CANCELLED', 'escalate');
   assert.equal(fromTerminal.ok, false);
+});
+
+test('pause/resume round-trips from EVERY active state (REQ-10.2/10.3)', () => {
+  // Property: pause is legal from every active state, and resumeTransition restores
+  // exactly the recorded pre-pause state (the state carried in PAUSE_REQUESTED).
+  for (const s of ACTIVE_STATES) {
+    const paused = transition(s, 'pause');
+    assert.ok(paused.ok && paused.next === 'PAUSED', `pause legal from ${s}`);
+    const resumed = resumeTransition('PAUSED', s);
+    assert.ok(resumed.ok && resumed.next === s, `resume restores ${s}`);
+  }
+});
+
+test('resumeTransition is legal ONLY from PAUSED, ONLY to an active state (REQ-10.3)', () => {
+  // Not from PAUSED -> illegal (resume has no meaning outside the pause window).
+  const notPaused = resumeTransition('IMPLEMENTING', 'VERIFYING');
+  assert.equal(notPaused.ok, false);
+  // Target not an active state (a terminal cannot be a resume target) -> illegal.
+  const badTarget = resumeTransition('PAUSED', 'COMPLETED');
+  assert.equal(badTarget.ok, false);
+  const cancelledTarget = resumeTransition('PAUSED', 'CANCELLED');
+  assert.equal(cancelledTarget.ok, false);
 });

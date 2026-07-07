@@ -73,6 +73,18 @@ export interface RepairGuidance {
   estimatedBlastRadius: string;
 }
 
+/**
+ * Operator guidance injected while PAUSED (REQ-10.5), folded into the next round as
+ * MARKED untrusted data (INV-3) — exactly like gate feedback. Guidance is advisory:
+ * it never alters the frozen contract (an AC/scope change needs a goal.yaml
+ * amendment, which the frozen-contract hash check escalates as `contract_changed`,
+ * REQ-10.6).
+ */
+export interface GuidanceFeedback {
+  kind: 'guidance';
+  guidance: string;
+}
+
 /** Task states (spec §6.3). Post-REVIEWING transitions are phase-gated. */
 export type TaskState =
   | 'PROPOSED'
