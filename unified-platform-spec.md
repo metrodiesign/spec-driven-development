@@ -1,6 +1,6 @@
 # Autonomous Engineering Platform on Claude — Unified Implementation Spec
 
-> **v1.1 (Unified) — สเปกเดียวและ source of truth สำหรับ implement** (ไม่มีเอกสารสเปกอื่นใน repo นี้) · v1.1 = interactive surface เป็น 100% CLI parity ผ่าน PTY (INV-17, §4.1)
+> **v1.2 (Unified) — สเปกเดียวและ source of truth สำหรับ implement** (ไม่มีเอกสารสเปกอื่นใน repo นี้) · v1.1 = interactive surface เป็น 100% CLI parity ผ่าน PTY (INV-17, §4.1) · v1.2 = sync สถานะส่งมอบ Phase 0–2 + rescope Phase 3 (second lineage = Codex เท่านั้น; GLM-5.2 เลื่อนแบบมีเงื่อนไข access — ดู §14, §17)
 > **ภาษา:** prose อธิบายเป็นไทย · artifact ทุกชนิด (schema, YAML, code, prompt, ชื่อไฟล์, endpoint) เป็นอังกฤษ — ห้ามแปล artifact เป็นไทย
 > **บริบท:** แพลตฟอร์มรันบนเครื่องเจ้าของบัญชี **Claude Max 20x subscription** (auth ผ่าน `claude login` — ไม่ใช่ API plan) · single-operator
 
@@ -293,8 +293,8 @@ P1 echo-schema · P2 propose-action · P3 repair-round · P4 budget-degrade · P
 |------|---------|--------------------------------|
 | Planner/Architect | reasoning, largeContext | Claude — fusion เปิดเสมอ (Phase 3) |
 | Implementer/Repair | codeProposal, structuredOutput | Codex |
-| Test Designer/Property | codeProposal | GLM-5.2 — **ต้องต่าง lineage กับ implementer** |
-| Reviewer/Diagnostician | reasoning, largeContext | Claude + GLM-5.2 ensemble |
+| Test Designer/Property | codeProposal | Claude — **ต้องต่าง lineage กับ implementer** (default เดิม GLM-5.2 — กลับมาเมื่อ adapter พร้อม, §14 Phase 4) |
+| Reviewer/Diagnostician | reasoning, largeContext | Claude + Codex ensemble (เดิม GLM-5.2 — กลับมาเมื่อ adapter พร้อม) |
 | Verifier/Controller | — (ไม่ใช่โมเดล) | Ring 0 deterministic |
 
 Routing: capability match → health-aware (ข้าม breaker-open + **quota-aware ผ่าน probe §5.4**) → injection-aware (low-trust content ห้ามไปโมเดล susceptibility สูง) → cost → outcome-weighted (shadow ก่อนเสมอ); `on_repeated_failure: switch_to_next_eligible`
@@ -312,8 +312,8 @@ Pipeline เดียวทุก artifact: **PANEL** (N ตัวอิสร�
 
 Entry: virtual `fusion:*` adapter / policy trigger (planning เสมอ, L2+, repeated failure) / agent เรียกเอง `fusion.deliberate` (budget cap + depth ≤1) — **~4–5× ต่อจุดเปิด** (กระทบโควตา §5.4): เปิดเฉพาะที่ calibration พิสูจน์ uplift + ลองความหลากหลายราคาถูก (self-panel ต่าง seed/temp) ก่อนจ่ายค่าโมเดลต่างค่าย
 
-### 7.6 Adapters (Ring 2, Phase 1)
-`adapters/anthropic.ts` (Claude — primary, §5.2) · `adapters/codex.ts` (Codex — sandbox เป็น execution backend *ทางเลือก*) · `adapters/openai-compatible.ts` (GLM-5.2 + compat; aggregator เช่น OpenRouter = ผู้ประมวลผลข้อมูลอีกราย → `provider_data_policy` ต้องระบุ path ที่อนุญาต) · `adapters/_template.ts` — ทุกตัวบาง แปล wire format เท่านั้น
+### 7.6 Adapters (Ring 2 — phase ตาม §14)
+`adapters/anthropic.ts` (Claude — primary, §5.2 — Phase 1, ส่งมอบแล้ว) · `adapters/codex.ts` (Codex — Phase 3; sandbox เป็น execution backend *ทางเลือก*) · `adapters/openai-compatible.ts` (GLM-5.2 + compat — **deferred จนกว่าจะมี access** (§14 Phase 4); aggregator เช่น OpenRouter = ผู้ประมวลผลข้อมูลอีกราย → `provider_data_policy` ต้องระบุ path ที่อนุญาต) · `adapters/_template.ts` — ทุกตัวบาง แปล wire format เท่านั้น
 
 ---
 
@@ -322,6 +322,8 @@ Entry: virtual `fusion:*` adapter / policy trigger (planning เสมอ, L2+, 
 Console คือ SPA เดียวที่เป็นทั้ง interactive workspace, governance surface และหน้าต่างเข้า autonomous loop · รันด้วยคำสั่ง `platform console` (default `127.0.0.1:9119`; flags `--port/--host/--no-open/--insecure`) · **ทุกความสามารถบน UI มี REST endpoint รองรับ** (Console เป็น client หนึ่ง)
 
 หลักการ Console: **Deep-linkable** (`?project=` ทุกหน้า, `/terminal?project=…&resume=<id>` เปิด session เก่าใน F-Term) · **Background ops** (งาน >5s = action + poll `GET /api/actions/{id}/status`) · **Apply-timing สื่อสารทุก save** · **Write safety** (validate schema → optimistic concurrency mtime/hash → atomic rename)
+
+**สถานะส่งมอบ (v1.2):** แถวที่ Phase ≤ 2 ส่งมอบแล้วทั้งหมด (Phase 2 merged เข้า develop ผ่าน PR #45) · Phase 3–4 = งานอนาคตตาม roadmap §14 (ตาราง §14 เป็น authoritative เมื่อขัดกัน — §0.3)
 
 | ID | หน้า | หน้าที่ | Priority | Phase |
 |---|---|---|---|---|
@@ -334,15 +336,15 @@ Console คือ SPA เดียวที่เป็นทั้ง interacti
 | F-Perm | Permissions | builder `allow/deny/ask` + autocomplete + merged view ข้าม scope + **simulator** + **ติดตั้ง deny rules ปกป้อง `test/golden/**` + `worktrees/`** (§4) | P1 | 2 |
 | F-Auth | Auth & Env | active auth method ต่อโปรเจกต์ + **เตือนแดงเมื่อ env shadow subscription** (§5.1) + `env` redacted + คู่มือ setup-token (ไม่รับ token) | P0 | 1(ตรวจ)+2 |
 | F-Mem | Memory | editor CLAUDE.md ทุกระดับ + preview + คำอธิบาย guidance vs enforcement | P1 | 2 |
-| F-MCP | MCP | จัดการ 3 ชั้น (user/project/managed-ro) + add stdio/HTTP + test connection + enable/disable + OAuth | P1 | 3 |
-| F-Hook | Hooks | **builder/validator ทุก event + 5 handler types** (TUI `/hooks` เป็น read-only — Console คือที่แก้) + scope + `disableAllHooks` + **consent gate** | P1 | 3 |
-| F-Sub | Subagents/Commands | CRUD (Markdown+frontmatter) + test run | P2 | 3 |
-| F-Skill | Skills & Plugins | จัดการ skills + `enabledPlugins` + marketplace | P2 | 3 |
+| F-MCP | MCP | จัดการ 3 ชั้น (user/project/managed-ro) + add stdio/HTTP + test connection + enable/disable + OAuth | P1 | 2 |
+| F-Hook | Hooks | **builder/validator ทุก event + 5 handler types** (TUI `/hooks` เป็น read-only — Console คือที่แก้) + scope + `disableAllHooks` + **consent gate** | P1 | 2 |
+| F-Sub | Subagents/Commands | CRUD (Markdown+frontmatter) + test run | P2 | 2 |
+| F-Skill | Skills & Plugins | จัดการ skills + `enabledPlugins` + marketplace | P2 | 2 |
 | F-Usage | Usage & Quota | **Quota HUD** (window 5h + weekly all/Sonnet + reset + Opus/Sonnet breakdown) + indexer ราย วัน/โปรเจกต์/โมเดล + calibration + **alerts** (threshold, interactive/non-interactive label) | **P0** | 1(ย่อ)+2(เต็ม) |
 | F-Act | Activity Feed | one-click ติดตั้ง/ถอน HTTP hooks → `/api/events/ingest` → WS; hooks ต้อง **fail-open** + timeout สั้น + ถอน one-click | P2 | 2 |
 | F-Loop | **Loop Console** | อ่าน autonomous loop read-only ผ่าน Human Plane API (§10.3): task graph + state machine + calibration ล่าสุด + **approval packages** → ปุ่ม Approve/Reject/Steer/Kill (ยิงกลับผ่าน API) — Console เป็น client ไม่ own state (INV-11) | P0(สำหรับ autonomous) | 3 |
-| F-Sched | Scheduler | **เฉพาะ start/stop กระบวนการ loop หรือรันสคริปต์ opaque** (`calibrate.sh`) + quota guards — **ห้ามทำ task scheduling/lease** (นั่นเป็นของ core §6.2) | P2 | 4 |
-| F-Sys | System & Retention | doctor เต็ม, update, host stats, retention (`cleanupPeriodDays`, ลบ transcript + คำเตือนข้อมูลอ่อนไหว) | P2 | 4 |
+| F-Sched | Scheduler | **เฉพาะ start/stop กระบวนการ loop หรือรันสคริปต์ opaque** (`calibrate.sh`) + quota guards — **ห้ามทำ task scheduling/lease** (นั่นเป็นของ core §6.2) | P2 | 3 |
+| F-Sys | System & Retention | doctor เต็ม, update, host stats, retention (`cleanupPeriodDays`, ลบ transcript + คำเตือนข้อมูลอ่อนไหว) | P2 | 2 |
 
 **Approval แยกตามโหมด (parity):** interactive → prompt ของ CLI ใน F-Term (CLI-native, ไม่ใช่ web dialog); autonomous → approval package ใน F-Loop (§10.3) — คนละกลไกโดยเจตนา (INV-17)
 
@@ -513,7 +515,7 @@ platform/
 │                #   learning/ (P3–4), fault-injection.test.ts (P0)
 ├── aal/         # RING 1 (P1): protocol, adapter-interface, registry, router, breaker (P2),
 │                #   fusion/ (P3), conformance/ (P1–P8)
-├── adapters/    # RING 2 (P1): anthropic.ts(primary), codex.ts, openai-compatible.ts, _template.ts
+├── adapters/    # RING 2: anthropic.ts(primary — P1), codex.ts (P3), openai-compatible.ts (GLM — deferred, P4), _template.ts
 ├── console/     # OPERATOR SURFACE (Claude-specific — รู้จัก Claude ได้, แต่ไม่อยู่ใน core/):
 │                #   backend (Fastify/Hono + Agent SDK), web (React SPA), F-* features §8
 ├── .ai/         # goal.yaml, models.yaml, task-graph.json, agents/, schemas/, policies/,
@@ -524,29 +526,29 @@ platform/
 
 **Roadmap (gate ทุก phase = เลขจาก Calibration + fault-injection DoD + security checklist §13.3, ไม่ใช่ "โค้ดเสร็จ"):**
 
-**Phase 0 — Deterministic Core + Console Foundation** *(สองงานขนานได้; ยังไม่ต่อ Claude เข้า autonomous)*
+**Phase 0 — Deterministic Core + Console Foundation** *(สองงานขนานได้; ยังไม่ต่อ Claude เข้า autonomous)* — **ส่งมอบแล้ว** (PR #41)
 - Core: executor+egress, event log+lease, gate ladder **T0–T1 (T2/T3 stub)**, golden harness — รันด้วย **stub agent** ผ่าน **Fault-injection DoD 9 ข้อ** (เขียน scenarios เป็น failing tests *ก่อน*):
   1. agent โกหกว่าสำเร็จ → core รันเองจับได้ · 2. action นอก allowlist/แตะ golden → reject เป็น feedback · 3. แอบออก network → block+log · 4. fake-green/hash ไม่ตรง → detect · 5. flaky → retry-and-flag ไม่ quarantine เงียบ · 6. crash ระหว่าง INTENT/APPLIED → resume ไม่ apply ซ้ำ · 7. actionId ซ้ำ → idempotent skip · 8. lease contention → single-writer · 9. เกิน budget → ESCALATED ไม่วนไม่รู้จบ
 - Console: `platform console` launcher, F-Proj, F-Sess (read), F-Auth (ตรวจ+เตือน shadowing), F-Usage การ์ดย่อ, F-Status
 - **DoD:** fault-injection 9 ข้อผ่านครบ **ก่อนต่อโมเดลจริง** + Console เปิดเห็นโปรเจกต์/sessions/quota-ประมาณ + เตือนแดงเมื่อ set `ANTHROPIC_API_KEY` ทดสอบ
 
-**Phase 1 — Claude Adapter + AAL + Calibration แรก + Console Interactive/Governance**
+**Phase 1 — Claude Adapter + AAL + Calibration แรก + Console Interactive/Governance** — **ส่งมอบแล้ว** (PR #42/#43)
 - Autonomous: AAL + conformance P1–P8 + `adapters/anthropic.ts` (§5.2) + context builder รุ่นแรก + approval package + Human Plane API → supervised loop หนึ่งฟีเจอร์ → **วัดเลขครั้งแรก**
 - Console: **F-Term (100% CLI parity — interactive surface หลัก, §4.1)** + F-Set + F-Perm + F-Auth เต็ม + F-Mem + F-Usage เต็ม + F-Act + F-Sess search
 - **DoD:** conformance P1–P8 ผ่าน + spike billing + **spike PTY parity (§15)** ผ่าน + F-Term รัน slash command/plan mode/`--resume` ได้เท่า CLI + ปิด tab แล้ว attach PTY กลับได้ + supervised loop จบหนึ่งฟีเจอร์โดย core รันวัดเอง + ตั้ง permission ลง scope ถูก + Effective View ยืนยัน
 
-**Phase 2 — Semi-autonomous + Survivability + Console Extensions**
+**Phase 2 — Semi-autonomous + Survivability + Console Extensions** — **ส่งมอบแล้ว** (merged เข้า develop, PR #45)
 - security plane เต็ม (canary, dep-policy, data-govern), breaker/degraded + **quota-aware routing (§5.4)**, hypothesis repair, auto-merge L0–L1 + sampling audit, meta-governance, steering
 - Console: F-MCP, F-Hook (consent gate), F-Sub, F-Skill, F-Sys + automation guards
 - **DoD:** loop รัน L0–L1 auto พร้อม sampling audit + breaker หลบเมื่อโควตา/provider ล้ม + สร้าง hook/MCP/subagent ผ่าน Console โดยไฟล์ valid
 
 **Phase 3 — Multi-model + Fusion + Loop Console + Remote**
-- adapters ครบ (Claude/Codex/GLM-5.2), fusion + วัด decorrelation/uplift, merge queue + auditor, outcome routing shadow
+- adapter ที่สอง: **Codex เท่านั้น** (Claude+Codex = 2 lineages — เพียงพอต่อ fusion decorrelation; Codex CLI ติดตั้งแล้วบนเครื่องนี้) · **GLM-5.2 deferred ไป Phase 4 แบบมีเงื่อนไข access** (ยังไม่มี access — เลื่อนแบบบันทึกไว้ ไม่ตัดเงียบ) · fusion + วัด decorrelation/uplift — **gate ก่อนเปิด fusion: ทบทวนนโยบาย non-interactive usage ของ Anthropic ตาม §5.3 และบันทึกผล** · merge queue + เปิดใช้ gate T2 (§6.4) + out-of-band auditor · outcome routing shadow
 - Console: **F-Loop** (อ่าน loop + approve/steer/kill ผ่าน API), F-Sched (start/stop process เท่านั้น — B: ห้าม task scheduling), remote auth §13 (gate + Basic→OIDC + hardening)
 - **DoD:** fusion แสดง uplift จาก calibration + auditor จับ non-repro ได้ + F-Loop อนุมัติ approval package จากเว็บ + security checklist §13.3 ครบ + login/approve จากเครื่องอื่นจริง
 
 **Phase 4 — Continuous + Polish**
-- issue intake, canary deploy, automated rollback, lessons active, outcome routing active เมื่อ shadow พิสูจน์
+- issue intake, canary deploy, automated rollback, lessons active, outcome routing active เมื่อ shadow พิสูจน์ · GLM-5.2 adapter (`adapters/openai-compatible.ts`) **เฉพาะเมื่อมี access จริง** — เพิ่มตาม INV-8 (adapter 1 ตัว + conformance P1–P8, ห้ามแตะ Ring 0/1) — deferred จาก Phase 3 (v1.2)
 - Console: F-Chat (SDK enhanced view — optional, non-parity), themes, responsive/mobile, i18n
 
 ---
@@ -578,8 +580,9 @@ platform/
 
 ## §17 Changelog + จุดเริ่มงาน
 
-**จุดเริ่ม:** §15 spikes → Phase 0 (core fault-injection + Console foundation ขนานกัน) · เมื่อพบความไม่ตรงกับพฤติกรรมจริงของ Claude Code/SDK: บันทึก `docs/DEVIATIONS.md` ตาม §0.6
+**จุดเริ่ม (v1.2):** Phase 0–2 ส่งมอบแล้ว (spikes §15 ผ่านครบตั้งแต่ Phase 0) → งานถัดไป = **Phase 3 ตาม §14** · เมื่อพบความไม่ตรงกับพฤติกรรมจริงของ Claude Code/SDK: บันทึก `docs/DEVIATIONS.md` ตาม §0.6
 
 **Changelog:**
+- **v1.2** — sync สถานะส่งมอบ + rescope Phase 3: Phase 0–2 ส่งมอบแล้ว (Phase 2 merged เข้า develop, PR #45) · แก้ Phase column §8 ให้ตรงจริง (F-MCP/F-Hook/F-Sub/F-Skill/F-Sys = Phase 2, F-Sched = Phase 3 — §14 เป็น authoritative ตาม §0.3, column เดิมล้าสมัยก่อน re-plan) · Phase 3 = §14 เต็ม (multi-model + fusion + merge queue/T2 + auditor + outcome routing shadow + F-Loop + F-Sched + remote auth §13) โดย second lineage = **Codex เท่านั้น**; GLM-5.2 เลื่อนไป Phase 4 แบบมีเงื่อนไข access (บันทึกไว้ ไม่ตัดเงียบ) · ปรับ default §7.4/§7.6 ให้สอดคล้อง · ย้ำ gate §5.3 (ทบทวนนโยบาย non-interactive usage) ก่อนเปิด fusion ใน §14 Phase 3
 - **v1.1** — interactive surface เปลี่ยนเป็น **binary `claude` ตัวจริงผ่าน PTY = 100% CLI parity** (เพิ่ม INV-17 + §4.1; F-Term เป็น P0/Phase 1 = interactive หลัก; F-Chat/SDK ลดเป็น optional non-parity Phase 4; เพิ่ม PTY parity spike §15.2; interactive approval เป็น CLI-native ไม่ใช่ web dialog)
 - **v1.0** — หลอมรวมเป็นแพลตฟอร์มเดียว สองโหมด (Interactive + Autonomous) บน substrate Claude Max 20x
