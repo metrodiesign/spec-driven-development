@@ -50,6 +50,27 @@ export {
   ContractInvalidError,
   type TaskContract,
 } from './contract/contract.ts';
+export {
+  approveProposal,
+  applyGovernanceApproval,
+  computePolicySnapshot,
+  ensureGovernanceApproved,
+  listPendingProposals,
+  pendingQuarantines,
+  proposeFlakyQuarantine,
+  readGovernanceLog,
+  seedFixtureSnapshot,
+  snapshotHash,
+  POLICY_FILES,
+  type GovernanceKind,
+  type GovernanceProposal,
+  type GovernanceRecord,
+  type GovernanceChangeRecord,
+  type PolicySnapshot,
+  type EnsureResult,
+  type ApproveResult,
+  type DecidedBy,
+} from './governance/policy.ts';
 export { redactSecrets } from './human/redact.ts';
 export {
   attestationsFor,

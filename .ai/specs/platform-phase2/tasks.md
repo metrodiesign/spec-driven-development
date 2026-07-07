@@ -127,7 +127,7 @@
          TransitionResult union (append-only, avoids churning consumers); human/api.ts steering 501 uses
          its own string literal, unrelated to the machine.
 
-- [ ] 4. Meta-governance — `core/src/governance/policy.ts` (policy snapshot hash vs last
+- [x] 4. Meta-governance — `core/src/governance/policy.ts` (policy snapshot hash vs last
      GOVERNANCE_CHANGE in durable `.ai/governance/events.jsonl`; empty log = `beforeHash:null`
      mismatch → `GOVERNANCE_PROPOSED` + refuse `policy_unapproved` printing
      `platform governance approve <id>`), `platform governance list|approve <id>` CLI (works
@@ -138,6 +138,40 @@
      start; approve unblocks; quarantine only via approval.
      Satisfies: REQ-9 (all). Depends on: 3.
      Verify: pnpm -r test (core + console/backend) incl. no-server CLI approve test.
+     Evidence:
+       - test: `pnpm -r test` -> 241 passed / 0 failed (core 108 [+15], aal 38, adapters 13,
+         console/backend 70 [+5], console/web 12); `pnpm -r typecheck` all 6 Done; `pnpm lint`
+         clean; `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-name-free (INV-7).
+       - new tests: `core/src/governance/policy.test.ts` (empty-log→policy_unapproved+beforeHash:null
+         +GOVERNANCE_PROPOSED+approve-cmd; idempotent proposal; approve→unblock; tamper-file→refuse;
+         absent-file-created is itself gated; flaky proposal never-auto + approval-required + deferred
+         taskId; flaky change kept out of lastApprovedHash; applyGovernanceApproval fires quarantine
+         for flaky only; unknown id; ci-fixture seed decidedBy:'ci-fixture'; deterministic snapshot),
+         `core/src/human/api.test.ts` (+4: GET lists governance proposals; POST routes to
+         onGovernanceApprove NOT onDecision + no APPROVAL_RECORDED; unknown gov id→404; no-plane→404),
+         `console/backend/src/governance-cli.test.ts` (5: list-empty; no-server refuse→list→approve→
+         next preflight ok; approve unknown→nonzero+stderr; missing id/unknown sub→usage).
+       - viewports: n/a — logic-only.
+       - deviations: (1) governance preflight WIRING into run startup (bin ordering
+         governance→automation→adapter) stays Task 9 per tasks.md; Task 4 delivers the engine
+         (`ensureGovernanceApproved`) + CLI + Human Plane by-kind + flaky proposal + ci-fixture seed.
+         "refuses start" is proven at the engine level (→`policy_unapproved`), not via full-run wiring.
+         (2) Human Plane by-kind (REQ-9.4): `HandlerDeps` gains append-only optional
+         `governanceProposals?()` + `onGovernanceApprove?(id)` (INV-8; Phase-1 servers behave
+         identically). Routing + `applyGovernanceApproval` (fires quarantine for `flaky_quarantine`
+         ONLY, `policy_change` append-only) unit-tested with fakes; server COMPOSED into
+         runSupervisedLoop with a real `fireQuarantine` stays Task 5. (3) snapshot inputs = the 4
+         files REQ-9.1 names (`gate-ladder`/`security-plane`/`automation`/`provider-data-policy`);
+         a missing file hashes as an `absent` sentinel so creating one later (Task 6/9) is itself a
+         gated change (REQ-9.6 conservative superset). Design prose said "path policy version" — the
+         AC's file list is authoritative, followed it. (4) `flaky_quarantine.afterHash` = `flaky:<taskId>`
+         marker (not a policy hash), excluded from `lastApprovedHash` so a flaky approval never moves
+         the policy gate; `pendingQuarantines` returns approved taskIds for composition to quarantine
+         on next load (deferred, REQ-9.5). (5) `decidedBy ∈ {'human','ci-fixture'}` — CLI + Human Plane
+         both record `'human'` (both are the single operator, INV-15); only seeded fixtures use
+         `'ci-fixture'` (REQ-9.7). (6) `.ai/governance/events.jsonl` is created lazily on first
+         proposal/seed (mkdir -p in appendRecord) — no empty durable log committed yet; it begins when
+         the first governance event is recorded (Task 9 fixture seeds it).
 
 - [ ] 5. Steering + loop operability — `LoopControl` port polled at iteration boundaries,
      `pause` → PAUSED + `PAUSE_REQUESTED {prePauseState}`, `resumeTransition(prePauseState)`

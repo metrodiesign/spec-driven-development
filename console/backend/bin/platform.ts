@@ -20,11 +20,13 @@ import {
   readConformanceRecord,
 } from '../src/loop-cli.ts';
 import { createTermRuntime } from '../src/term-runtime.ts';
+import { runGovernanceCommand } from '../src/governance-cli.ts';
 
 const HELP = `usage:
   platform console [--port <n>] [--host <h>] [--no-open] [--insecure]
   platform loop run --goal <path> [--live] [--task <id>]
   platform conformance --live
+  platform governance list | platform governance approve <id>
 
   console:
     --port      port to listen on (default 9119)
@@ -54,6 +56,24 @@ function agentSessionsCwd(): string {
 /** Repo-anchored `.ai/calibration/` — NOT cwd-keyed, so an off-root invocation cannot orphan the record (and force a re-spend). */
 function calibrationDir(): string {
   return join(import.meta.dirname, '..', '..', '..', '.ai', 'calibration');
+}
+
+/** Repo-anchored `.ai/` — governance log + policies live under here, committed to the repo (REQ-9.1). */
+function aiDir(): string {
+  return join(import.meta.dirname, '..', '..', '..', '.ai');
+}
+
+/** `platform governance list|approve <id>` — appends to the durable log, no server needed (REQ-9.3). */
+function runGovernance(rest: string[]): void {
+  const result = runGovernanceCommand({
+    argv: rest,
+    logPath: join(aiDir(), 'governance', 'events.jsonl'),
+    policyDir: join(aiDir(), 'policies'),
+    now: () => Date.now(),
+  });
+  if (result.out !== '') process.stdout.write(result.out);
+  if (result.err !== '') process.stderr.write(result.err);
+  process.exit(result.code);
 }
 
 /** Where Claude Code writes session JSONL for that cwd (REQ-4.5 transcript capture). */
@@ -250,6 +270,10 @@ async function main(): Promise<void> {
   }
   if (command === 'conformance') {
     await runConformance(rest);
+    return;
+  }
+  if (command === 'governance') {
+    runGovernance(rest);
     return;
   }
   if (command !== 'console') {

@@ -91,6 +91,55 @@ test('approve with incomplete attestations -> 400, no transition (REQ-9.3)', () 
   } finally { h.cleanup(); }
 });
 
+test('GET /approvals also lists governance proposals when the plane is present (REQ-9.4)', () => {
+  const h = deps({
+    governanceProposals: () => [
+      { id: 'gov-1', kind: 'policy_change', beforeHash: null, afterHash: 'x', rationale: 'r' },
+    ],
+  });
+  try {
+    const r = handleHumanRequest(httpReq({ path: '/approvals', headers: auth() }), h.d);
+    assert.equal(r.status, 200);
+    const body = r.body as Array<{ kind?: string }>;
+    assert.equal(body.length, 2); // one task package + one governance proposal
+    assert.equal(body.some((x) => x.kind === 'policy_change'), true);
+  } finally { h.cleanup(); }
+});
+
+test('POST governance approval routes to onGovernanceApprove, never onDecision (REQ-9.4)', () => {
+  const approved: string[] = [];
+  const h = deps({
+    onGovernanceApprove: (id) => {
+      approved.push(id);
+      return { ok: true, kind: 'flaky_quarantine' };
+    },
+  });
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/gov-9', headers: auth(), body: '' }), h.d);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { kind: 'flaky_quarantine' });
+    assert.deepEqual(approved, ['gov-9']);
+    assert.equal(h.decisions.length, 0); // governance never fires a task transition
+    assert.equal(h.log.all({ type: 'APPROVAL_RECORDED' }).length, 0); // nor a task approval record
+  } finally { h.cleanup(); }
+});
+
+test('unknown governance id -> 404 no_such_approval (REQ-9.4)', () => {
+  const h = deps({ onGovernanceApprove: () => ({ ok: false, detail: 'no_such_proposal' }) });
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/gov-nope', headers: auth(), body: '' }), h.d);
+    assert.equal(r.status, 404);
+  } finally { h.cleanup(); }
+});
+
+test('unknown id with no governance plane -> 404 (Phase-1 behavior preserved)', () => {
+  const h = deps();
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/nope', headers: auth(), body: '' }), h.d);
+    assert.equal(r.status, 404);
+  } finally { h.cleanup(); }
+});
+
 test('steering endpoints -> 501 not_enabled_phase1 (REQ-10.5)', () => {
   const h = deps();
   try {

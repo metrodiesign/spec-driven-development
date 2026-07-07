@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { redactSecrets } from './redact.ts';
 import type { EventLog } from '../state/event-log.ts';
 import type { ApprovalPackage } from './approval.ts';
+import type { GovernanceKind, GovernanceProposal } from '../governance/policy.ts';
 
 export interface HandlerDeps {
   runId: string;
@@ -20,6 +21,17 @@ export interface HandlerDeps {
   onDecision(taskId: string, decision: 'approve' | 'reject'): { ok: boolean; state?: string; detail?: string };
   onKill(): void;
   rateOk(): boolean;
+  /**
+   * Governance proposals to also list at GET /approvals (REQ-9.4). Optional so a
+   * server started without the governance plane behaves exactly as in Phase 1.
+   */
+  governanceProposals?(): GovernanceProposal[];
+  /**
+   * Approve a governance proposal by id (REQ-9.4). `policy_change` appends the change
+   * and returns (never calls onDecision); `flaky_quarantine` additionally fires the
+   * quarantine transition for its taskId — the callback owns both effects.
+   */
+  onGovernanceApprove?(id: string): { ok: boolean; kind?: GovernanceKind; detail?: string };
 }
 
 export interface HttpLike {
@@ -45,13 +57,26 @@ export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult
   const path = req.path.split('?')[0] ?? req.path;
 
   if (req.method === 'GET' && path === '/approvals') {
-    return { status: 200, body: [...deps.approvals.values()] };
+    // Governance proposals (REQ-9.4) are listed alongside task approval packages;
+    // a consumer tells them apart by the presence of `kind`.
+    return { status: 200, body: [...deps.approvals.values(), ...(deps.governanceProposals?.() ?? [])] };
   }
 
   if (req.method === 'POST' && path.startsWith('/approvals/')) {
     const id = path.slice('/approvals/'.length);
     const pkg = deps.approvals.get(id);
-    if (pkg === undefined) return { status: 404, body: { error: 'no_such_approval' } };
+    if (pkg === undefined) {
+      // Not a task package — maybe a governance proposal (REQ-9.4). Handled by kind
+      // inside the callback: policy_change appends only; flaky_quarantine also
+      // quarantines. onDecision (task transitions) is never called for governance.
+      if (deps.onGovernanceApprove !== undefined) {
+        const res = deps.onGovernanceApprove(id);
+        if (res.ok) return { status: 200, body: { kind: res.kind } };
+        if (res.detail === 'no_such_proposal') return { status: 404, body: { error: 'no_such_approval' } };
+        return { status: 409, body: { error: res.detail ?? 'governance_refused' } };
+      }
+      return { status: 404, body: { error: 'no_such_approval' } };
+    }
     let parsed: { decision?: unknown; attestations?: unknown };
     try {
       parsed = JSON.parse(req.body) as typeof parsed;
