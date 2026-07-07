@@ -24,6 +24,9 @@ export type Trigger =
   | 'review'
   | 'changes_requested'
   | 'human_approved'
+  // `auto_approved` (Phase 2, REQ-7.2) is fired by core/merge policy ONLY. It has
+  // no ports.ts doorway, so no agent claim can reach it (REQ-7.3, INV-2).
+  | 'auto_approved'
   | 'merge_queued'
   | 'audited'
   | 'completed'
@@ -34,7 +37,11 @@ export type Trigger =
   | 'quarantine'
   | 'pause';
 
-const ACTIVE_STATES: TaskState[] = [
+// MERGE_QUEUED and AUDITED are ACTIVE (REQ-7.8) so `escalate`/`roll_back` are legal
+// from them — the merge_conflict (REQ-7.5) and audit_mismatch (REQ-8.3) paths.
+// Exported: PAUSED is entered from EVERY active state (REQ-10.2) and resume must
+// restore one of these (REQ-10.3); the steering property test iterates the set.
+export const ACTIVE_STATES: TaskState[] = [
   'PROPOSED',
   'ANALYZING',
   'READY',
@@ -46,6 +53,8 @@ const ACTIVE_STATES: TaskState[] = [
   'PASSED',
   'REVIEWING',
   'CHANGES_REQUESTED',
+  'MERGE_QUEUED',
+  'AUDITED',
 ];
 
 const TABLE: Partial<Record<TaskState, Partial<Record<Trigger, TaskState>>>> = {
@@ -58,17 +67,16 @@ const TABLE: Partial<Record<TaskState, Partial<Record<Trigger, TaskState>>>> = {
   DIAGNOSING: { repair: 'REPAIRING' },
   REPAIRING: { verify: 'VERIFYING' },
   PASSED: { review: 'REVIEWING' },
-  REVIEWING: { changes_requested: 'CHANGES_REQUESTED', human_approved: 'APPROVED' },
+  REVIEWING: {
+    changes_requested: 'CHANGES_REQUESTED',
+    human_approved: 'APPROVED',
+    auto_approved: 'APPROVED',
+  },
   CHANGES_REQUESTED: { repair: 'REPAIRING' },
   APPROVED: { merge_queued: 'MERGE_QUEUED' },
   MERGE_QUEUED: { audited: 'AUDITED' },
   AUDITED: { completed: 'COMPLETED' },
 };
-
-// Phase 1 ENABLES human_approved (REVIEWING -> APPROVED) via the Human Plane API
-// (REQ-10.2). Post-APPROVED integration (merge queue / auditor) stays gated —
-// Phase 3 (REQ-11.5). Listing them keeps refusal explicit, never silent.
-const PHASE_GATED: ReadonlySet<Trigger> = new Set(['merge_queued', 'audited', 'completed']);
 
 /** Special transitions available from every active state (spec §6.3). */
 const UNIVERSAL: Partial<Record<Trigger, TaskState>> = {
@@ -81,16 +89,12 @@ const UNIVERSAL: Partial<Record<Trigger, TaskState>> = {
 };
 
 export function transition(state: TaskState, trigger: Trigger): TransitionResult {
-  if (PHASE_GATED.has(trigger)) {
-    return {
-      ok: false,
-      reason: 'not_enabled_phase1',
-      detail: `trigger ${trigger} is enabled in a later phase (REQ-11.5)`,
-    };
-  }
   const universal = UNIVERSAL[trigger];
   if (universal !== undefined) {
-    if (ACTIVE_STATES.includes(state)) return { ok: true, next: universal };
+    // Universal escapes are legal from every active state and from PAUSED — a paused
+    // task can still be killed/escalated (REQ-10.7: kill while paused terminates via
+    // `cancel`), never from a terminal state.
+    if (ACTIVE_STATES.includes(state) || state === 'PAUSED') return { ok: true, next: universal };
     return {
       ok: false,
       reason: 'illegal_transition',
@@ -106,4 +110,20 @@ export function transition(state: TaskState, trigger: Trigger): TransitionResult
     };
   }
   return { ok: true, next };
+}
+
+/**
+ * Resume from a pause (REQ-10.3). The target is DATA — the pre-pause state recorded
+ * in `PAUSE_REQUESTED {prePauseState}` — not a static trigger, so it lives beside
+ * `transition()`. Legal ONLY from PAUSED and ONLY to a member of ACTIVE_STATES
+ * (PAUSED is a dead-end in the table otherwise; a terminal is never a resume target).
+ */
+export function resumeTransition(state: TaskState, prePauseState: TaskState): TransitionResult {
+  if (state !== 'PAUSED') {
+    return { ok: false, reason: 'illegal_transition', detail: `resume not allowed from ${state}` };
+  }
+  if (!ACTIVE_STATES.includes(prePauseState)) {
+    return { ok: false, reason: 'illegal_transition', detail: `resume target ${prePauseState} is not an active state` };
+  }
+  return { ok: true, next: prePauseState };
 }

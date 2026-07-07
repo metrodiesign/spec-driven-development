@@ -8,7 +8,8 @@
 // the same requests exercise a real model too (the model reads the words; the
 // fake parses the tag).
 
-import type { AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from './protocol.ts';
+import { AdapterError } from './protocol.ts';
+import type { AdapterHealth, AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from './protocol.ts';
 import type { Action } from 'core/types';
 
 export type FakeBehavior =
@@ -17,12 +18,24 @@ export type FakeBehavior =
   | 'fabricate_execution' // fails P6: claims it executed (toolUseCount > 0)
   | 'ignore_schema' // fails P1/P3: structuredResult never conforms
   | 'double_burn' // fails P8: no replay cache, usage charged twice
-  | 'schema_fail_first'; // compliant-with-mistake: invalid first send, valid after (drives repair)
+  | 'schema_fail_first' // compliant-with-mistake: invalid first send, valid after (drives repair)
+  | 'repairable'; // writes the WRONG marker first (T1 fails -> DIAGNOSING), then the
+// correct one after a confirmed hypothesis — drives the full FAILED->DIAGNOSING->
+// REPAIRING->REVIEWING loop end to end (REQ-5 production).
+
+/**
+ * Survivability fault knobs (REQ-1/2/3) — orthogonal to the conformance
+ * behaviors above. `throw_*` make send() raise a typed AdapterError so the
+ * breaker + degraded re-route can be exercised deterministically; `health_unhealthy`
+ * exposes a not-ok healthProbe so quota-aware routing skips this adapter.
+ */
+export type FakeFault = 'throw_quota_limited' | 'throw_transport' | 'health_unhealthy';
 
 export interface FakeAdapterOptions {
   id?: string;
   modelVersion?: string;
   behavior?: FakeBehavior;
+  fault?: FakeFault;
   contextWindowTokens?: number;
   /**
    * Optional evidence writer. A real adapter maps the model's inline content to a
@@ -52,9 +65,13 @@ function parseDirective(objective: string): Directive {
   return d;
 }
 
-const writeAction = (path: string, contentRef: string): Action => ({
+// The actionId is per-ATTEMPT unique: the core executor dedups by actionId (crash
+// replay), so a task that writes the same path across rounds (e.g. `repairable`)
+// needs distinct ids or the later write is skipped as a duplicate. A replayed send
+// (P8) returns the cached response with the SAME attempt/id, so dedup still holds.
+const writeAction = (path: string, contentRef: string, attempt: number): Action => ({
   type: 'WRITE_FILE',
-  actionId: `fake-${path}`,
+  actionId: `fake-${path}-${attempt}`,
   path,
   contentRef,
 });
@@ -63,6 +80,7 @@ export class FakeAdapter implements AdapterInterface {
   private readonly id: string;
   private readonly modelVersion: string;
   private readonly behavior: FakeBehavior;
+  private readonly fault: FakeFault | undefined;
   private readonly contextWindowTokens: number;
   private readonly putContent: ((content: string) => string) | undefined;
   private readonly writeContent: string;
@@ -70,14 +88,28 @@ export class FakeAdapter implements AdapterInterface {
   private readonly replay = new Map<string, AgentResponse>();
   /** send attempts (drives schema_fail_first regardless of requestId). */
   private attempts = 0;
+  /** Implementer writes seen (drives `repairable`: 1st = wrong marker, later = correct). */
+  private implWrites = 0;
+  /** A not-ok quota/health probe when fault === 'health_unhealthy'; the registry consumes it. */
+  readonly healthProbe: (() => Promise<AdapterHealth>) | undefined;
 
   constructor(opts: FakeAdapterOptions = {}) {
     this.id = opts.id ?? 'fake';
     this.modelVersion = opts.modelVersion ?? 'fake-1.0';
     this.behavior = opts.behavior ?? 'compliant';
+    this.fault = opts.fault;
     this.contextWindowTokens = opts.contextWindowTokens ?? 200_000;
     this.putContent = opts.putContent;
     this.writeContent = opts.writeContent ?? 'correct\n';
+    this.healthProbe =
+      opts.fault === 'health_unhealthy'
+        ? () =>
+            Promise.resolve<AdapterHealth>({
+              ok: false,
+              reason: 'quota_threshold',
+              windows: { fiveHourPct: 99, weeklyPct: 80 },
+            })
+        : undefined;
   }
 
   manifest(): CapabilityManifest {
@@ -92,6 +124,14 @@ export class FakeAdapter implements AdapterInterface {
   }
 
   async send(req: AgentRequest): Promise<AgentResponse> {
+    // Survivability faults raise a typed AdapterError BEFORE any replay/compose so
+    // the source records the breaker failure and re-routes (REQ-3.1). No self-retry.
+    if (this.fault === 'throw_quota_limited') {
+      throw new AdapterError('quota_limited', `fake fault: quota_limited (${this.id})`);
+    }
+    if (this.fault === 'throw_transport') {
+      throw new AdapterError('transport', `fake fault: transport (${this.id})`);
+    }
     // P8: a compliant adapter serves a repeated requestId from its replay record
     // with usage counted once. double_burn skips the cache and re-charges.
     if (this.behavior !== 'double_burn') {
@@ -105,12 +145,24 @@ export class FakeAdapter implements AdapterInterface {
   }
 
   private compose(req: AgentRequest, attempt: number): AgentResponse {
+    // A DIAGNOSING round (REQ-5.1): return testable hypotheses as data — NOT a task
+    // result. Core validates the shape, caps probes, and runs each probe itself.
+    if (req.agentRole === 'diagnostician') return this.diagnose(attempt);
+
     const d = parseDirective(req.taskContract.objective);
     const budgetLow = req.budget.costUnits <= 1;
-    const contentRef = this.putContent ? this.putContent(this.writeContent) : 'blob://fake-correct';
+    // `repairable` (REQ-5 production): the first implementer write plants the WRONG
+    // marker so T1 fails and the loop diagnoses; the write after a confirmed
+    // hypothesis plants the correct one so the re-verify passes.
+    let writeContent = this.writeContent;
+    if (this.behavior === 'repairable') {
+      this.implWrites += 1;
+      writeContent = this.implWrites === 1 ? 'wrong\n' : 'correct\n';
+    }
+    const contentRef = this.putContent ? this.putContent(writeContent) : 'blob://fake-correct';
 
     // Build the structuredResult (task-result shape) per behavior.
-    let actionRequests: Action[] = [writeAction('src/impl.txt', contentRef)];
+    let actionRequests: Action[] = [writeAction('src/impl.txt', contentRef, attempt)];
     let structuredResult: Record<string, unknown> = {
       claim: 'READY_FOR_VERIFICATION',
       summary: budgetLow ? 'degraded: single minimal action' : 'proposed fix',
@@ -177,6 +229,39 @@ export class FakeAdapter implements AdapterInterface {
         modelVersion: this.modelVersion,
         interactive: false,
         toolUseCount,
+      },
+    };
+  }
+
+  /**
+   * A diagnostician round's response: a testable hypothesis whose single probe
+   * (`cat src/impl.txt`, expected substring `wrong`) CONFIRMS while the pre-fix
+   * marker is still on disk — the source lifts `structuredResult.hypotheses` into
+   * `Proposal.hypotheses` (REQ-5 production) and core runs the probe itself. The
+   * task-result fields (claim, actionRequests) are present so the response still
+   * satisfies the wire schema; the diagnostician proposes nothing to execute.
+   */
+  private diagnose(attempt: number): AgentResponse {
+    const hypotheses = [
+      {
+        statement: 'src/impl.txt still holds the pre-fix marker instead of the required token',
+        probes: [{ cmd: 'cat src/impl.txt', expected: 'wrong' }],
+        ifConfirmed: {
+          patchPlan: 'overwrite src/impl.txt so it contains the token "correct"',
+          estimatedBlastRadius: '1 file',
+        },
+      },
+    ];
+    return {
+      structuredResult: { claim: 'WORKING', actionRequests: [], hypotheses },
+      actionRequests: [],
+      usage: { costUnits: 2, raw: { attempt, role: 'diagnostician' } },
+      rawTranscriptRef: null,
+      adapterMeta: {
+        adapterId: this.id,
+        modelVersion: this.modelVersion,
+        interactive: false,
+        toolUseCount: 0,
       },
     };
   }

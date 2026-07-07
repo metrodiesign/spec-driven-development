@@ -5,12 +5,12 @@
 // The SDK `query` is injected so the adapter is unit-testable with a mock
 // transport (CI never spends quota); production passes the real SDK query.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { serializeBundle } from 'core';
 import { AdapterError } from 'aal';
-import type { AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
+import type { AdapterHealth, AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
 import type { Action } from 'core';
 
 export interface SdkMessage {
@@ -47,7 +47,20 @@ export interface AnthropicAdapterOptions {
   pollIntervalMs?: number;
   pollAttempts?: number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Quota estimate injected by the composition root from the console usage
+   * estimator (REQ-2.5) — the adapter itself stays estimation-free. Returns
+   * per-window ESTIMATES (AZ-19) or null when no estimate is available.
+   */
+  quotaProbe?: () => Promise<{ fiveHourPct: number; weeklyPct: number } | null>;
+  /** Health flips not-ok when either window's estimate meets this (default 85%). */
+  quotaThresholdPct?: number;
 }
+
+/** The Claude adapter plus its (optional) quota-aware health probe for the registry. */
+export type AnthropicAdapter = AdapterInterface & {
+  healthProbe?: () => Promise<AdapterHealth>;
+};
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -77,6 +90,31 @@ export function normalizeActions(raw: unknown, put: (content: string) => string)
   });
 }
 
+/**
+ * Glob the projects root once (REQ-17.4): scan each project subdir for the
+ * transcript the nested process may have written elsewhere. Returns the file
+ * content, or null if the root/entries are unreadable — never throws (REQ-17.5).
+ */
+function globTranscript(projectsRoot: string, sessionId: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(projectsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return null;
+  }
+  for (const dir of entries) {
+    const candidate = join(projectsRoot, dir, `${sessionId}.jsonl`);
+    if (existsSync(candidate)) {
+      try {
+        return readFileSync(candidate, 'utf8');
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 /** Classify an SDK/transport error into a typed AdapterError (never self-retry, INV-5). */
 function classify(err: unknown): AdapterError {
   const msg = err instanceof Error ? err.message : String(err);
@@ -85,22 +123,50 @@ function classify(err: unknown): AdapterError {
   return new AdapterError('transport', msg);
 }
 
-export function createAnthropicAdapter(opts: AnthropicAdapterOptions): AdapterInterface {
+export function createAnthropicAdapter(opts: AnthropicAdapterOptions): AnthropicAdapter {
   const id = opts.id ?? 'claude';
   const per1k = opts.costUnitsPer1k ?? 1;
   const sleep = opts.sleep ?? realSleep;
   const pollAttempts = opts.pollAttempts ?? 10;
   const pollIntervalMs = opts.pollIntervalMs ?? 200;
+  const quotaThresholdPct = opts.quotaThresholdPct ?? 85;
   const replayPath = (requestId: string): string => join(opts.replayDir, `${encodeURIComponent(requestId)}.json`);
 
-  async function captureTranscript(sessionId: string | null): Promise<string | null> {
-    if (sessionId === null || opts.transcriptDir === undefined) return null;
-    const path = join(opts.transcriptDir, `${sessionId}.jsonl`);
+  // Map the injected estimate to an AdapterHealth (probe vs threshold) — the only
+  // "quota logic" the adapter holds is the comparison; the estimate itself is the
+  // injected closure's job (REQ-2.5, INV-13 claim discipline).
+  const healthProbe: (() => Promise<AdapterHealth>) | undefined =
+    opts.quotaProbe === undefined
+      ? undefined
+      : async (): Promise<AdapterHealth> => {
+          const w = await opts.quotaProbe!();
+          if (w === null) return { ok: false, reason: 'probe_failed' };
+          const max = Math.max(w.fiveHourPct, w.weeklyPct);
+          return max >= quotaThresholdPct
+            ? { ok: false, reason: 'quota_threshold', windows: w }
+            : { ok: true, windows: w };
+        };
+
+  /**
+   * Capture the run's transcript (REQ-17.4/17.5, REQ-4.6). Poll the PREDICTED path,
+   * then — because a nested `claude` process munges HOME/cwd and can write under a
+   * DIFFERENT projects subdir than we predicted -- glob every sibling project
+   * ONCE before giving up. Both miss -> structured null, never a crash.
+   */
+  async function captureTranscript(
+    sessionId: string | null,
+  ): Promise<{ ref: string | null; source: string }> {
+    if (sessionId === null) return { ref: null, source: 'no_session_id' };
+    if (opts.transcriptDir === undefined) return { ref: null, source: 'no_transcript_dir' };
+    const predicted = join(opts.transcriptDir, `${sessionId}.jsonl`);
     for (let i = 0; i < pollAttempts; i += 1) {
-      if (existsSync(path)) return opts.putEvidence(readFileSync(path, 'utf8'));
+      if (existsSync(predicted)) return { ref: opts.putEvidence(readFileSync(predicted, 'utf8')), source: 'predicted' };
       await sleep(pollIntervalMs);
     }
-    return null; // absent/unflushed — structured null, never a crash (REQ-4.6)
+    // Predicted path missed after polling — glob every sibling project dir ONCE.
+    const globHit = globTranscript(dirname(opts.transcriptDir), sessionId);
+    if (globHit !== null) return { ref: opts.putEvidence(globHit), source: 'glob_fallback' };
+    return { ref: null, source: 'not_found_after_poll_and_glob' };
   }
 
   function buildPrompt(req: AgentRequest): string {
@@ -124,6 +190,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): AdapterIn
   }
 
   return {
+    ...(healthProbe ? { healthProbe } : {}),
     manifest(): CapabilityManifest {
       return {
         adapterId: id,
@@ -183,12 +250,17 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): AdapterIn
       const ar = (structuredResult as { actionRequests?: unknown }).actionRequests;
       const actionRequests: Action[] = normalizeActions(ar, opts.putEvidence);
 
-      const rawTranscriptRef = await captureTranscript(sessionId);
+      const transcript = await captureTranscript(sessionId);
       const response: AgentResponse = {
         structuredResult,
         actionRequests,
-        usage: { costUnits: ((inTok + outTok) / 1000) * per1k, raw: { input_tokens: inTok, output_tokens: outTok } },
-        rawTranscriptRef,
+        usage: {
+          costUnits: ((inTok + outTok) / 1000) * per1k,
+          // `transcriptSource` is the structured reason (predicted/glob_fallback/miss)
+          // that accompanies rawTranscriptRef — observable, never a bare null (REQ-17.5).
+          raw: { input_tokens: inTok, output_tokens: outTok, transcriptSource: transcript.source },
+        },
+        rawTranscriptRef: transcript.ref,
         adapterMeta: { adapterId: id, modelVersion: opts.model ?? 'unknown', interactive: false, toolUseCount },
       };
 

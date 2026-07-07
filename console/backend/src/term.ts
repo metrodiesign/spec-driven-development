@@ -9,8 +9,14 @@ export interface PtyLike {
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number }) => void): void;
   write(data: string): void;
+  /** Resize the PTY (SIGWINCH). Control signal only — never writes to the data stream (REQ-17.1/17.3). */
+  resize(cols: number, rows: number): void;
   kill(signal?: string): void;
 }
+
+/** Initial PTY geometry — the single source both the spawner and the manager use, so
+ *  the repaint nudge toggles around the ACTUAL size, never resizing the terminal (REQ-17.1). */
+export const DEFAULT_PTY_DIMS = { cols: 120, rows: 32 } as const;
 
 export type SpawnPty = (file: string, args: string[], opts: { cwd: string; env: Record<string, string> }) => PtyLike;
 
@@ -40,6 +46,9 @@ interface Session {
   pty: PtyLike;
   ring: string;
   alive: boolean;
+  /** Current geometry, tracked per session so the repaint nudge toggles around it (REQ-17.1). */
+  cols: number;
+  rows: number;
   /** The single active writer's ticket; a new attach takes over (REQ-13.9). */
   writerTicket: string | null;
   /** Live output taps (WS bridges). Reads are unrestricted; writes stay single-writer. */
@@ -68,6 +77,14 @@ export interface TermManager {
   /** Tap live PTY output (REQ-13.2 streaming). Returns an unsubscribe. */
   onData(ptyId: string, cb: (data: string) => void): () => void;
   write(ptyId: string, ticket: string, data: string): boolean;
+  /** Set the session geometry (REQ-17.1) — the WS bridge holds only a ptyId, never PtyLike. */
+  resize(ptyId: string, cols: number, rows: number): boolean;
+  /**
+   * Force a repaint on (re)attach: a double resize (rows−1 → rows) that fires SIGWINCH
+   * so a full-screen TUI redraws its whole frame (REQ-17.2). Signal-only — no bytes are
+   * injected, so the ring stays a byte-prefix of the PTY stream (REQ-17.3).
+   */
+  nudgeRepaint(ptyId: string): boolean;
   list(): { ptyId: string; project: string; mode: TermMode; alive: boolean }[];
   kill(ptyId: string): boolean;
 }
@@ -94,7 +111,10 @@ export function createTermManager(deps: TermManagerDeps): TermManager {
       const { file, args } = deps.buildCommand(input);
       const pty = deps.spawn(file, args, { cwd: deps.cwdFor(input.project), env: { TERM: 'xterm-256color' } });
       const id = deps.nextId();
-      const s: Session = { id, project: input.project, mode: input.mode, pty, ring: '', alive: true, writerTicket: null, taps: new Set() };
+      const s: Session = {
+        id, project: input.project, mode: input.mode, pty, ring: '', alive: true,
+        cols: DEFAULT_PTY_DIMS.cols, rows: DEFAULT_PTY_DIMS.rows, writerTicket: null, taps: new Set(),
+      };
       pty.onData((d) => {
         s.ring = (s.ring + d).slice(-RING_BYTES);
         for (const tap of s.taps) tap(d);
@@ -138,6 +158,25 @@ export function createTermManager(deps: TermManagerDeps): TermManager {
       if (s === undefined || !s.alive) return false;
       if (s.writerTicket !== ticket) return false; // only the active writer
       s.pty.write(data);
+      return true;
+    },
+
+    resize(ptyId, cols, rows) {
+      const s = sessions.get(ptyId);
+      if (s === undefined || !s.alive || cols <= 0 || rows <= 0) return false;
+      s.cols = cols;
+      s.rows = rows;
+      s.pty.resize(cols, rows);
+      return true;
+    },
+
+    nudgeRepaint(ptyId) {
+      const s = sessions.get(ptyId);
+      if (s === undefined || !s.alive || s.rows <= 1) return false;
+      // Toggle rows off-by-one then back: two SIGWINCHes around the SAME geometry.
+      // No pty.write, so s.ring is untouched — byte-prefix invariant holds (REQ-17.3).
+      s.pty.resize(s.cols, s.rows - 1);
+      s.pty.resize(s.cols, s.rows);
       return true;
     },
 

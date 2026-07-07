@@ -91,11 +91,140 @@ test('approve with incomplete attestations -> 400, no transition (REQ-9.3)', () 
   } finally { h.cleanup(); }
 });
 
-test('steering endpoints -> 501 not_enabled_phase1 (REQ-10.5)', () => {
+test('GET /approvals also lists governance proposals when the plane is present (REQ-9.4)', () => {
+  const h = deps({
+    governanceProposals: () => [
+      { id: 'gov-1', kind: 'policy_change', beforeHash: null, afterHash: 'x', rationale: 'r' },
+    ],
+  });
+  try {
+    const r = handleHumanRequest(httpReq({ path: '/approvals', headers: auth() }), h.d);
+    assert.equal(r.status, 200);
+    const body = r.body as Array<{ kind?: string }>;
+    assert.equal(body.length, 2); // one task package + one governance proposal
+    assert.equal(body.some((x) => x.kind === 'policy_change'), true);
+  } finally { h.cleanup(); }
+});
+
+test('POST governance approval routes to onGovernanceApprove, never onDecision (REQ-9.4)', () => {
+  const approved: string[] = [];
+  const h = deps({
+    onGovernanceApprove: (id) => {
+      approved.push(id);
+      return { ok: true, kind: 'flaky_quarantine' };
+    },
+  });
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/gov-9', headers: auth(), body: '' }), h.d);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { kind: 'flaky_quarantine' });
+    assert.deepEqual(approved, ['gov-9']);
+    assert.equal(h.decisions.length, 0); // governance never fires a task transition
+    assert.equal(h.log.all({ type: 'APPROVAL_RECORDED' }).length, 0); // nor a task approval record
+  } finally { h.cleanup(); }
+});
+
+test('unknown governance id -> 404 no_such_approval (REQ-9.4)', () => {
+  const h = deps({ onGovernanceApprove: () => ({ ok: false, detail: 'no_such_proposal' }) });
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/gov-nope', headers: auth(), body: '' }), h.d);
+    assert.equal(r.status, 404);
+  } finally { h.cleanup(); }
+});
+
+test('unknown id with no governance plane -> 404 (Phase-1 behavior preserved)', () => {
+  const h = deps();
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/nope', headers: auth(), body: '' }), h.d);
+    assert.equal(r.status, 404);
+  } finally { h.cleanup(); }
+});
+
+test('steering endpoints -> 501 when the plane exposes no steering (Phase-1 server unchanged)', () => {
   const h = deps();
   try {
     const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/pause', headers: auth() }), h.d);
     assert.equal(r.status, 501);
+  } finally { h.cleanup(); }
+});
+
+function steerDeps(over?: Partial<HandlerDeps>) {
+  const calls: string[] = [];
+  let state: import('../types.ts').TaskState = 'IMPLEMENTING';
+  const h = deps({
+    steeringState: () => state,
+    onPause: () => { calls.push('pause'); },
+    onResume: () => { calls.push('resume'); },
+    onInject: (g) => { calls.push(`inject:${g}`); return { ok: true, evidenceRef: 'blob://guid' }; },
+    ...over,
+  });
+  return { ...h, calls, setState: (s: import('../types.ts').TaskState) => { state = s; } };
+}
+
+test('POST /steering/pause when steerable -> 202 pause_requested + signals control (REQ-10.1)', () => {
+  const h = steerDeps();
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/pause', headers: auth() }), h.d);
+    assert.equal(r.status, 202);
+    assert.deepEqual(r.body, { state: 'pause_requested' });
+    assert.deepEqual(h.calls, ['pause']);
+  } finally { h.cleanup(); }
+});
+
+test('POST /steering/inject legal ONLY in PAUSED — 409 otherwise (REQ-10.4)', () => {
+  const h = steerDeps();
+  try {
+    const notPaused = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/inject', headers: auth(), body: JSON.stringify({ guidance: 'g' }) }), h.d);
+    assert.equal(notPaused.status, 409);
+    h.setState('PAUSED');
+    const paused = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/inject', headers: auth(), body: JSON.stringify({ guidance: 'try X' }) }), h.d);
+    assert.equal(paused.status, 202);
+    assert.deepEqual(paused.body, { evidenceRef: 'blob://guid' });
+    assert.deepEqual(h.calls, ['inject:try X']);
+  } finally { h.cleanup(); }
+});
+
+test('POST /steering/resume -> 202 resumed + signals control (REQ-10.3)', () => {
+  const h = steerDeps();
+  try {
+    h.setState('PAUSED');
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/resume', headers: auth() }), h.d);
+    assert.equal(r.status, 202);
+    assert.deepEqual(r.body, { state: 'resumed' });
+    assert.deepEqual(h.calls, ['resume']);
+  } finally { h.cleanup(); }
+});
+
+test('steering from MERGE_QUEUED onward -> 409 structured, no boundary exists (REQ-10.8)', () => {
+  const h = steerDeps();
+  try {
+    for (const s of ['MERGE_QUEUED', 'AUDITED', 'COMPLETED'] as const) {
+      h.setState(s);
+      const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/pause', headers: auth() }), h.d);
+      assert.equal(r.status, 409, `pause refused in ${s}`);
+      assert.equal((r.body as { state?: string }).state, s);
+    }
+    assert.deepEqual(h.calls, [], 'the control port is never signaled for a non-steerable state');
+  } finally { h.cleanup(); }
+});
+
+test('inject with no guidance body -> 400 (REQ-10.5)', () => {
+  const h = steerDeps();
+  try {
+    h.setState('PAUSED');
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/inject', headers: auth(), body: '{}' }), h.d);
+    assert.equal(r.status, 400);
+  } finally { h.cleanup(); }
+});
+
+test('a task-approval decision arriving while PAUSED -> 409, resume first (REQ-10.9)', () => {
+  const h = steerDeps();
+  try {
+    h.setState('PAUSED');
+    const body = JSON.stringify({ decision: 'approve', attestations: ['I reviewed the diff', 'Tests cover the change'] });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/A-1', headers: auth(), body }), h.d);
+    assert.equal(r.status, 409);
+    assert.equal(h.decisions.length, 0, 'no transition fired while paused');
   } finally { h.cleanup(); }
 });
 

@@ -4,11 +4,12 @@
 // users (REQ-12.6 — enforced by negative tests).
 
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
 import { allTimestamps, readProjects, readSessions } from './claude-data.ts';
 import { buildEstimate, MONEY_DISCLAIMER, type UsageConfig } from './usage.ts';
@@ -24,6 +25,14 @@ import {
   type ScopeValues,
 } from './govern.ts';
 import { activityHookEntry, buildSessionSearch, indexUsage, InvalidIngestUrlError, type UsageRecord } from './observe.ts';
+import {
+  confirmToken,
+  jsonDiffPreview,
+  retentionPreview,
+  validateHookConfig,
+  validateMcpConfig,
+  validateSubagentFrontmatter,
+} from './surfaces.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +46,8 @@ export interface AppDeps {
   now(): number;
   /** Overridable for tests. */
   cliVersion?(): Promise<string>;
+  /** Captured non-interactive `claude doctor` output (REQ-15.1). Overridable for tests. */
+  doctorCapture?(): Promise<string>;
   /** Built SPA directory; when present the app serves it at / (REQ-12.7 UI). */
   webDistDir?: string;
   /** F-Term manager (Phase 1). When present, term routes register (loopback-only hard). */
@@ -45,6 +56,13 @@ export interface AppDeps {
   termRateOk?(): boolean;
   /** Per-install token for the activity ingest endpoint (REQ-19.2). */
   activityToken?: string;
+  /**
+   * Append-only governance audit sink (REQ-18.3): hook install/uninstall, retention
+   * prune. Absent = no-op; the live server appends to the shared audit JSONL, tests
+   * inject a capture. Loop-side approvals/steering/kill/governance decisions are
+   * recorded in the durable core event log by their producing tasks (3/4/5).
+   */
+  audit?(entry: Record<string, unknown>): void;
 }
 
 const DISCLAIMER =
@@ -353,6 +371,294 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     } finally {
       search.close();
     }
+  });
+
+  // ===== Phase-2 governance surfaces (F-MCP/F-Hook/F-Sub/F-Skill/F-Sys) =====
+  // All copy the F-Mem pattern: GET -> {content, hash}; writes go through writeSafe
+  // (409 conflict / 422 invalid / 200). The MANAGED scope never gets a PUT route
+  // (REQ-13.4) — read-only by construction. The audit sink records every write.
+
+  const audit = (entry: Record<string, unknown>): void => deps.audit?.({ at: deps.now(), ...entry });
+
+  const projectBase = (project: string | undefined): string | null => {
+    if (typeof project !== 'string' || project.length === 0 || project.includes('..')) return null;
+    return join(deps.homeDir, project);
+  };
+  const settingsScopePath = (scope: string, project: string | undefined): string | null => {
+    if (scope === 'user') return join(deps.homeDir, '.claude', 'settings.json');
+    if (scope === 'project') { const b = projectBase(project); return b === null ? null : join(b, '.claude', 'settings.json'); }
+    if (scope === 'local') { const b = projectBase(project); return b === null ? null : join(b, '.claude', 'settings.local.json'); }
+    return null; // managed (or unknown) has no writable path — REQ-13.4
+  };
+  const contentHash = (p: string): { content: string; hash: string | null } => {
+    const content = existsSync(p) ? readFileSync(p, 'utf8') : '';
+    return { content, hash: content === '' ? null : govSha256(content) };
+  };
+  const putThrough = (
+    reply: FastifyReply,
+    p: string,
+    content: string,
+    baseHash: string | null | undefined,
+    validate?: (c: string) => string | null,
+  ): unknown => {
+    mkdirSync(dirname(p), { recursive: true });
+    const result = writeSafeFile(p, content, baseHash ?? null, validate);
+    if (!result.ok && result.reason === 'conflict') return reply.code(409).send({ error: 'conflict', currentHash: result.currentHash });
+    if (!result.ok) return reply.code(422).send({ error: result.detail });
+    return { saved: true, hash: result.newHash };
+  };
+  const safeName = (name: string): boolean => name.length > 0 && !name.includes('/') && !name.includes('..');
+  const readJson = (p: string): Record<string, unknown> => {
+    if (!existsSync(p)) return {};
+    try { return JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>; } catch { return {}; }
+  };
+
+  // --- F-MCP (REQ-12): project .mcp.json writable; user scope read-only view ---
+  const mcpPath = (scope: string, project: string | undefined): string | null => {
+    if (scope === 'user') return join(deps.homeDir, '.claude.json'); // multi-purpose CLI state — READ-ONLY (AZ-18)
+    if (scope === 'project') { const b = projectBase(project); return b === null ? null : join(b, '.mcp.json'); }
+    return null;
+  };
+  app.get<{ Params: { scope: string }; Querystring: { project?: string } }>('/api/mcp/:scope', async (req, reply) => {
+    const p = mcpPath(req.params.scope, req.query.project);
+    if (p === null) return reply.code(400).send({ error: 'bad scope/project' });
+    return { scope: req.params.scope, readOnly: req.params.scope !== 'project', ...contentHash(p) };
+  });
+  // PUT registered ONLY for the project scope — user/managed stay read-only (REQ-12.1/13.4).
+  app.put<{ Body: { project?: string; content?: string; baseHash?: string | null } }>('/api/mcp/project', async (req, reply) => {
+    const b = req.body ?? {};
+    const p = mcpPath('project', b.project);
+    if (p === null || typeof b.content !== 'string') return reply.code(400).send({ error: 'bad project/content' });
+    return putThrough(reply, p, b.content, b.baseHash, validateMcpConfig);
+  });
+  app.post<{ Body: { transport?: string; command?: string; url?: string } }>('/api/mcp/test', async (req) => {
+    // Advisory ONLY — never a verdict that blocks saving (REQ-12.3).
+    const { transport, command, url } = req.body ?? {};
+    if (transport === 'http' && typeof url === 'string') {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      try {
+        const r = await fetch(url, { signal: ctrl.signal });
+        return { advisory: true, reachable: true, status: r.status };
+      } catch (e) {
+        return { advisory: true, reachable: false, detail: (e as Error).message };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (transport === 'stdio' && typeof command === 'string') {
+      try {
+        await execFileAsync(command, [], { timeout: 3000 });
+        return { advisory: true, reachable: true };
+      } catch (e) {
+        // A non-zero exit still means the binary spawned — advisory, not a blocker.
+        return { advisory: true, reachable: false, detail: (e as Error).message };
+      }
+    }
+    return { advisory: true, reachable: false, detail: 'provide transport stdio+command or http+url' };
+  });
+
+  // --- F-Hook (REQ-13): two-step consent gate over settings.json scopes ---
+  app.get<{ Params: { scope: string }; Querystring: { project?: string } }>('/api/hooks/:scope', async (req, reply) => {
+    const p = settingsScopePath(req.params.scope, req.query.project);
+    if (p === null) return reply.code(400).send({ error: 'bad or read-only scope' });
+    return { scope: req.params.scope, ...contentHash(p) };
+  });
+  app.post<{ Body: { scope?: string; project?: string; content?: string } }>('/api/hooks/validate', async (req, reply) => {
+    const b = req.body ?? {};
+    const p = settingsScopePath(b.scope ?? 'user', b.project);
+    if (p === null || typeof b.content !== 'string') return reply.code(400).send({ error: 'bad scope/content' });
+    const { content: current, hash: baseHash } = contentHash(p);
+    const error = validateHookConfig(b.content);
+    return {
+      valid: error === null,
+      error,
+      diff: jsonDiffPreview(current, b.content),
+      baseHash,
+      confirmToken: confirmToken(baseHash, b.content),
+    };
+  });
+  type HookBody = { scope?: string; project?: string; content?: string; confirmToken?: string; baseHash?: string | null };
+  const hookWrite = (verb: 'install' | 'uninstall') =>
+    async (req: FastifyRequest<{ Body: HookBody }>, reply: FastifyReply): Promise<unknown> => {
+      const b = req.body ?? {};
+      const p = settingsScopePath(b.scope ?? '', b.project);
+      if (p === null || typeof b.content !== 'string') return reply.code(400).send({ error: 'bad or read-only scope/content' });
+      // Consent gate (REQ-13.3): the echoed token must match sha256(baseHash + content).
+      if (typeof b.confirmToken !== 'string' || b.confirmToken !== confirmToken(b.baseHash ?? null, b.content)) {
+        return reply.code(428).send({ error: 'missing or stale confirmToken; re-run validate' });
+      }
+      // writeSafe re-checks the base against the CURRENT file: a moved base -> 409 (REQ-13.2).
+      const result = putThrough(reply, p, b.content, b.baseHash, validateHookConfig);
+      if (result !== null && typeof result === 'object' && 'saved' in (result as object)) {
+        audit({ event: `hook_${verb}`, scope: b.scope, path: p });
+      }
+      return result;
+    };
+  app.post<{ Body: HookBody }>('/api/hooks/install', hookWrite('install'));
+  app.post<{ Body: HookBody }>('/api/hooks/uninstall', hookWrite('uninstall'));
+
+  // --- F-Sub (REQ-14.1/14.3): CRUD .claude/agents/*.md, frontmatter-validated ---
+  const agentsDir = (scope: string, project: string | undefined): string | null => {
+    if (scope === 'user') return join(deps.homeDir, '.claude', 'agents');
+    if (scope === 'project') { const b = projectBase(project); return b === null ? null : join(b, '.claude', 'agents'); }
+    return null;
+  };
+  app.get<{ Querystring: { scope?: string; project?: string } }>('/api/subagents', async (req) => {
+    const dir = agentsDir(req.query.scope ?? 'user', req.query.project);
+    const names = dir !== null && existsSync(dir)
+      ? readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).sort()
+      : [];
+    return { subagents: names };
+  });
+  app.get<{ Params: { name: string }; Querystring: { scope?: string; project?: string } }>('/api/subagents/:name', async (req, reply) => {
+    const dir = agentsDir(req.query.scope ?? 'user', req.query.project);
+    if (dir === null || !safeName(req.params.name)) return reply.code(400).send({ error: 'bad scope/name' });
+    return contentHash(join(dir, `${req.params.name}.md`));
+  });
+  app.put<{ Params: { name: string }; Body: { scope?: string; project?: string; content?: string; baseHash?: string | null } }>(
+    '/api/subagents/:name',
+    async (req, reply) => {
+      const b = req.body ?? {};
+      const dir = agentsDir(b.scope ?? 'user', b.project);
+      if (dir === null || !safeName(req.params.name) || typeof b.content !== 'string') {
+        return reply.code(400).send({ error: 'bad scope/name/content' });
+      }
+      return putThrough(reply, join(dir, `${req.params.name}.md`), b.content, b.baseHash, (c) => {
+        const v = validateSubagentFrontmatter(c);
+        return v.ok ? null : v.error;
+      });
+    },
+  );
+  app.delete<{ Params: { name: string }; Querystring: { scope?: string; project?: string } }>('/api/subagents/:name', async (req, reply) => {
+    const dir = agentsDir(req.query.scope ?? 'user', req.query.project);
+    if (dir === null || !safeName(req.params.name)) return reply.code(400).send({ error: 'bad scope/name' });
+    const p = join(dir, `${req.params.name}.md`);
+    const existed = existsSync(p);
+    if (existed) unlinkSync(p);
+    return { deleted: existed };
+  });
+
+  // --- F-Skill (REQ-14.2): list/edit SKILL.md + toggle enabledPlugins in settings ---
+  const skillsDir = (scope: string, project: string | undefined): string | null => {
+    if (scope === 'user') return join(deps.homeDir, '.claude', 'skills');
+    if (scope === 'project') { const b = projectBase(project); return b === null ? null : join(b, '.claude', 'skills'); }
+    return null;
+  };
+  app.get<{ Querystring: { scope?: string; project?: string } }>('/api/skills', async (req) => {
+    const dir = skillsDir(req.query.scope ?? 'user', req.query.project);
+    const names = dir !== null && existsSync(dir)
+      ? readdirSync(dir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, 'SKILL.md')))
+          .map((d) => d.name).sort()
+      : [];
+    return { skills: names };
+  });
+  app.get<{ Params: { name: string }; Querystring: { scope?: string; project?: string } }>('/api/skills/:name', async (req, reply) => {
+    const dir = skillsDir(req.query.scope ?? 'user', req.query.project);
+    if (dir === null || !safeName(req.params.name)) return reply.code(400).send({ error: 'bad scope/name' });
+    return contentHash(join(dir, req.params.name, 'SKILL.md'));
+  });
+  app.put<{ Params: { name: string }; Body: { scope?: string; project?: string; content?: string; baseHash?: string | null } }>(
+    '/api/skills/:name',
+    async (req, reply) => {
+      const b = req.body ?? {};
+      const dir = skillsDir(b.scope ?? 'user', b.project);
+      if (dir === null || !safeName(req.params.name) || typeof b.content !== 'string') {
+        return reply.code(400).send({ error: 'bad scope/name/content' });
+      }
+      return putThrough(reply, join(dir, req.params.name, 'SKILL.md'), b.content, b.baseHash);
+    },
+  );
+  app.put<{ Body: { scope?: string; project?: string; plugin?: string; enabled?: boolean; baseHash?: string | null } }>(
+    '/api/settings/enabled-plugins',
+    async (req, reply) => {
+      const b = req.body ?? {};
+      const p = settingsScopePath(b.scope ?? '', b.project);
+      if (p === null || typeof b.plugin !== 'string' || typeof b.enabled !== 'boolean') {
+        return reply.code(400).send({ error: 'bad or read-only scope/plugin/enabled' });
+      }
+      const settings = readJson(p);
+      const set = new Set(Array.isArray(settings['enabledPlugins']) ? (settings['enabledPlugins'] as string[]) : []);
+      if (b.enabled) set.add(b.plugin); else set.delete(b.plugin);
+      settings['enabledPlugins'] = [...set].sort();
+      return putThrough(reply, p, JSON.stringify(settings, null, 2) + '\n', b.baseHash);
+    },
+  );
+
+  // --- F-Sys (REQ-15): doctor capture / host stats / retention with two-step prune ---
+  const defaultDoctor = async (): Promise<string> => {
+    const { stdout } = await execFileAsync('claude', ['doctor'], { timeout: 15_000 });
+    return stdout;
+  };
+  app.get('/api/system/doctor', async () => {
+    try {
+      const output = await (deps.doctorCapture ?? defaultDoctor)();
+      return { available: true, output };
+    } catch (err) {
+      // Degraded card, NEVER a 500 (REQ-15.1, Phase-0 pattern).
+      return { available: false, degraded: true, hint: 'claude doctor unavailable — install the CLI and retry', detail: (err as Error).message };
+    }
+  });
+  app.get('/api/system/stats', async () => ({
+    platform: os.platform(),
+    arch: os.arch(),
+    cpus: os.cpus().length,
+    totalMem: os.totalmem(),
+    freeMem: os.freemem(),
+    loadAvg: os.loadavg(),
+    uptimeS: os.uptime(),
+  }));
+  app.put<{ Body: { scope?: string; project?: string; cleanupPeriodDays?: number; baseHash?: string | null } }>(
+    '/api/system/retention',
+    async (req, reply) => {
+      const b = req.body ?? {};
+      const p = settingsScopePath(b.scope ?? 'user', b.project);
+      if (p === null || typeof b.cleanupPeriodDays !== 'number' || b.cleanupPeriodDays < 0) {
+        return reply.code(400).send({ error: 'bad scope or cleanupPeriodDays' });
+      }
+      const settings = readJson(p);
+      settings['cleanupPeriodDays'] = Math.floor(b.cleanupPeriodDays);
+      return putThrough(reply, p, JSON.stringify(settings, null, 2) + '\n', b.baseHash);
+    },
+  );
+  // Transcript files a prune WOULD delete, oldest-first (REQ-15.3 preview).
+  const pruneCandidates = (cleanupPeriodDays: number): string[] => {
+    const projectsRoot = join(deps.homeDir, '.claude', 'projects');
+    if (!existsSync(projectsRoot)) return [];
+    const files: { path: string; mtimeMs: number }[] = [];
+    for (const proj of readdirSync(projectsRoot, { withFileTypes: true })) {
+      if (!proj.isDirectory()) continue;
+      const pdir = join(projectsRoot, proj.name);
+      for (const f of readdirSync(pdir)) {
+        if (!f.endsWith('.jsonl')) continue;
+        const abs = join(pdir, f);
+        files.push({ path: join(proj.name, f), mtimeMs: statSync(abs).mtimeMs });
+      }
+    }
+    return retentionPreview(files, cleanupPeriodDays, deps.now());
+  };
+  app.get<{ Querystring: { cleanupPeriodDays?: string } }>('/api/system/retention/preview', async (req) => {
+    const days = Number(req.query.cleanupPeriodDays ?? '30');
+    const candidates = pruneCandidates(Number.isFinite(days) && days >= 0 ? days : 30);
+    return { candidates, confirmToken: confirmToken(null, candidates.join('\n')) };
+  });
+  app.post<{ Body: { cleanupPeriodDays?: number; confirmToken?: string } }>('/api/system/retention/prune', async (req, reply) => {
+    const b = req.body ?? {};
+    const days = typeof b.cleanupPeriodDays === 'number' && b.cleanupPeriodDays >= 0 ? b.cleanupPeriodDays : 30;
+    // Never yank transcripts under an attached session (REQ-15.4).
+    if (deps.termManager !== undefined && deps.termManager.list().length > 0) {
+      return reply.code(409).send({ error: 'a terminal session is live; refusing to prune transcripts' });
+    }
+    const candidates = pruneCandidates(days);
+    // Two-step consent (REQ-15.3): the token must match the CURRENT candidate list.
+    if (typeof b.confirmToken !== 'string' || b.confirmToken !== confirmToken(null, candidates.join('\n'))) {
+      return reply.code(428).send({ error: 'missing or stale confirmToken; re-run preview' });
+    }
+    const projectsRoot = join(deps.homeDir, '.claude', 'projects');
+    for (const rel of candidates) unlinkSync(join(projectsRoot, rel));
+    audit({ event: 'retention_prune', count: candidates.length, cleanupPeriodDays: days });
+    return { pruned: candidates.length, files: candidates };
   });
 
   // --- Static SPA (built console/web) — path-contained, no directory listing ---

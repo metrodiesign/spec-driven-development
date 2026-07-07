@@ -1,7 +1,9 @@
 // Ring 0 shared types (unified-platform-spec.md §6). Vendor-neutral by law (INV-7).
 
 /** Roles and their write rights come from policy config (REQ-1.6, spec §6.1). */
-export type Role = 'planner' | 'test_designer' | 'implementer';
+// `diagnostician` (Phase 2, REQ-4) drives a DIAGNOSING round: reasoning + probe
+// RUN_COMMANDs only, empty write-prefix list (see executor/path-policy).
+export type Role = 'planner' | 'test_designer' | 'implementer' | 'diagnostician';
 
 /** Action DSL (spec §6.1). Content/diff travel as blob refs into the evidence store. */
 export type Action =
@@ -13,6 +15,8 @@ export type Action =
       cmd: string;
       cwd?: string;
       network: 'none' | `allowlist:${string}`;
+      /** Policy-pinned wall-time bound for this command (ms). Hypothesis probes set it (REQ-5.8). */
+      timeoutMs?: number;
     }
   | { type: 'READ_FILE'; actionId: string; path: string }
   | { type: 'REQUEST_TOOL'; actionId: string; name: string; args: unknown };
@@ -25,8 +29,63 @@ export interface ActionRejection {
     | 'golden_write_denied'
     | 'schema_violation'
     | 'sandbox_unavailable'
-    | 'unsupported_action_phase0';
+    | 'unsupported_action_phase0'
+    // A governed network grant (package_install) that failed the security-plane
+    // policy: pattern near-miss or missing lockfile (REQ-11.2, append-only).
+    | 'network_policy_denied';
   detail: string;
+}
+
+/**
+ * Hypothesis-driven repair (spec §9.3, REQ-5). A DIAGNOSING round returns these
+ * as UNTRUSTED data (INV-3); core validates the shape, caps probes, and runs each
+ * probe ITSELF through the executor (the agent never executes — INV-1).
+ */
+export interface HypothesisProbe {
+  /** Shell command run as RUN_COMMAND, network:'none', diagnostician role. */
+  cmd: string;
+  cwd?: string;
+  /** Substring the probe's captured output must contain to CONFIRM (REQ-5.4). */
+  expected: string;
+}
+
+export interface Hypothesis {
+  statement: string;
+  /** Cheapest-first (array order); core stops at the first confirming probe (REQ-5.3). */
+  probes: HypothesisProbe[];
+  ifConfirmed: { patchPlan: string; estimatedBlastRadius: string };
+}
+
+export interface HypothesisVerdict {
+  hypothesis: Hypothesis;
+  /** `undecided` = a probe errored/timed out (REQ-5.8): counts toward the cap, never a refutation. */
+  verdict: 'confirmed' | 'refuted' | 'undecided';
+  /** Captured probe output text, in probe order (the confirming/last probe last). */
+  probeOutputs: string[];
+  /** Content-addressed evidence ref per probe run — carried in escalation instead of a raw dump (REQ-5.6). */
+  probeRefs: string[];
+}
+
+/**
+ * A confirmed hypothesis' patch plan, folded into the next implementer round as
+ * MARKED untrusted data (REQ-5.4) — travels as structured feedback, never free text.
+ */
+export interface RepairGuidance {
+  kind: 'patch_plan';
+  patchPlan: string;
+  estimatedBlastRadius: string;
+}
+
+/**
+ * Operator guidance injected while PAUSED (REQ-10.5), folded into the next round as
+ * MARKED untrusted data (INV-3) — exactly like gate feedback. Guidance is advisory:
+ * it never alters the frozen contract (an AC/scope change needs a goal.yaml
+ * amendment, which the frozen-contract hash check escalates as `contract_changed`,
+ * REQ-10.6).
+ */
+export interface GuidanceFeedback {
+  kind: 'guidance';
+  guidance: string;
 }
 
 /** Task states (spec §6.3). Post-REVIEWING transitions are phase-gated. */
@@ -72,7 +131,26 @@ export type EventType =
   | 'APPROVAL_RECORDED'
   | 'KILL_REQUESTED'
   | 'CONTEXT_BUILT'
-  | 'CONFORMANCE_RECORDED';
+  | 'CONFORMANCE_RECORDED'
+  // Phase 2 additions (append-only, INV-10). GOVERNANCE_CHANGE (above) gains its
+  // first producers; governance events live in the durable .ai/governance log.
+  | 'BREAKER_STATE_CHANGED'
+  | 'QUOTA_PROBE'
+  | 'HYPOTHESIS_PROPOSED'
+  | 'PROBE_RUN'
+  | 'HYPOTHESIS_CONFIRMED'
+  | 'HYPOTHESIS_REFUTED'
+  | 'PAUSE_REQUESTED'
+  | 'GUIDANCE_INJECTED'
+  | 'RESUMED'
+  | 'AUTO_APPROVED'
+  | 'AUDIT_SAMPLED'
+  | 'AUDIT_RESULT'
+  | 'CANARY_TRIPPED'
+  | 'DATA_POLICY_VIOLATION'
+  | 'AUTOMATION_DEFERRED'
+  | 'AUTOMATION_OVERRIDE'
+  | 'GOVERNANCE_PROPOSED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

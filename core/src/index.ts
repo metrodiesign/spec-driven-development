@@ -10,10 +10,19 @@ export {
   type PolicyDecision,
 } from './executor/path-policy.ts';
 export { denyNetworkSandbox, type SandboxWrap } from './security/sandbox.ts';
+export { canaryTripped } from './security/canary.ts';
+export {
+  checkDataPolicy,
+  type ProviderDataPolicy,
+  type DataPolicyResult,
+  type DataPolicyViolation,
+} from './security/data-policy.ts';
 export {
   CrashInjected,
   createExecutor,
+  packageInstallAllowed,
   recoverWorktree,
+  type DepInstallPolicy,
   type ExecuteOutcome,
   type Executor,
   type Failpoints,
@@ -22,8 +31,20 @@ export {
 export { createGateRunner, type GateRunner } from './gates/runner.ts';
 export { computeGoldenManifest, verifyGoldenManifest, type GoldenVerdict } from './gates/golden.ts';
 export { createBudget, type BudgetTracker } from './budget/budget.ts';
-export { transition, type TransitionResult, type Trigger } from './orchestrator/machine.ts';
-export { runTaskLoop, type LoopOptions, type LoopResult } from './orchestrator/loop.ts';
+export { ACTIVE_STATES, resumeTransition, transition, type TransitionResult, type Trigger } from './orchestrator/machine.ts';
+export { createLoopController, type LoopController } from './orchestrator/control.ts';
+export {
+  runTaskLoop,
+  type LoopOptions,
+  type LoopResult,
+  type RepairPolicy,
+} from './orchestrator/loop.ts';
+export {
+  evaluateHypotheses,
+  summarizeHypothesisLog,
+  type HypothesisEngineDeps,
+  type HypothesisOutcome,
+} from './repair/hypothesis.ts';
 export { scanForSecret, type SecretHit } from './context/secret-scan.ts';
 export {
   buildContext,
@@ -39,6 +60,27 @@ export {
   ContractInvalidError,
   type TaskContract,
 } from './contract/contract.ts';
+export {
+  approveProposal,
+  applyGovernanceApproval,
+  computePolicySnapshot,
+  ensureGovernanceApproved,
+  listPendingProposals,
+  pendingQuarantines,
+  proposeFlakyQuarantine,
+  readGovernanceLog,
+  seedFixtureSnapshot,
+  snapshotHash,
+  POLICY_FILES,
+  type GovernanceKind,
+  type GovernanceProposal,
+  type GovernanceRecord,
+  type GovernanceChangeRecord,
+  type PolicySnapshot,
+  type EnsureResult,
+  type ApproveResult,
+  type DecidedBy,
+} from './governance/policy.ts';
 export { redactSecrets } from './human/redact.ts';
 export {
   attestationsFor,
@@ -61,3 +103,15 @@ export {
   type CalibrationInput,
   type CalibrationResult,
 } from './calibration/calibration.ts';
+export {
+  decideAutoApprove,
+  matchesDepManifest,
+  auditSampleValue,
+  runAutoMerge,
+  type AutoApproveInput,
+  type AutoApproveDecision,
+  type AutoApproveReason,
+  type AutoMergeOutcome,
+  type MappedAc,
+  type RunAutoMergeOptions,
+} from './merge/auto-merge.ts';

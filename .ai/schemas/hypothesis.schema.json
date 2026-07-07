@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hypothesis.schema.json",
+  "$comment": "Diagnostician output contract (unified-platform-spec.md §9.3, REQ-5). A DIAGNOSING round returns testable hypotheses whose probes are cheaper than patch+verify. Untrusted input: core (core/src/repair/hypothesis.ts) RE-validates this shape before running any probe, caps probes per hypothesis, and never lets it demand unbounded execution (REQ-5.7).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hypotheses"],
+  "properties": {
+    "hypotheses": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/hypothesis" }
+    }
+  },
+  "definitions": {
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "probes", "ifConfirmed"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "probes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Run cheapest-first (array order = the agent's cost ordering); core stops at the first confirming probe (REQ-5.3).",
+          "items": { "$ref": "#/definitions/probe" }
+        },
+        "ifConfirmed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["patchPlan", "estimatedBlastRadius"],
+          "properties": {
+            "patchPlan": { "type": "string", "minLength": 1 },
+            "estimatedBlastRadius": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cmd", "expected"],
+      "properties": {
+        "cmd": { "type": "string", "minLength": 1 },
+        "cwd": { "type": "string" },
+        "expected": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Substring the probe's captured output must contain to CONFIRM the hypothesis (REQ-5.4)."
+        }
+      }
+    }
+  }
+}

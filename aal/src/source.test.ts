@@ -10,12 +10,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { createAALProposalSource } from './source.ts';
+import { createBreaker, DEFAULT_BREAKER_OPTIONS } from './breaker.ts';
 import { createRegistry } from './registry.ts';
 import { createRouter } from './router.ts';
 import { FakeAdapter } from './fake-adapter.ts';
 import { PASS_FAIL_PROBES, type ConformanceRecord } from './protocol.ts';
 import { createEvidenceStore, openEventLog } from 'core';
-import type { ProposalInput, Role, TaskContractExcerpt } from 'core';
+import type { ProposalInput, ProviderDataPolicy, TaskContractExcerpt } from 'core';
 
 const CONTRACT: TaskContractExcerpt = {
   goalId: 'G-1',
@@ -34,7 +35,14 @@ function passingRecord(id: string): ConformanceRecord {
   };
 }
 
-function harness(opts: { seedFiles: Record<string, string>; adapter?: FakeAdapter; register?: boolean }) {
+function harness(opts: {
+  seedFiles: Record<string, string>;
+  adapter?: FakeAdapter;
+  adapters?: FakeAdapter[];
+  register?: boolean;
+  contract?: TaskContractExcerpt;
+  dataPolicyFor?: (adapterId: string) => ProviderDataPolicy | undefined;
+}) {
   const root = mkdtempSync(join(tmpdir(), 'src-'));
   const worktree = join(root, 'wt');
   for (const [rel, content] of Object.entries(opts.seedFiles)) {
@@ -45,18 +53,21 @@ function harness(opts: { seedFiles: Record<string, string>; adapter?: FakeAdapte
   const evidence = createEvidenceStore(join(root, 'evidence'));
   const clock = { now: () => 1_000_000 };
   const log = openEventLog(join(root, 'events.db'), clock);
-  const reg = createRegistry();
-  const adapter = opts.adapter ?? new FakeAdapter({ id: 'ok' });
-  if (opts.register !== false) reg.register(adapter, passingRecord('ok'));
+  const breaker = createBreaker(DEFAULT_BREAKER_OPTIONS, () => clock.now(), () => {});
+  const reg = createRegistry({ breaker });
+  const adapters = opts.adapters ?? [opts.adapter ?? new FakeAdapter({ id: 'ok' })];
+  if (opts.register !== false) {
+    for (const a of adapters) reg.register(a, passingRecord(a.manifest().adapterId), a.healthProbe);
+  }
   const router = createRouter(reg);
   let n = 0;
   const source = createAALProposalSource({
     runId: 'RUN-1',
     taskId: 'T-1',
-    role: 'implementer' as Role,
     router,
+    breaker,
     worktreeDir: worktree,
-    taskContract: CONTRACT,
+    taskContract: opts.contract ?? CONTRACT,
     seedPaths: Object.keys(opts.seedFiles),
     evidence,
     log,
@@ -67,8 +78,9 @@ function harness(opts: { seedFiles: Record<string, string>; adapter?: FakeAdapte
       properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } },
     },
     maxRepairRounds: 2,
+    ...(opts.dataPolicyFor ? { dataPolicyFor: opts.dataPolicyFor } : {}),
   });
-  return { root, log, source, cleanup: () => { log.close(); rmSync(root, { recursive: true, force: true }); } };
+  return { root, log, source, breaker, reg, cleanup: () => { log.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
 const INPUT: ProposalInput = { taskId: 'T-1', state: 'IMPLEMENTING', role: 'implementer', feedback: null };
@@ -125,6 +137,144 @@ test('a secret in a seeded file BLOCKS the build and escalates secret_in_context
     const esc = h.log.all({ type: 'ESCALATED' })[0];
     assert.equal(esc?.payload['why'], 'secret_in_context');
     assert.ok(String(esc?.payload['file']).includes('leak.ts'));
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('AdapterError with no other eligible adapter -> BLOCKED(no_capacity, adapter_failure) (REQ-3.1/3.3)', async () => {
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter: new FakeAdapter({ id: 'ok', fault: 'throw_transport' }) });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'BLOCKED');
+    const esc = h.log.all({ type: 'ESCALATED' }).at(-1);
+    assert.equal(esc?.payload['why'], 'no_capacity');
+    assert.equal(esc?.payload['detail'], 'adapter_failure');
+    assert.equal(esc?.payload['kind'], 'transport');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('switch_to_next_eligible: first send fails, re-route ONCE to a second eligible succeeds (REQ-3.2)', async () => {
+  const bad = new FakeAdapter({ id: 'bad', fault: 'throw_quota_limited' });
+  const good = new FakeAdapter({ id: 'good' });
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapters: [bad, good] });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION', 're-route reached the healthy adapter');
+    assert.ok(p.actions.length >= 1);
+    // The survivor recorded a success and stays closed; the re-route did not escalate.
+    assert.equal(h.breaker.state('good@fake-1.0'), 'closed');
+    assert.equal(h.log.all({ type: 'ESCALATED' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('benign baseline: a compliant adapter never trips its breaker across a round (REQ-3.5)', async () => {
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' } });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION');
+    assert.equal(h.breaker.state('ok@fake-1.0'), 'closed');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('quota-unhealthy adapter is excluded from routing + emits QUOTA_PROBE (REQ-2.3/2.4)', async () => {
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter: new FakeAdapter({ id: 'ok', fault: 'health_unhealthy' }) });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'BLOCKED', 'no healthy adapter -> no_capacity');
+    const probe = h.log.all({ type: 'QUOTA_PROBE' })[0];
+    assert.equal(probe?.payload['ok'], false);
+    assert.equal(probe?.payload['reason'], 'quota_threshold');
+    assert.equal(probe?.payload['fiveHourPct'], 99);
+    assert.equal(probe?.payload['estimate'], true, 'quota numbers are labeled estimates (INV-13)');
+    // Excluded by health, not by an adapter send failure.
+    assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'no_capacity');
+    assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['detail'], undefined);
+  } finally {
+    h.cleanup();
+  }
+});
+
+const DATA_POLICY: ProviderDataPolicy = {
+  allowPaths: ['src/**'],
+  pathlessKinds: ['feedback', 'contract', 'guidance', 'patchPlan'],
+};
+
+test('a runtime injection canary trips -> CANARY_TRIPPED + round consumed, no actions (REQ-11.1)', async () => {
+  // The contract's echo directive makes the compliant fake surface the round's
+  // canary token in its structuredResult — the injection signature.
+  const h = harness({
+    seedFiles: { 'src/impl.txt': 'wrong\n' },
+    contract: { ...CONTRACT, objective: '[probe:P2 echo=CANARY-fixed] make tests pass' },
+  });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'WORKING', 'proposal rejected as structured feedback, round consumed');
+    assert.equal(p.actions.length, 0, 'no actions executed from a tripped round');
+    assert.equal(h.log.all({ type: 'CANARY_TRIPPED' }).length, 1);
+    assert.equal(h.log.all({ type: 'CANARY_TRIPPED' })[0]?.payload['adapterId'], 'ok');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('an out-of-policy context path escalates data_policy_violation and sends nothing (REQ-11.5)', async () => {
+  const h = harness({
+    seedFiles: { 'infra/creds.txt': 'secret\n' },
+    dataPolicyFor: () => DATA_POLICY,
+  });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'BLOCKED');
+    assert.equal(p.costUnits, 0, 'nothing sent -> no cost');
+    const viol = h.log.all({ type: 'DATA_POLICY_VIOLATION' })[0];
+    assert.equal(viol?.payload['reason'], 'path_out_of_policy');
+    assert.equal(viol?.payload['path'], 'infra/creds.txt');
+    assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'data_policy_violation');
+    // The send never completed: no CONTEXT_BUILT (logged only after a valid send).
+    assert.equal(h.log.all({ type: 'CONTEXT_BUILT' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('a diagnostician round lifts the response into Proposal.hypotheses, not task actions (REQ-5.1 production)', async () => {
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' } });
+  try {
+    const p = await h.source.propose({ taskId: 'T-1', state: 'DIAGNOSING', role: 'diagnostician', feedback: null });
+    // The source produced hypotheses (core probes them) — NOT actions to execute (INV-1).
+    assert.equal(p.actions.length, 0);
+    assert.ok(Array.isArray(p.hypotheses));
+    assert.equal(p.hypotheses?.length, 1);
+    const hyp = p.hypotheses?.[0];
+    assert.equal(typeof hyp?.statement, 'string');
+    assert.equal(hyp?.probes[0]?.cmd, 'cat src/impl.txt');
+    assert.equal(hyp?.probes[0]?.expected, 'wrong');
+    assert.equal(typeof hyp?.ifConfirmed.patchPlan, 'string');
+    // Still a real send — PROPOSAL_INTENT recorded, no provenance rejection.
+    assert.equal(h.log.all({ type: 'PROPOSAL_INTENT' }).at(-1)?.payload['role'], 'diagnostician');
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('an in-policy bundle is unaffected by the data policy (benign baseline, REQ-11.6)', async () => {
+  const h = harness({
+    seedFiles: { 'src/impl.txt': 'wrong\n' },
+    dataPolicyFor: () => DATA_POLICY,
+  });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION');
+    assert.equal(h.log.all({ type: 'DATA_POLICY_VIOLATION' }).length, 0);
+    assert.equal(h.log.all({ type: 'CONTEXT_BUILT' }).length, 1);
   } finally {
     h.cleanup();
   }

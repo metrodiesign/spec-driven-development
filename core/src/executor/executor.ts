@@ -6,8 +6,8 @@
 // structured rejections — never a crash, never a silent drop.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 import type { EventLog } from '../state/event-log.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
@@ -54,6 +54,54 @@ export interface ExecutorOptions {
   sandbox: SandboxWrap;
   clock: Clock;
   failpoints?: Failpoints;
+  /**
+   * Governed dependency-install policy (REQ-11.2). Absent = no `allowlist:*` grant
+   * is authorized (every RUN_COMMAND stays `network:'none'` hard-deny, INV-14). The
+   * composition root parses `.ai/policies/security-plane.json` and passes it.
+   */
+  depPolicy?: DepInstallPolicy;
+}
+
+/**
+ * Package-install grant policy (REQ-11.2). `commandPattern` is a RegExp source the
+ * command must match (a frozen-lockfile + `--ignore-scripts` install); `lockfilePatterns`
+ * is the SAME governance-pinned manifest/lockfile list the auto-merge risk floor uses
+ * (AZ-17) — a matching lockfile must exist in the worktree when `requireLockfile`.
+ */
+export interface DepInstallPolicy {
+  commandPattern: string;
+  requireLockfile: boolean;
+  lockfilePatterns: string[];
+}
+
+/** A lockfile named by the policy list exists at the worktree root (frozen installs read root). */
+function hasLockfile(worktreeDir: string, patterns: string[]): boolean {
+  return patterns.some((pat) => existsSync(join(worktreeDir, pat)));
+}
+
+/**
+ * Pure REQ-11.2 gate: the command matches the frozen-lockfile install pattern AND
+ * (when required) a lockfile is present. Never runs anything — the executor calls
+ * this before granting the network-permitting sandbox to a single command.
+ */
+export function packageInstallAllowed(
+  cmd: string,
+  worktreeDir: string,
+  policy: DepInstallPolicy,
+): { ok: true } | { ok: false; reason: string } {
+  let re: RegExp;
+  try {
+    re = new RegExp(policy.commandPattern);
+  } catch {
+    return { ok: false, reason: 'security-plane commandPattern is not a valid RegExp' };
+  }
+  if (!re.test(cmd)) {
+    return { ok: false, reason: 'command does not match the frozen-lockfile install pattern' };
+  }
+  if (policy.requireLockfile && !hasLockfile(worktreeDir, policy.lockfilePatterns)) {
+    return { ok: false, reason: 'no lockfile present in the worktree' };
+  }
+  return { ok: true };
 }
 
 export interface RecoveryReport {
@@ -226,13 +274,28 @@ async function executeOnce(
     );
   }
   if (action.type === 'RUN_COMMAND') {
+    // Egress is default-deny (INV-14, REQ-11.3). The ONLY authorized grant is a
+    // governed, frozen-lockfile package install; every other network name is denied.
     if (action.network !== 'none') {
-      return reject(
-        opts,
-        action.actionId,
-        'unsupported_action_phase0',
-        'network allowlists are not enabled in this phase; declare network:"none"',
-      );
+      if (action.network !== 'allowlist:package_install') {
+        return reject(
+          opts,
+          action.actionId,
+          'unsupported_action_phase0',
+          `network grant ${action.network} is not enabled; only "package_install" is governed`,
+        );
+      }
+      // The grant NEVER executes on an unenforced host — fail closed (REQ-11.7).
+      if (opts.sandbox.kind === 'unavailable') {
+        return reject(opts, action.actionId, 'sandbox_unavailable', opts.sandbox.reason);
+      }
+      if (opts.depPolicy === undefined) {
+        return reject(opts, action.actionId, 'network_policy_denied', 'no dependency-install policy configured');
+      }
+      const gate = packageInstallAllowed(action.cmd, opts.worktreeDir, opts.depPolicy);
+      if (!gate.ok) {
+        return reject(opts, action.actionId, 'network_policy_denied', gate.reason);
+      }
     }
     if (opts.sandbox.kind === 'unavailable') {
       return reject(opts, action.actionId, 'sandbox_unavailable', opts.sandbox.reason);
@@ -301,21 +364,26 @@ function performApply(
     return { resultHash: worktreeHash(opts.worktreeDir) };
   }
 
-  // RUN_COMMAND under the deny-network sandbox (validated available upstream).
+  // RUN_COMMAND under the sandbox (validated available + policy-gated upstream). A
+  // governed package_install runs with egress permitted for that single command
+  // (REQ-11.2); everything else keeps the deny-network profile (REQ-11.3).
   if (opts.sandbox.kind !== 'available') throw new Error('sandbox availability changed mid-flight');
-  const { cmd, args } = opts.sandbox.wrap(action.cmd, opts.worktreeDir);
+  const allowNetwork = action.network === 'allowlist:package_install';
+  const { cmd, args } = opts.sandbox.wrap(action.cmd, opts.worktreeDir, allowNetwork);
   const cwd =
     action.cwd === undefined
       ? opts.worktreeDir
       : (resolveContained(opts.worktreeDir, action.cwd) as string);
-  const res = spawnSync(cmd, args, { cwd, env: COMMAND_ENV, encoding: 'utf8', timeout: 120_000 });
+  // Policy-pinned per-probe bound when set (REQ-5.8); otherwise the default ceiling.
+  const timeout = action.timeoutMs !== undefined ? action.timeoutMs : 120_000;
+  const res = spawnSync(cmd, args, { cwd, env: COMMAND_ENV, encoding: 'utf8', timeout });
   const output = `exit:${res.status}\n--- stdout ---\n${res.stdout ?? ''}\n--- stderr ---\n${res.stderr ?? ''}`;
   const outputRef = opts.evidence.put(output);
   return {
     resultHash: worktreeHash(opts.worktreeDir),
     outputRef,
     exitCode: res.status ?? -1,
-    egressBlocked: true,
+    egressBlocked: !allowNetwork,
   };
 }
 

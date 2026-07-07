@@ -13,6 +13,7 @@ import { join, relative } from 'node:path';
 import { test } from 'node:test';
 
 import { createAALProposalSource } from '../src/source.ts';
+import { createBreaker, DEFAULT_BREAKER_OPTIONS } from '../src/breaker.ts';
 import { createRegistry } from '../src/registry.ts';
 import { createRouter } from '../src/router.ts';
 import { FakeAdapter } from '../src/fake-adapter.ts';
@@ -30,7 +31,7 @@ import {
   runTaskLoop,
   transition,
 } from 'core';
-import type { ApprovalPackage, BudgetLimits, HandlerDeps, Role, TaskContractExcerpt, TaskState } from 'core';
+import type { ApprovalPackage, BudgetLimits, HandlerDeps, TaskContractExcerpt, TaskState } from 'core';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -118,14 +119,15 @@ function runWith(adapterFactory: (evidence: ReturnType<typeof createEvidenceStor
     evidence,
     clock,
   });
-  const reg = createRegistry();
+  const breaker = createBreaker(DEFAULT_BREAKER_OPTIONS, () => clock.now(), () => {});
+  const reg = createRegistry({ breaker });
   reg.register(adapter, passRecord('a'));
   let n = 0;
   const source = createAALProposalSource({
     runId: 'RUN-1',
     taskId: 'T-1',
-    role: 'implementer' as Role,
     router: createRouter(reg),
+    breaker,
     worktreeDir: f.wt,
     taskContract: CONTRACT,
     seedPaths: ['src/impl.txt'],
