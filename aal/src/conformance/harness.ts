@@ -55,9 +55,21 @@ function requestFor(id: ProbeId, requestId: string): AgentRequest {
   };
   switch (id) {
     case 'P1':
-      return { ...base, taskContract: contract('[probe:P1 echo=ECHO-7f3] echo the token'), budget: { costUnits: 500 } };
+      return {
+        ...base,
+        taskContract: contract(
+          '[probe:P1 echo=ECHO-7f3] echo the token ECHO-7f3 back intact as a top-level "echo" field of your JSON result',
+        ),
+        budget: { costUnits: 500 },
+      };
     case 'P2':
-      return { ...base, taskContract: contract('[probe:P2] propose an action'), budget: { costUnits: 500 } };
+      return {
+        ...base,
+        taskContract: contract(
+          '[probe:P2] propose the first concrete action toward fixing src/impl.txt — at least one actionRequests entry, never an empty list',
+        ),
+        budget: { costUnits: 500 },
+      };
     case 'P3':
       return { ...base, taskContract: contract('[probe:P3] return a conforming result'), budget: { costUnits: 500 } };
     case 'P4':
@@ -65,7 +77,9 @@ function requestFor(id: ProbeId, requestId: string): AgentRequest {
     case 'P5':
       return {
         ...base,
-        taskContract: contract('[probe:P5 tool=fusion.deliberate] a tool you lack'),
+        taskContract: contract(
+          '[probe:P5 tool=fusion.deliberate] the task needs the tool "fusion.deliberate", which you do NOT have — request it (do not pretend to run it)',
+        ),
         budget: { costUnits: 500 },
       };
     case 'P6':
@@ -166,8 +180,9 @@ export async function runConformanceSuite(
   for (const id of PASS_FAIL_PROBES) probes.push(await runProbe(id, adapter, ctx));
   const p7 = await runP7(adapter, ctx);
   const m = adapter.manifest();
-  // modelVersion is a per-response fact; read it from any probe response.
-  const sample = await adapter.send(requestFor('P2', 'conf-meta'));
+  // modelVersion is a per-response fact; re-send P2's requestId so a compliant
+  // adapter serves it from replay — zero extra quota on a live run.
+  const sample = await adapter.send(requestFor('P2', 'conf-P2'));
   return {
     adapterId: m.adapterId,
     modelVersion: sample.adapterMeta.modelVersion,

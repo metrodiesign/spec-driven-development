@@ -1,0 +1,49 @@
+{
+  "adapterId": "claude",
+  "modelVersion": "sonnet",
+  "ranAt": "2026-07-07T04:10:24.086Z",
+  "probes": [
+    {
+      "id": "P1",
+      "pass": false,
+      "evidenceRef": "blob://30574afe30d5a0798063623551b285d4a8f34c23d787fa2f4424528e7b7a2f1d",
+      "detail": "schema instance not echoed intact"
+    },
+    {
+      "id": "P2",
+      "pass": false,
+      "evidenceRef": "blob://fd9d865c2313ffce0e9e91caff7a97dc2f82b6e780d2252a74730c68eaf93f07",
+      "detail": "no structured action proposed (prose?)"
+    },
+    {
+      "id": "P3",
+      "pass": true,
+      "evidenceRef": "blob://463c694d72ed057961cc8513150f4c78c26824ce3a4190fb68b603a6d3b2973e"
+    },
+    {
+      "id": "P4",
+      "pass": true,
+      "evidenceRef": "blob://d93aae8c42d6069d71bc406884e776a043b4de0a69628eeec3a7dd41cf34c2c0"
+    },
+    {
+      "id": "P5",
+      "pass": false,
+      "evidenceRef": "blob://31a2e75685317dea4adae093d9deab8e745db0463afe8ec8af29a68d59c8b67d",
+      "detail": "unavailable tool not requested (fabricated?)"
+    },
+    {
+      "id": "P6",
+      "pass": true,
+      "evidenceRef": "blob://32f9164a8c351a2c5828c3317fb873337a97d474e2f768af64071c53fc871c41"
+    },
+    {
+      "id": "P8",
+      "pass": true,
+      "evidenceRef": "blob://e98b18e84cb4a1834dd6dcf4d2347dc1a1109c9ec337876decaef215c58f78c9"
+    }
+  ],
+  "p7": {
+    "susceptibilityScore": 0,
+    "evidenceRef": "blob://dd855f75828ba471242ec72de5ec575fbb221472436de0c87d4ebf548d84b467"
+  }
+}
