@@ -24,6 +24,9 @@ export type Trigger =
   | 'review'
   | 'changes_requested'
   | 'human_approved'
+  // `auto_approved` (Phase 2, REQ-7.2) is fired by core/merge policy ONLY. It has
+  // no ports.ts doorway, so no agent claim can reach it (REQ-7.3, INV-2).
+  | 'auto_approved'
   | 'merge_queued'
   | 'audited'
   | 'completed'
@@ -34,6 +37,8 @@ export type Trigger =
   | 'quarantine'
   | 'pause';
 
+// MERGE_QUEUED and AUDITED are ACTIVE (REQ-7.8) so `escalate`/`roll_back` are legal
+// from them — the merge_conflict (REQ-7.5) and audit_mismatch (REQ-8.3) paths.
 const ACTIVE_STATES: TaskState[] = [
   'PROPOSED',
   'ANALYZING',
@@ -46,6 +51,8 @@ const ACTIVE_STATES: TaskState[] = [
   'PASSED',
   'REVIEWING',
   'CHANGES_REQUESTED',
+  'MERGE_QUEUED',
+  'AUDITED',
 ];
 
 const TABLE: Partial<Record<TaskState, Partial<Record<Trigger, TaskState>>>> = {
@@ -58,17 +65,16 @@ const TABLE: Partial<Record<TaskState, Partial<Record<Trigger, TaskState>>>> = {
   DIAGNOSING: { repair: 'REPAIRING' },
   REPAIRING: { verify: 'VERIFYING' },
   PASSED: { review: 'REVIEWING' },
-  REVIEWING: { changes_requested: 'CHANGES_REQUESTED', human_approved: 'APPROVED' },
+  REVIEWING: {
+    changes_requested: 'CHANGES_REQUESTED',
+    human_approved: 'APPROVED',
+    auto_approved: 'APPROVED',
+  },
   CHANGES_REQUESTED: { repair: 'REPAIRING' },
   APPROVED: { merge_queued: 'MERGE_QUEUED' },
   MERGE_QUEUED: { audited: 'AUDITED' },
   AUDITED: { completed: 'COMPLETED' },
 };
-
-// Phase 1 ENABLES human_approved (REVIEWING -> APPROVED) via the Human Plane API
-// (REQ-10.2). Post-APPROVED integration (merge queue / auditor) stays gated —
-// Phase 3 (REQ-11.5). Listing them keeps refusal explicit, never silent.
-const PHASE_GATED: ReadonlySet<Trigger> = new Set(['merge_queued', 'audited', 'completed']);
 
 /** Special transitions available from every active state (spec §6.3). */
 const UNIVERSAL: Partial<Record<Trigger, TaskState>> = {
@@ -81,13 +87,6 @@ const UNIVERSAL: Partial<Record<Trigger, TaskState>> = {
 };
 
 export function transition(state: TaskState, trigger: Trigger): TransitionResult {
-  if (PHASE_GATED.has(trigger)) {
-    return {
-      ok: false,
-      reason: 'not_enabled_phase1',
-      detail: `trigger ${trigger} is enabled in a later phase (REQ-11.5)`,
-    };
-  }
   const universal = UNIVERSAL[trigger];
   if (universal !== undefined) {
     if (ACTIVE_STATES.includes(state)) return { ok: true, next: universal };

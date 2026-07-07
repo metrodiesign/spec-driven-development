@@ -882,3 +882,72 @@ test('DoD#9: exceeding the iteration budget -> BUDGET_EXCEEDED + ESCALATED, loop
     fix.cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// DoD#10 (Phase 2) — auto_approved / merge / COMPLETED are unreachable through
+// ports (REQ-7.3, REQ-8.5, INV-2). The auto-merge chain fires ONLY from the
+// core/merge policy (runAutoMerge), which no ProposalClaim can invoke. Across the
+// whole claim space — honest-green, lying, blocking — the loop must never advance
+// a task past REVIEWING or emit an AUTO_APPROVED event. Phase-2 wiring of
+// runAutoMerge into the supervised loop is a later task; this pins the invariant
+// that the doorway (ProposalSource) has no path to those triggers.
+// ---------------------------------------------------------------------------
+test('DoD#10: no ProposalClaim reaches auto_approved / merge_queued / COMPLETED (REQ-7.3, INV-2)', async () => {
+  const honest: ProposalSource = {
+    async propose(input: ProposalInput): Promise<Proposal> {
+      if (input.state === 'IMPLEMENTING') {
+        return {
+          claim: 'READY_FOR_VERIFICATION',
+          actions: [
+            { type: 'WRITE_FILE', actionId: 'a-ok', path: 'src/impl.txt', contentRef: '' },
+          ],
+          costUnits: 1,
+        };
+      }
+      return { claim: 'READY_FOR_VERIFICATION', actions: [], costUnits: 1 };
+    },
+  };
+  const liar: ProposalSource = {
+    async propose(): Promise<Proposal> {
+      return { claim: 'READY_FOR_VERIFICATION', actions: [], costUnits: 1 };
+    },
+  };
+  const blocker: ProposalSource = {
+    async propose(): Promise<Proposal> {
+      return { claim: 'BLOCKED', actions: [], costUnits: 1 };
+    },
+  };
+  const forbidden = ['APPROVED', 'MERGE_QUEUED', 'AUDITED', 'COMPLETED'];
+
+  for (const src of [honest, liar, blocker]) {
+    const fix = makeFixture();
+    try {
+      const clock = makeClock();
+      const c = buildCore(fix, clock);
+      // The honest source's WRITE needs a real contentRef in this store.
+      const wired: ProposalSource =
+        src === honest
+          ? {
+              async propose(input) {
+                const p = await honest.propose(input);
+                for (const a of p.actions) if (a.type === 'WRITE_FILE') a.contentRef = c.evidence.put('correct\n');
+                return p;
+              },
+            }
+          : src;
+      await loopFor(c, wired, createBudget({ ...DEFAULT_LIMITS, maxIterations: 3 }, clock));
+
+      const st = taskStates(c.log);
+      for (const state of forbidden) {
+        assert.ok(!st.includes(state), `claim path must never reach ${state} (INV-2)`);
+      }
+      assert.equal(
+        c.log.all({ type: 'AUTO_APPROVED' }).length,
+        0,
+        'no claim fires the core-only auto_approved policy decision (REQ-7.3)',
+      );
+    } finally {
+      fix.cleanup();
+    }
+  }
+});

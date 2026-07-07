@@ -72,3 +72,15 @@ export {
   type CalibrationInput,
   type CalibrationResult,
 } from './calibration/calibration.ts';
+export {
+  decideAutoApprove,
+  matchesDepManifest,
+  auditSampleValue,
+  runAutoMerge,
+  type AutoApproveInput,
+  type AutoApproveDecision,
+  type AutoApproveReason,
+  type AutoMergeOutcome,
+  type MappedAc,
+  type RunAutoMergeOptions,
+} from './merge/auto-merge.ts';

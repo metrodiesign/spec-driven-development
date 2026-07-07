@@ -80,7 +80,7 @@
          vacuously exhausted; loop-run.ts wires them. (7) core port extended append-only —
          `Proposal.hypotheses?` + `RepairGuidance` in the `ProposalInput.feedback` union.
 
-- [ ] 3. State machine + auto-merge L0–L1 + sampling audit — `machine.ts` (`auto_approved:
+- [x] 3. State machine + auto-merge L0–L1 + sampling audit — `machine.ts` (`auto_approved:
      REVIEWING→APPROVED` core-only, `merge_queued`/`audited`/`completed` out of PHASE_GATED,
      MERGE_QUEUED+AUDITED into ACTIVE_STATES), `core/src/merge/auto-merge.ts` (auto-approve
      gate: risk∈{L0,L1} + gates green + all contract ACs `golden:true` + no dep-touching diff
@@ -93,6 +93,39 @@
      `auto_approved` unreachable via ports (fault-injection scenario).
      Satisfies: REQ-7 (all), REQ-8 (all). Depends on: 1.
      Verify: pnpm -r test (core + console/backend); new fault-injection scenarios green.
+     Evidence:
+       - test: `pnpm -r test` -> 221 passed / 0 failed (core 93 [+12], aal 38, adapters 13,
+         console/backend 65, console/web 12); `pnpm -r typecheck` all 6 Done; `pnpm lint` clean;
+         `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-name-free (INV-7).
+       - new tests: `core/src/merge/auto-merge.test.ts` (decideAutoApprove table: L0/L1 approve,
+         gates_not_green / risk_above_l1 / null-risk→L2 / zero_acceptance_criteria / non_golden_ac /
+         dep_touching_diff-floor; matchesDepManifest basename+suffix; real security-plane.json floors
+         a lockfile diff; auditSampleValue deterministic ∈[0,100); L1 auto-merge + sampled audit
+         reproduces→COMPLETED with a real --no-ff merge commit; unsampled rate=0→COMPLETED, no re-run;
+         mismatch→single escalate(audit_mismatch)+merge reverted; conflict→escalate(merge_conflict),
+         main untouched, tree clean; L2→approval_package, no merge, state unchanged). `machine.test.ts`
+         (auto_approved/merge_queued/audited/completed enabled; MERGE_QUEUED+AUDITED escalate legal;
+         COMPLETED reachable ONLY via core-internal `completed` from AUDITED). `fault-injection.test.ts`
+         DoD#10 (no ProposalClaim across honest/liar/blocker reaches APPROVED/MERGE_QUEUED/AUDITED/
+         COMPLETED or fires AUTO_APPROVED — REQ-7.3/INV-2).
+       - viewports: n/a — logic-only.
+       - deviations: (1) full loop composition (runSupervisedLoop creating the real `task/<taskId>`
+         branch + calling runAutoMerge after REVIEWING) stays Task 5/9 per plan; Task 3 delivers the
+         machine changes + the standalone core engine (`decideAutoApprove` pure gate + `runAutoMerge`
+         orchestration) + the security-plane pattern list + the INV-2 fault-injection scenario.
+         `runAutoMerge` takes riskClass/acceptanceCriteria/gatesGreen/originalReport as DATA (composition
+         sources them from the frozen contract + core-run T1); the pure gate ignores the agent claim by
+         construction, so the "auto_approved unreachable via ports" DoD is proven structurally + via the
+         loop scenario, not by wiring the loop. (2) `.ai/policies/security-plane.json` seeds
+         `depManifestPatterns` now (basename match; slash-pattern = path suffix) — the single list REQ-7.6
+         and REQ-11.2 share (AZ-17); Task 6 extends it with install patterns + provider-data policy.
+         (3) "reproduce" (REQ-8.6/AZ-9) = ordered (name,pass) verdicts equal AND evidenceRef equal —
+         evidenceRef is `blob://sha256(content)`, so ref-equality IS content-hash equality; commit/
+         worktree/env hashes + ts are excluded. (4) clean-checkout audit via `git worktree add --detach
+         <mergeCommit>`; revert-on-mismatch via `git revert -m 1 --no-edit` (single merge-commit target).
+         (5) the now-unproduced `not_enabled_phase0`/`not_enabled_phase1` reasons stay in the
+         TransitionResult union (append-only, avoids churning consumers); human/api.ts steering 501 uses
+         its own string literal, unrelated to the machine.
 
 - [ ] 4. Meta-governance — `core/src/governance/policy.ts` (policy snapshot hash vs last
      GOVERNANCE_CHANGE in durable `.ai/governance/events.jsonl`; empty log = `beforeHash:null`

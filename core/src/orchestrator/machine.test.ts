@@ -35,34 +35,48 @@ test('illegal transitions refuse with structured reason, never throw (REQ-7.4)',
   if (!r.ok) assert.equal(r.reason, 'illegal_transition');
 });
 
-test('Phase 1 ENABLES human_approved (REVIEWING -> APPROVED); merge_queued/audited/completed stay gated as not_enabled_phase1 (REQ-10.2, REQ-11.5)', () => {
-  const approved = transition('REVIEWING', 'human_approved');
-  assert.ok(approved.ok && approved.next === 'APPROVED', 'human_approved is enabled in Phase 1');
-  const changes = transition('REVIEWING', 'changes_requested');
-  assert.ok(changes.ok && changes.next === 'CHANGES_REQUESTED');
-  for (const trigger of ['merge_queued', 'audited', 'completed'] as const) {
-    const r = transition('APPROVED', trigger);
-    assert.equal(r.ok, false);
-    if (!r.ok) assert.equal(r.reason, 'not_enabled_phase1');
+test('Phase 2 ENABLES the auto-merge chain: auto_approved/merge_queued/audited/completed (REQ-7.2/7.8, REQ-8)', () => {
+  // auto_approved rides REVIEWING -> APPROVED (core/merge policy only, REQ-7.2).
+  const auto = transition('REVIEWING', 'auto_approved');
+  assert.ok(auto.ok && auto.next === 'APPROVED', 'auto_approved is enabled');
+  const human = transition('REVIEWING', 'human_approved');
+  assert.ok(human.ok && human.next === 'APPROVED', 'human_approved still enabled');
+  let s = transition('APPROVED', 'merge_queued');
+  assert.ok(s.ok && s.next === 'MERGE_QUEUED', 'merge_queued enabled (REQ-7.8)');
+  s = transition('MERGE_QUEUED', 'audited');
+  assert.ok(s.ok && s.next === 'AUDITED', 'audited enabled');
+  s = transition('AUDITED', 'completed');
+  assert.ok(s.ok && s.next === 'COMPLETED', 'completed enabled');
+});
+
+test('MERGE_QUEUED and AUDITED are active: escalate is legal (merge_conflict / audit_mismatch paths) (REQ-7.8, 8.3)', () => {
+  for (const st of ['MERGE_QUEUED', 'AUDITED'] as const) {
+    const esc = transition(st, 'escalate');
+    assert.ok(esc.ok && esc.next === 'ESCALATED', `escalate legal from ${st}`);
   }
 });
 
-test('no trigger reaches COMPLETED in this phase — INV-2 structural check (REQ-7.3)', () => {
+test('COMPLETED is reachable ONLY via the core-internal `completed` trigger — INV-2 structural check (REQ-7.3, 8.5)', () => {
   const states = [
     'PROPOSED', 'ANALYZING', 'READY', 'IMPLEMENTING', 'VERIFYING', 'FAILED', 'DIAGNOSING',
     'REPAIRING', 'PASSED', 'REVIEWING', 'CHANGES_REQUESTED', 'APPROVED', 'MERGE_QUEUED', 'AUDITED',
   ] as const;
   const triggers = [
     'analyze', 'ready', 'start_implementing', 'verify', 'gate_failed', 'gate_passed', 'diagnose',
-    'repair', 'review', 'changes_requested', 'human_approved', 'merge_queued', 'audited',
-    'completed', 'block', 'escalate', 'cancel', 'roll_back', 'quarantine', 'pause',
+    'repair', 'review', 'changes_requested', 'human_approved', 'auto_approved', 'merge_queued',
+    'audited', 'completed', 'block', 'escalate', 'cancel', 'roll_back', 'quarantine', 'pause',
   ] as const;
   for (const st of states) {
     for (const tr of triggers) {
       const r = transition(st, tr);
-      if (r.ok) assert.notEqual(r.next, 'COMPLETED', `${st} --${tr}--> COMPLETED must not exist`);
+      if (r.ok && r.next === 'COMPLETED') {
+        assert.equal(tr, 'completed', `${st} --${tr}--> COMPLETED: only the core-internal completed trigger may reach COMPLETED`);
+        assert.equal(st, 'AUDITED', 'and only from AUDITED');
+      }
     }
   }
+  // auto_approved is exposed by no port (ProposalClaim), so no agent claim can fire
+  // it; ports.ts has no doorway to any trigger. Proven end-to-end in fault-injection.
 });
 
 test('universal escapes work from active states only (spec §6.3)', () => {

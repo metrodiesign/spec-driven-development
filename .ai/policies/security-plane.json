@@ -1,0 +1,21 @@
+{
+  "_comment": "Governance-pinned security-plane policy. Phase 2 Task 3 seeds depManifestPatterns — the single manifest/lockfile pattern list REQ-7.6 (auto-merge risk floor) and REQ-11.2 (package_install lockfile check) both consult (AZ-17). Task 6 extends this file with the frozen-lockfile install pattern + provider data policy. Patterns are matched by basename (a bare name matches that file in any directory); a pattern containing '/' matches by path suffix.",
+  "depManifestPatterns": [
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "Cargo.toml",
+    "Cargo.lock",
+    "go.mod",
+    "go.sum",
+    "requirements.txt",
+    "Pipfile",
+    "Pipfile.lock",
+    "poetry.lock",
+    "pyproject.toml",
+    "Gemfile",
+    "Gemfile.lock"
+  ]
+}
