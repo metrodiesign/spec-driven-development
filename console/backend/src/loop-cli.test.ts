@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { decideLiveRun, loadGoalContract } from './loop-cli.ts';
+import {
+  decideLiveRun,
+  latestConformanceRecordPath,
+  loadGoalContract,
+  mungeProjectDir,
+  readConformanceRecord,
+} from './loop-cli.ts';
 
 test('live guard: default is the CI-safe stub adapter', () => {
   assert.deepEqual(decideLiveRun({ live: false, ciEnv: true, isTTY: false }), { action: 'stub' });
@@ -23,6 +29,47 @@ test('live guard: --live REFUSES without a TTY', () => {
 test('live guard: --live on an interactive TTY requires a typed confirmation phrase', () => {
   const d = decideLiveRun({ live: true, ciEnv: false, isTTY: true });
   assert.equal(d.action, 'confirm');
+});
+
+test('mungeProjectDir matches Claude Code projects-dir naming (REQ-4.5 path derivation)', () => {
+  assert.equal(
+    mungeProjectDir('/Users/king_developer/.ai/runs/agent-sessions'),
+    '-Users-king-developer--ai-runs-agent-sessions',
+  );
+});
+
+test('latestConformanceRecordPath: newest record by embedded timestamp; null when none (REQ-12.4)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cal-'));
+  try {
+    assert.equal(latestConformanceRecordPath(join(root, 'absent')), null);
+    assert.equal(latestConformanceRecordPath(root), null);
+    writeFileSync(join(root, 'conformance-claude-2026-07-01T00-00-00Z.json'), '{}');
+    writeFileSync(join(root, 'conformance-claude-2026-07-07T09-00-00Z.json'), '{}');
+    writeFileSync(join(root, 'unrelated.json'), '{}');
+    assert.equal(
+      latestConformanceRecordPath(root),
+      join(root, 'conformance-claude-2026-07-07T09-00-00Z.json'),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readConformanceRecord: corrupt/hand-edited records refuse as null, valid ones parse (REQ-12.4 pre-flight)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rec-'));
+  try {
+    const p = join(root, 'rec.json');
+    writeFileSync(p, '{"adapterId":"claude","probes":[],}'); // trailing comma
+    assert.equal(readConformanceRecord(p), null);
+    writeFileSync(p, 'null');
+    assert.equal(readConformanceRecord(p), null);
+    writeFileSync(p, '{"adapterId":"claude"}'); // probes missing
+    assert.equal(readConformanceRecord(p), null);
+    writeFileSync(p, '{"adapterId":"claude","probes":[{"id":"P1","pass":true}]}');
+    assert.equal(readConformanceRecord(p)?.adapterId, 'claude');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('goal.yaml parsed at the edge, frozen by raw-byte hash in core (REQ-8.1)', () => {

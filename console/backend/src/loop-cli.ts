@@ -3,7 +3,8 @@
 // keeping core zero-dependency) and hands core the validated object + raw bytes.
 // Live runs are gated STRUCTURALLY, not just by procedure.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 import { freezeContract, type TaskContract } from 'core';
@@ -40,3 +41,38 @@ export function decideLiveRun(input: LiveGuardInput): LiveGuardDecision {
 }
 
 export const LIVE_CONFIRM_PHRASE = 'RUN-LIVE';
+
+/** Claude Code munges a session cwd into its ~/.claude/projects dir name: every non-alphanumeric char becomes '-'. */
+export function mungeProjectDir(cwd: string): string {
+  return cwd.replace(/[^A-Za-z0-9]/g, '-');
+}
+
+/**
+ * Newest persisted live ConformanceRecord in `.ai/calibration/` (REQ-12.4: the live
+ * loop registers only through a REAL record — never a synthetic pass). Filenames
+ * embed an ISO timestamp, so lexicographic order is chronological.
+ */
+export function latestConformanceRecordPath(dir: string): string | null {
+  if (!existsSync(dir)) return null;
+  const names = readdirSync(dir)
+    .filter((n) => /^conformance-.+\.json$/.test(n))
+    .sort();
+  const last = names.at(-1);
+  return last === undefined ? null : join(dir, last);
+}
+
+/**
+ * Guarded read of a persisted ConformanceRecord — a corrupt or hand-edited file
+ * returns null (caller refuses with guidance BEFORE the typed confirmation, so
+ * the failure is never a cryptic post-confirm crash).
+ */
+export function readConformanceRecord(path: string): { adapterId: string; probes: unknown[] } | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { adapterId?: unknown; probes?: unknown } | null;
+    if (parsed === null || typeof parsed !== 'object') return null;
+    if (typeof parsed.adapterId !== 'string' || !Array.isArray(parsed.probes)) return null;
+    return parsed as { adapterId: string; probes: unknown[] };
+  } catch {
+    return null;
+  }
+}
