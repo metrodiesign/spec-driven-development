@@ -206,9 +206,12 @@ API + composition root (INV-7/8/11).
   `usage.costUnits` across ALL rounds (`totalUsage`); `source.ts` charges the total.
   Conformance P3/P4 verdicts unchanged (they assert validity + round count, not usage).
 - **`adapters/src/anthropic.ts` (extended)** — accepts an injected
-  `quotaProbe?: () => Promise<{ percentUsed: number | null }>` (composition root builds
-  it from the console usage estimator — the adapter itself stays estimation-free); the
-  adapter's health = probe result vs threshold, surfaced to the registry. Transcript
+  `quotaProbe?: () => Promise<{ fiveHourPct: number; weeklyPct: number } | null>` (per-window
+  estimates, not one collapsed number — REQ-2.1/2.3; `null` = estimate unavailable = always-ok;
+  composition root builds it from the console usage estimator — the adapter itself stays
+  estimation-free); the adapter's health = `max(fiveHourPct, weeklyPct)` vs threshold, surfaced
+  to the registry as `{ok, reason?, windows: {fiveHourPct, weeklyPct}}` and a `QUOTA_PROBE
+  {fiveHourPct, weeklyPct}` event on change. Transcript
   capture (backlog #4): on predicted-path poll miss, one glob fallback
   `~/.claude/projects/*/<sessionId>.jsonl` before returning `null` — fixes the nested
   claude HOME/cwd munge mismatch without guessing envs.
@@ -377,7 +380,7 @@ sequenceDiagram
         alt reproduces
             M->>L: audited -> AUDITED -> completed -> COMPLETED
         else mismatch
-            M->>L: AUDIT_FAILED -> roll_back (revert) + ESCALATED
+            M->>L: escalate(audit_mismatch) -> ESCALATED (git revert of merge commit as side effect, no separate roll_back transition)
         end
     else not sampled
         M->>L: audited (sampled=false recorded) -> COMPLETED
@@ -393,7 +396,7 @@ sequenceDiagram
     W->>B: POST /api/hooks/validate {scope, entry}
     B-->>W: {valid, preview(JSON diff), confirmToken}
     W->>B: POST /api/hooks/install {scope, entry, baseHash, confirmToken}
-    alt token matches proposed content
+    alt confirmToken matches sha256(baseHash + content)
         B->>B: writeSafe(settings.json) -> audit entry
         B-->>W: {saved, hash}
     else missing/stale token
@@ -412,7 +415,8 @@ interface Hypothesis {
   probes: HypothesisProbe[];                    // run cheapest-first (array order = agent's cost order)
   ifConfirmed: { patchPlan: string; estimatedBlastRadius: string };
 }
-interface HypothesisVerdict { hypothesis: Hypothesis; verdict: 'confirmed' | 'refuted'; probeOutputs: string[] }
+interface HypothesisVerdict { hypothesis: Hypothesis; verdict: 'confirmed' | 'refuted' | 'undecided'; probeOutputs: string[] }
+// undecided = probe errored/timed out (REQ-5.8): counts toward max_hypotheses_per_failure, never a refutation
 // events: HYPOTHESIS_PROPOSED {count} · PROBE_RUN {cmd, exit, evidenceRef}
 //         HYPOTHESIS_CONFIRMED {evidenceRef} · HYPOTHESIS_REFUTED {evidenceRef}
 ```
@@ -546,7 +550,7 @@ governance events land in the durable `.ai/governance/events.jsonl`, not per-run
 | Quota probe | closure injected into `createAnthropicAdapter` by composition root, built over the existing `usage.ts` estimator | adapter stays estimation-free; console owns transcript math; numbers labeled estimates (INV-13) |
 | Sampling audit RNG | `sha256(runId+taskId) mod 100` | deterministic, auditable, replayable — a random sample could not be re-verified from the event log |
 | Governance granularity | ALL policy-file hash changes require approval (not just loosening) | mechanical loosening-detection is unsolvable in general; conservative superset costs one approval per tightening, closes the INV-16 hole completely |
-| Consent gate token | `confirmToken = sha256(proposed content)` echoed on step 2 | stateless, tamper-evident, no server session; stale preview = stale token = 428 |
+| Consent gate token | `confirmToken = sha256(baseHash + proposed content)` echoed on step 2 | base-bound (REQ-13.1): a moved base invalidates the token; stateless, tamper-evident, no server session; stale preview = stale token = 428 |
 | Steering inject scope | legal only in PAUSED | keeps guidance atomic with the pause window; avoids racing an in-flight round (§10.3 sequence is pause→inject→resume) |
 | Diagnostician probes | run by CORE executor, never by the agent | INV-1; probes are RUN_COMMANDs under the same sandbox/egress policy as everything else |
 | Dep-policy enforcement | registry pin at the LOCKFILE (`--frozen-lockfile` + `--ignore-scripts` + lockfile present) + policy-gated per-command network grant | lockfile resolution IS the deterministic registry allowlist (§10.1 Tier 1); SBPL is transport only; residual = malicious committed lockfile, contained by the ≥L2 risk floor on dep-touching diffs; "mitigated not solved" per §16 |
@@ -577,7 +581,8 @@ fail-closed security, escalate-don't-dump); Phase-2 additions:
 - **Governance mismatch** → run refuses to START (`policy_unapproved`), prints the
   pending proposal id + the `platform governance approve <id>` command; nothing runs on
   unapproved policy.
-- **Automation guard** → `AUTOMATION_DEFERRED {until, percentUsed}` + non-zero exit with
+- **Automation guard** → `AUTOMATION_DEFERRED {until, window, percent}` (window = the one that
+  tripped, `until` = its reset time — REQ-16.2) + non-zero exit with
   the defer-until-reset hint; `--force-quota-override` exists, is logged, and still
   respects the hard budget caps.
 - **Merge conflict** → `ESCALATED merge_conflict` (no auto-resolution); **audit
