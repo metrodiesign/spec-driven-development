@@ -6,14 +6,14 @@
 // an AdapterError — records the failure with the breaker and re-routes ONCE to
 // the next eligible adapter before a clean BLOCKED(no_capacity) (REQ-3).
 
-import { buildContext, computeContextMetrics } from 'core';
+import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy } from 'core';
 import { SecretInContextError } from 'core';
 import { breakerKey, type Breaker } from './breaker.ts';
 import { AdapterError } from './protocol.ts';
 import { proposeWithRepair, type RepairOutcome } from './repair.ts';
 import type { RegisteredAdapter } from './registry.ts';
 import type { Router } from './router.ts';
-import type { EvidenceStore } from 'core';
+import type { EvidenceStore, ProviderDataPolicy } from 'core';
 import type {
   Action,
   ContextBundle,
@@ -43,6 +43,13 @@ export interface AALSourceDeps {
   excludePath?: (relPath: string) => boolean;
   /** The task's real remaining budget, sent in AgentRequest.budget (REQ-6.3). */
   budgetRemaining?: () => number;
+  /**
+   * Provider data policy for the routed adapter (REQ-11.5/11.8). Absent = no check
+   * (Phase-1 parity); the composition root builds it from
+   * `.ai/policies/provider-data-policy.json`. A violation escalates
+   * `data_policy_violation` and sends NOTHING.
+   */
+  dataPolicyFor?: (adapterId: string) => ProviderDataPolicy | undefined;
 }
 
 function pathOf(a: Action): string | null {
@@ -173,6 +180,27 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
       let out: RepairOutcome;
       for (;;) {
         const key = keyOf(chosen);
+        // Data-govern (REQ-11.5/11.8): no bundle leaves for an adapter whose provider
+        // policy any piece violates. All-or-nothing — escalate + send NOTHING.
+        const dataPolicy = deps.dataPolicyFor?.(chosen.record.adapterId);
+        if (dataPolicy !== undefined) {
+          const verdict = checkDataPolicy(bundle.pieces, dataPolicy);
+          if (!verdict.ok) {
+            deps.log.append({
+              runId: deps.runId,
+              taskId: deps.taskId,
+              type: 'DATA_POLICY_VIOLATION',
+              payload: { adapterId: chosen.record.adapterId, ...verdict.violation },
+            });
+            deps.log.append({
+              runId: deps.runId,
+              taskId: deps.taskId,
+              type: 'ESCALATED',
+              payload: { why: 'data_policy_violation', adapterId: chosen.record.adapterId, ...verdict.violation },
+            });
+            return { claim: 'BLOCKED', actions: [], costUnits: 0 };
+          }
+        }
         try {
           out = await proposeWithRepair(chosen.adapter, req, deps.maxRepairRounds);
           deps.breaker.recordSuccess(key);
@@ -198,6 +226,19 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
       }
 
       const costUnits = out.totalUsage.costUnits;
+
+      // Runtime injection canary (REQ-11.1): the round's token surfacing in the
+      // model's own output is the signature of a prompt injection — reject the
+      // proposal as structured feedback, consume the round, never crash.
+      if (canaryTripped(out.response, bundle.canaryToken)) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'CANARY_TRIPPED',
+          payload: { requestId, adapterId: chosen.record.adapterId },
+        });
+        return { claim: 'WORKING', actions: [], costUnits };
+      }
 
       if (!out.valid) {
         // Repair exhausted -> structured invalid_response; the round still counts (REQ-1.5).

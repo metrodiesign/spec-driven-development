@@ -1,5 +1,10 @@
 {
-  "_comment": "Governance-pinned security-plane policy. Phase 2 Task 3 seeds depManifestPatterns — the single manifest/lockfile pattern list REQ-7.6 (auto-merge risk floor) and REQ-11.2 (package_install lockfile check) both consult (AZ-17). Task 6 extends this file with the frozen-lockfile install pattern + provider data policy. Patterns are matched by basename (a bare name matches that file in any directory); a pattern containing '/' matches by path suffix.",
+  "_comment": "Governance-pinned security-plane policy. Phase 2 Task 3 seeds depManifestPatterns — the single manifest/lockfile pattern list REQ-7.6 (auto-merge risk floor) and REQ-11.2 (package_install lockfile check) both consult (AZ-17). Task 6 adds packageInstall (the frozen-lockfile install grant). Patterns are matched by basename (a bare name matches that file in any directory); a pattern containing '/' matches by path suffix.",
+  "packageInstall": {
+    "_comment": "REQ-11.2: the ONLY command that may run with network:'allowlist:package_install'. commandPattern is an anchored RegExp source; the grant requires a lockfile from depManifestPatterns present in the worktree. --frozen-lockfile resolves every package from URLs already committed in the lockfile and --ignore-scripts blocks install-time code — that lockfile resolution IS the deterministic registry pin (the SBPL grant is transport only; residual = a maliciously committed lockfile, floored to >=L2 and never auto-merged; mitigated, not solved).",
+    "commandPattern": "^(pnpm install --frozen-lockfile --ignore-scripts|npm ci --ignore-scripts|yarn install --frozen-lockfile --ignore-scripts)$",
+    "requireLockfile": true
+  },
   "depManifestPatterns": [
     "package.json",
     "package-lock.json",

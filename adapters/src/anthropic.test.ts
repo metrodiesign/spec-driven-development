@@ -3,7 +3,7 @@
 // transcript capture) is verified in task 11.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -218,5 +218,57 @@ test('durable replay: same requestId served from disk, query called once (REQ-4.
     const r2 = await h.adapter.send(req('same'));
     assert.equal(calls, 1, 'second send served from durable replay');
     assert.deepEqual(r1, r2);
+  } finally { h.cleanup(); }
+});
+
+// --- Transcript capture: predicted path, glob fallback, both-miss (REQ-17.4/17.5) ---
+
+function transcriptHarness() {
+  const root = mkdtempSync(join(tmpdir(), 'anth-tr-'));
+  const projects = join(root, 'projects');
+  const predicted = join(projects, 'predicted'); // the dir we GUESS from HOME/cwd munge
+  mkdirSync(predicted, { recursive: true });
+  const blobs = new Map<string, string>();
+  const adapter = createAnthropicAdapter({
+    id: 'claude', model: 'sonnet', query: mockQuery({}), systemPrompt: SYS, cwd: root,
+    replayDir: join(root, 'replay'),
+    transcriptDir: predicted, // predicted projects subdir; glob root = its parent
+    putEvidence: (c) => { const ref = `blob://${blobs.size}`; blobs.set(ref, c); return ref; },
+    pollAttempts: 2, pollIntervalMs: 1, sleep: async () => {},
+  });
+  return { root, projects, predicted, blobs, adapter, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+test('transcript found at the PREDICTED path -> ref + source predicted (REQ-17.4)', async () => {
+  const h = transcriptHarness();
+  try {
+    writeFileSync(join(h.predicted, 'sess-1.jsonl'), '{"line":1}\n');
+    const resp = await h.adapter.send(req());
+    assert.notEqual(resp.rawTranscriptRef, null);
+    assert.equal(resp.usage.raw['transcriptSource'], 'predicted');
+    assert.equal(h.blobs.get(String(resp.rawTranscriptRef)), '{"line":1}\n');
+  } finally { h.cleanup(); }
+});
+
+test('predicted misses but a sibling project dir has it -> glob fallback hit (REQ-17.4)', async () => {
+  const h = transcriptHarness();
+  try {
+    // The nested process wrote under a DIFFERENT projects subdir than we predicted.
+    const actual = join(h.projects, 'actual-munged');
+    mkdirSync(actual, { recursive: true });
+    writeFileSync(join(actual, 'sess-1.jsonl'), '{"real":true}\n');
+    const resp = await h.adapter.send(req());
+    assert.notEqual(resp.rawTranscriptRef, null);
+    assert.equal(resp.usage.raw['transcriptSource'], 'glob_fallback');
+    assert.equal(h.blobs.get(String(resp.rawTranscriptRef)), '{"real":true}\n');
+  } finally { h.cleanup(); }
+});
+
+test('both predicted and glob miss -> null + structured reason, no crash (REQ-17.5)', async () => {
+  const h = transcriptHarness();
+  try {
+    const resp = await h.adapter.send(req());
+    assert.equal(resp.rawTranscriptRef, null);
+    assert.equal(resp.usage.raw['transcriptSource'], 'not_found_after_poll_and_glob');
   } finally { h.cleanup(); }
 });

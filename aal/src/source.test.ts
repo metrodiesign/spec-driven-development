@@ -16,7 +16,7 @@ import { createRouter } from './router.ts';
 import { FakeAdapter } from './fake-adapter.ts';
 import { PASS_FAIL_PROBES, type ConformanceRecord } from './protocol.ts';
 import { createEvidenceStore, openEventLog } from 'core';
-import type { ProposalInput, TaskContractExcerpt } from 'core';
+import type { ProposalInput, ProviderDataPolicy, TaskContractExcerpt } from 'core';
 
 const CONTRACT: TaskContractExcerpt = {
   goalId: 'G-1',
@@ -35,7 +35,14 @@ function passingRecord(id: string): ConformanceRecord {
   };
 }
 
-function harness(opts: { seedFiles: Record<string, string>; adapter?: FakeAdapter; adapters?: FakeAdapter[]; register?: boolean }) {
+function harness(opts: {
+  seedFiles: Record<string, string>;
+  adapter?: FakeAdapter;
+  adapters?: FakeAdapter[];
+  register?: boolean;
+  contract?: TaskContractExcerpt;
+  dataPolicyFor?: (adapterId: string) => ProviderDataPolicy | undefined;
+}) {
   const root = mkdtempSync(join(tmpdir(), 'src-'));
   const worktree = join(root, 'wt');
   for (const [rel, content] of Object.entries(opts.seedFiles)) {
@@ -60,7 +67,7 @@ function harness(opts: { seedFiles: Record<string, string>; adapter?: FakeAdapte
     router,
     breaker,
     worktreeDir: worktree,
-    taskContract: CONTRACT,
+    taskContract: opts.contract ?? CONTRACT,
     seedPaths: Object.keys(opts.seedFiles),
     evidence,
     log,
@@ -71,6 +78,7 @@ function harness(opts: { seedFiles: Record<string, string>; adapter?: FakeAdapte
       properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } },
     },
     maxRepairRounds: 2,
+    ...(opts.dataPolicyFor ? { dataPolicyFor: opts.dataPolicyFor } : {}),
   });
   return { root, log, source, breaker, reg, cleanup: () => { log.close(); rmSync(root, { recursive: true, force: true }); } };
 }
@@ -188,6 +196,64 @@ test('quota-unhealthy adapter is excluded from routing + emits QUOTA_PROBE (REQ-
     // Excluded by health, not by an adapter send failure.
     assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'no_capacity');
     assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['detail'], undefined);
+  } finally {
+    h.cleanup();
+  }
+});
+
+const DATA_POLICY: ProviderDataPolicy = {
+  allowPaths: ['src/**'],
+  pathlessKinds: ['feedback', 'contract', 'guidance', 'patchPlan'],
+};
+
+test('a runtime injection canary trips -> CANARY_TRIPPED + round consumed, no actions (REQ-11.1)', async () => {
+  // The contract's echo directive makes the compliant fake surface the round's
+  // canary token in its structuredResult — the injection signature.
+  const h = harness({
+    seedFiles: { 'src/impl.txt': 'wrong\n' },
+    contract: { ...CONTRACT, objective: '[probe:P2 echo=CANARY-fixed] make tests pass' },
+  });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'WORKING', 'proposal rejected as structured feedback, round consumed');
+    assert.equal(p.actions.length, 0, 'no actions executed from a tripped round');
+    assert.equal(h.log.all({ type: 'CANARY_TRIPPED' }).length, 1);
+    assert.equal(h.log.all({ type: 'CANARY_TRIPPED' })[0]?.payload['adapterId'], 'ok');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('an out-of-policy context path escalates data_policy_violation and sends nothing (REQ-11.5)', async () => {
+  const h = harness({
+    seedFiles: { 'infra/creds.txt': 'secret\n' },
+    dataPolicyFor: () => DATA_POLICY,
+  });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'BLOCKED');
+    assert.equal(p.costUnits, 0, 'nothing sent -> no cost');
+    const viol = h.log.all({ type: 'DATA_POLICY_VIOLATION' })[0];
+    assert.equal(viol?.payload['reason'], 'path_out_of_policy');
+    assert.equal(viol?.payload['path'], 'infra/creds.txt');
+    assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'data_policy_violation');
+    // The send never completed: no CONTEXT_BUILT (logged only after a valid send).
+    assert.equal(h.log.all({ type: 'CONTEXT_BUILT' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('an in-policy bundle is unaffected by the data policy (benign baseline, REQ-11.6)', async () => {
+  const h = harness({
+    seedFiles: { 'src/impl.txt': 'wrong\n' },
+    dataPolicyFor: () => DATA_POLICY,
+  });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION');
+    assert.equal(h.log.all({ type: 'DATA_POLICY_VIOLATION' }).length, 0);
+    assert.equal(h.log.all({ type: 'CONTEXT_BUILT' }).length, 1);
   } finally {
     h.cleanup();
   }

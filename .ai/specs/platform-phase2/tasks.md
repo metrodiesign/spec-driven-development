@@ -228,7 +228,7 @@
          (7) `governanceLogPath` is an optional runSupervisedLoop param (governance plane +
          deferred quarantine on load); the governance PREFLIGHT ordering at startup stays Task 9.
 
-- [ ] 6. Security plane completions — canary tripwire helper + source check post-repair
+- [x] 6. Security plane completions — canary tripwire helper + source check post-repair
      (`CANARY_TRIPPED` + structured reject, round consumed), dep-policy in executor
      (`network:'allowlist:package_install'` gated by `.ai/policies/security-plane.json`:
      frozen-lockfile + `--ignore-scripts` pattern + lockfile present per shared pattern list;
@@ -239,8 +239,45 @@
      benign baselines (normal RUN_COMMAND untouched; compliant response never trips).
      Satisfies: REQ-11 (all). Depends on: 1.
      Verify: pnpm -r test (core + aal); fault-injection suite unchanged green.
+     Evidence:
+       - test: `pnpm -r test` -> 281 passed / 0 failed (core 144 [+18], aal 41 [+3], adapters 13,
+         console/backend 71, console/web 12); fault-injection suite unchanged green; skipped 0
+         (darwin execution tests ran locally).
+       - typecheck: `pnpm -r typecheck` -> all 6 projects Done. lint: `pnpm lint` clean;
+         `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-name-free (INV-7).
+       - new tests: `core/src/security/canary.test.ts` (trip in structuredResult / inline action
+         field; benign no-trip; body-is-ref invisible; empty-token no-trip), `core/src/security/
+         data-policy.test.ts` (in-policy pass; out-of-policy blocks; `*` within-segment glob;
+         pathless enumerated-kind pass; pathless other-kind escalate), `core/src/executor/
+         executor.test.ts` (shipped security-plane pattern accept+near-miss; requireLockfile
+         gate; package_install on linux sandbox -> sandbox_unavailable; no-policy/near-miss ->
+         network_policy_denied; unknown grant -> unsupported_action_phase0; benign none unaffected;
+         allowed install runs egressBlocked:false — last two darwin-gated), `aal/src/source.test.ts`
+         (+3: canary trip -> CANARY_TRIPPED+WORKING+no-actions; out-of-policy path -> BLOCKED +
+         DATA_POLICY_VIOLATION + ESCALATED data_policy_violation + no CONTEXT_BUILT + costUnits 0;
+         in-policy benign baseline unaffected).
+       - viewports: n/a — logic-only.
+       - deviations: (1) COMPOSITION WIRING stays Task 9 per plan (bin parses the two policy JSONs
+         and passes `depPolicy` to the executor + `dataPolicyFor` to the AAL source; the L1->COMPLETED
+         E2E exercises them). Task 6 delivers the mechanism (canary helper, dep-policy gate +
+         network-permitting sandbox, provider-data-policy checker), the security-plane packageInstall
+         block + new provider-data-policy.json, and the executor/source wiring points + tests — the
+         same deferral shape as Tasks 2/3/5. (2) `network_policy_denied` added to `ActionRejection.reason`
+         (append-only, INV-8/10) for a governed-grant policy near-miss / missing lockfile; other
+         allowlist names keep `unsupported_action_phase0` (REQ-11.3). (3) canary checks structuredResult
+         + inline action fields only — written file bodies travel as evidence refs, never inline, so a
+         token there is not in the response (documented in the helper + a test asserts it). (4)
+         `security-plane.json` commandPattern pins the CANONICAL flag order for pnpm/npm/yarn frozen
+         installs (`--frozen-lockfile --ignore-scripts`; npm ci implies frozen); flag-order permutations
+         are YAGNI — the platform emits canonical commands, widen the pattern if that changes. (5)
+         data-policy check runs per-CHOSEN-adapter at the top of the send loop (a re-route re-checks the
+         new adapter's policy); a violation is a hard escalate + send-nothing, never a re-route (REQ-11.5).
+         (6) `egressBlocked` in `ExecuteOutcome` now reflects the grant — `false` for a package_install
+         that ran with network permitted, `true` otherwise. (7) provider-data-policy.json is created now
+         (was the governance `absent` sentinel from Task 4); this is itself a gated governance change —
+         the Task 9 CI fixture seeds the approving `decidedBy:'ci-fixture'` snapshot.
 
-- [ ] 7. Console governance surfaces (F-MCP, F-Hook, F-Sub, F-Skill, F-Sys) + audit extension —
+- [x] 7. Console governance surfaces (F-MCP, F-Hook, F-Sub, F-Skill, F-Sys) + audit extension —
      backend route groups copying the F-Mem writeSafe pattern (GET {content,hash} / PUT 409/422),
      F-MCP project `.mcp.json` writes + user scope read-only + `POST /api/mcp/test` advisory,
      F-Hook validate → {verdict, JSON-diff preview, confirmToken=sha256(baseHash+content)} +
@@ -253,8 +290,47 @@
      Satisfies: REQ-12 (all), REQ-13 (all), REQ-14 (all), REQ-15 (all), REQ-18.3.
      Verify: pnpm -r test (console/backend + web); prod build (`next`-equivalent: vite build +
      serve) browser check per browser-verify lesson.
+     Evidence:
+       - test: `pnpm -r test` -> 302 passed / 0 failed (core 144, aal 41, adapters 13,
+         console/backend 89 [+18], console/web 15 [+3]); `pnpm -r typecheck` all 6 Done;
+         `pnpm lint` clean; `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-free.
+       - new tests: `console/backend/src/surfaces.test.ts` (confirmToken bind/invalidate;
+         jsonDiffPreview exact; validateHookConfig valid/unknown-event/bad-shape/non-command;
+         validateMcpConfig stdio/http/reject; validateSubagentFrontmatter req-fields+body-verbatim;
+         retentionPreview cutoff), `console/backend/src/app-surfaces.test.ts` (F-MCP GET/PUT/422/409
+         + user read-only no-PUT route-table + advisory test; F-Hook validate diff+token, install
+         needs BOTH token+baseHash [428], stale base [409], invalid [422], audit; F-Sub CRUD +
+         frontmatter 422; F-Skill SKILL.md + enabledPlugins toggle; F-Sys doctor degraded-never-500
+         + node:os stats + retention prune two-step [428] + live-PTY [409] + audit + cleanupPeriodDays),
+         `console/web/src/logic/surfaces.test.ts` (statsRows/diffLines/listOrEmpty).
+       - viewports: 375 OK | 768 OK | 1440 OK — served the vite prod build via buildApp (real /api,
+         temp home) on 127.0.0.1:9191; chrome-devtools emulate, verified
+         `document.documentElement.clientWidth === target` exactly (375 mobile-emulate; 768 via 783
+         and 1440 via 1455 to offset the 15px real-window scrollbar per browser-verify.md) with
+         `scrollWidth === clientWidth` (no horizontal overflow) and all five surface panels +
+         Governance heading rendered at each.
+       - deviations: (1) AUDIT scope: the console audit sink (REQ-18.3) is wired to the
+         console-originated writes — hook install/uninstall + retention prune — and route-tested.
+         The loop-side items REQ-18.3 also names (governance decisions, approvals, steering, kill)
+         are already recorded in the durable core event log by Tasks 3/4/5 (GOVERNANCE_*/
+         APPROVAL_RECORDED/PAUSE_REQUESTED/RESUMED/GUIDANCE_INJECTED/KILL_REQUESTED — the
+         authoritative audit trail); mirroring them into the console JSONL is loop-run composition
+         and rides Task 9. (2) `AppDeps.audit` is an injected optional sink (tests capture; the live
+         server appends to the shared audit JSONL) — no server bin composes buildApp yet (index.ts is
+         still the Phase-1 placeholder), so the JSONL file path is wired when the server is composed,
+         not here. (3) `AppDeps.doctorCapture` added (injected, mirrors `cliVersion`) so the doctor
+         test never spawns the real CLI; production falls back to `claude doctor` capture. (4)
+         MANAGED/user-readonly enforced BY CONSTRUCTION (REQ-13.4): PUT registered only at literal
+         writable paths (`/api/mcp/project`, `/api/subagents/:name`, …); a PUT to a read-only scope
+         has no route (404) — asserted via `app.hasRoute`. (5) WEB is minimal READ/list views per
+         surface (System stats+doctor, MCP/Hooks content, Subagent/Skill lists) + the two-step-consent
+         entry-point note; the write flows (consent gate, writeSafe, toggles) live in the backend and
+         are exercised by the API tests, not re-implemented as web forms (ponytail — DoD is
+         routes-tested + pages-render). (6) `network_policy_denied`-style new reasons: none here.
+         (7) F-Mem-pattern helpers (`contentHash`/`putThrough`/`settingsScopePath`) are local to
+         buildApp to avoid churning govern.ts; writeSafe/sha256 are reused from govern.ts.
 
-- [ ] 8. F-Term repaint nudge + transcript glob fallback (carried backlog #3 #4) — `PtyLike.resize`
+- [x] 8. F-Term repaint nudge + transcript glob fallback (carried backlog #3 #4) — `PtyLike.resize`
      + `TermManager.resize(ptyId,cols,rows)` with per-session dims, WS attach double-resize
      nudge (rows−1→rows) after ring replay (signal-only, byte-prefix invariant), anthropic
      transcript capture glob `~/.claude/projects/*/<sessionId>.jsonl` on predicted-path miss →
@@ -262,6 +338,37 @@
      check recorded.
      Satisfies: REQ-17 (all).
      Verify: pnpm -r test (console/backend + adapters).
+     Evidence:
+       - test: `pnpm -r test` -> 308 passed / 0 failed (core 144, aal 41, adapters 16 [+3],
+         console/backend 92 [+3], console/web 15); `pnpm -r typecheck` all 6 Done; `pnpm lint`
+         clean; `scripts/check-core-vendor-free.sh` -> core/ + aal/ vendor-free.
+       - new tests: `console/backend/src/term.test.ts` (+3: resize tracks per-session dims +
+         forwards to PTY + rejects unknown/non-positive [REQ-17.1]; nudgeRepaint double-resizes
+         rows-1→rows around the tracked geometry [REQ-17.2]; nudge is signal-only — 0 bytes written,
+         ring buffer unchanged [REQ-17.3]), `adapters/src/anthropic.test.ts` (+3: transcript at the
+         PREDICTED path → source `predicted`; predicted miss + sibling project dir has it → glob
+         fallback hit [REQ-17.4]; both miss → null + `not_found_after_poll_and_glob`, no crash
+         [REQ-17.5]).
+       - viewports: n/a — logic-only. (The nudge is verified structurally on a fake PtyLike; the
+         actual full-screen-TUI repaint on browser re-attach is a live check that needs a real
+         `claude` PTY — recorded as deferred to the task-11-style live pass, per term-runtime's
+         existing "verified live" contract. Not runnable headless.)
+       - deviations: (1) `manager.nudgeRepaint(ptyId)` is wired into the WS bridge after
+         `ws.send(re.buffer)` in term-runtime.ts (runtime glue; node-pty+ws, live-verified) — the
+         double-resize logic itself is unit-tested. The DoD "manual re-attach check recorded" is a
+         live browser + real-`claude` check → deferred to the live pass (can't drive a real TUI
+         headless); noted here rather than asserted. (2) `DEFAULT_PTY_DIMS` (120x32) hoisted into
+         term.ts as the SINGLE source both `nodePtySpawn` and the session default use, so the nudge
+         toggles around the ACTUAL geometry and never resizes the terminal. (3) the REQ-17.5
+         "structured reason" is surfaced as `usage.raw.transcriptSource`
+         (predicted|glob_fallback|not_found_after_poll_and_glob|no_session_id|no_transcript_dir) —
+         `usage.raw` is a free-form `Record`, so no protocol/response-shape change; `rawTranscriptRef`
+         stays `string|null`. (4) glob root = `dirname(transcriptDir)` (the projects root) — no new
+         adapter option; `globTranscript` scans sibling project dirs with `readdirSync` wrapped so an
+         unreadable root returns null (never throws, REQ-17.5). (5) `TermManager` gained `resize` +
+         `nudgeRepaint` (append-only, INV-8); the WS bridge holds only a `ptyId` and calls the manager
+         (REQ-17.1) — parsing client-resize control messages over the WS is out of REQ-17 scope
+         (needs a control/data byte protocol) and is not added.
 
 - [ ] 9. Automation guards + composition preflight + CI E2E DoD proof — `console/backend/src/
      guards.ts` pure `decideAutomationStart` ({fiveHourPct,weeklyPct}|null; max ≥ threshold

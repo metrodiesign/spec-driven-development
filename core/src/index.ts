@@ -10,10 +10,19 @@ export {
   type PolicyDecision,
 } from './executor/path-policy.ts';
 export { denyNetworkSandbox, type SandboxWrap } from './security/sandbox.ts';
+export { canaryTripped } from './security/canary.ts';
+export {
+  checkDataPolicy,
+  type ProviderDataPolicy,
+  type DataPolicyResult,
+  type DataPolicyViolation,
+} from './security/data-policy.ts';
 export {
   CrashInjected,
   createExecutor,
+  packageInstallAllowed,
   recoverWorktree,
+  type DepInstallPolicy,
   type ExecuteOutcome,
   type Executor,
   type Failpoints,

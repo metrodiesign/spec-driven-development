@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 
 import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo } from './logic/format.ts';
 import { TerminalPanel } from './TerminalPanel.tsx';
+import { Surfaces } from './Surfaces.tsx';
 
 interface Status {
   disclaimer: string;
@@ -158,6 +159,8 @@ export function App() {
           </ul>
         )}
       </section>
+
+      <Surfaces project={selected} />
 
       {selected !== null && <TerminalPanel project={selected} />}
 

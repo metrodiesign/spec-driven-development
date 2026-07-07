@@ -29,7 +29,10 @@ export interface ActionRejection {
     | 'golden_write_denied'
     | 'schema_violation'
     | 'sandbox_unavailable'
-    | 'unsupported_action_phase0';
+    | 'unsupported_action_phase0'
+    // A governed network grant (package_install) that failed the security-plane
+    // policy: pattern near-miss or missing lockfile (REQ-11.2, append-only).
+    | 'network_policy_denied';
   detail: string;
 }
 

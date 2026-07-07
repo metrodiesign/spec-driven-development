@@ -5,21 +5,24 @@ import { test } from 'node:test';
 
 import { createTermManager, termAccessAllowed, type AuditEntry, type PtyLike, type SpawnPty } from './term.ts';
 
-function fakePty(): PtyLike & { emit(d: string): void; exit(): void; written: string[]; killed: string[] } {
+function fakePty(): PtyLike & { emit(d: string): void; exit(): void; written: string[]; killed: string[]; resized: [number, number][] } {
   let dataCb: (d: string) => void = () => {};
   let exitCb: (e: { exitCode: number }) => void = () => {};
   const written: string[] = [];
   const killed: string[] = [];
+  const resized: [number, number][] = [];
   return {
     pid: 123,
     onData: (cb) => { dataCb = cb; },
     onExit: (cb) => { exitCb = cb; },
     write: (d) => written.push(d),
+    resize: (cols, rows) => resized.push([cols, rows]),
     kill: (s) => killed.push(s ?? 'SIGTERM'),
     emit: (d) => dataCb(d),
     exit: () => exitCb({ exitCode: 0 }),
     written,
     killed,
+    resized,
   };
 }
 
@@ -116,7 +119,7 @@ test('resume builds `claude --resume <id>` (REQ-13.6)', () => {
   const commands: string[] = [];
   // Re-create a manager that records the built command via a spy buildCommand.
   const m2 = createTermManager({
-    spawn: () => { const p = { pid: 1, onData: () => {}, onExit: () => {}, write: () => {}, kill: () => {} }; return p; },
+    spawn: () => { const p = { pid: 1, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} }; return p; },
     now: () => 1,
     nextId: () => 'x',
     nextTicket: () => 't',
@@ -128,4 +131,33 @@ test('resume builds `claude --resume <id>` (REQ-13.6)', () => {
   m2.create({ project: 'p', mode: 'claude-only', resume: 'sess-9' });
   assert.deepEqual(commands, ['--resume sess-9']);
   void h;
+});
+
+test('resize tracks per-session dims and forwards to the PTY (REQ-17.1)', () => {
+  const h = mgr();
+  const { ptyId } = h.m.create({ project: 'p', mode: 'claude-only' });
+  assert.equal(h.m.resize(ptyId, 100, 40), true);
+  assert.deepEqual(h.ptys[0]!.resized.at(-1), [100, 40]);
+  assert.equal(h.m.resize('absent', 80, 24), false, 'unknown pty -> false');
+  assert.equal(h.m.resize(ptyId, 0, 40), false, 'non-positive dims rejected');
+});
+
+test('nudgeRepaint double-resizes rows-1 -> rows around the tracked geometry (REQ-17.2)', () => {
+  const h = mgr();
+  const { ptyId } = h.m.create({ project: 'p', mode: 'claude-only' });
+  h.m.resize(ptyId, 100, 40); // client set real dims
+  h.ptys[0]!.resized.length = 0; // ignore the resize above; watch only the nudge
+  assert.equal(h.m.nudgeRepaint(ptyId), true);
+  assert.deepEqual(h.ptys[0]!.resized, [[100, 39], [100, 40]], 'off-by-one then back to the same size');
+  assert.equal(h.m.nudgeRepaint('absent'), false);
+});
+
+test('nudgeRepaint is signal-only: no bytes written, ring stays a byte-prefix (REQ-17.3)', () => {
+  const h = mgr();
+  const { ptyId } = h.m.create({ project: 'p', mode: 'claude-only' });
+  h.ptys[0]!.emit('full-screen frame');
+  const ringBefore = h.m.attach(ptyId)!.buffer;
+  h.m.nudgeRepaint(ptyId);
+  assert.equal(h.ptys[0]!.written.length, 0, 'the nudge injects no bytes into the PTY');
+  assert.equal(h.m.attach(ptyId)!.buffer, ringBefore, 'ring unchanged by the nudge');
 });

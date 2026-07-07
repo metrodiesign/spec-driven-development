@@ -5,8 +5,8 @@
 // The SDK `query` is injected so the adapter is unit-testable with a mock
 // transport (CI never spends quota); production passes the real SDK query.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { serializeBundle } from 'core';
 import { AdapterError } from 'aal';
@@ -90,6 +90,31 @@ export function normalizeActions(raw: unknown, put: (content: string) => string)
   });
 }
 
+/**
+ * Glob the projects root once (REQ-17.4): scan each project subdir for the
+ * transcript the nested process may have written elsewhere. Returns the file
+ * content, or null if the root/entries are unreadable — never throws (REQ-17.5).
+ */
+function globTranscript(projectsRoot: string, sessionId: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(projectsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return null;
+  }
+  for (const dir of entries) {
+    const candidate = join(projectsRoot, dir, `${sessionId}.jsonl`);
+    if (existsSync(candidate)) {
+      try {
+        return readFileSync(candidate, 'utf8');
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 /** Classify an SDK/transport error into a typed AdapterError (never self-retry, INV-5). */
 function classify(err: unknown): AdapterError {
   const msg = err instanceof Error ? err.message : String(err);
@@ -122,14 +147,26 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
             : { ok: true, windows: w };
         };
 
-  async function captureTranscript(sessionId: string | null): Promise<string | null> {
-    if (sessionId === null || opts.transcriptDir === undefined) return null;
-    const path = join(opts.transcriptDir, `${sessionId}.jsonl`);
+  /**
+   * Capture the run's transcript (REQ-17.4/17.5, REQ-4.6). Poll the PREDICTED path,
+   * then — because a nested `claude` process munges HOME/cwd and can write under a
+   * DIFFERENT projects subdir than we predicted -- glob every sibling project
+   * ONCE before giving up. Both miss -> structured null, never a crash.
+   */
+  async function captureTranscript(
+    sessionId: string | null,
+  ): Promise<{ ref: string | null; source: string }> {
+    if (sessionId === null) return { ref: null, source: 'no_session_id' };
+    if (opts.transcriptDir === undefined) return { ref: null, source: 'no_transcript_dir' };
+    const predicted = join(opts.transcriptDir, `${sessionId}.jsonl`);
     for (let i = 0; i < pollAttempts; i += 1) {
-      if (existsSync(path)) return opts.putEvidence(readFileSync(path, 'utf8'));
+      if (existsSync(predicted)) return { ref: opts.putEvidence(readFileSync(predicted, 'utf8')), source: 'predicted' };
       await sleep(pollIntervalMs);
     }
-    return null; // absent/unflushed — structured null, never a crash (REQ-4.6)
+    // Predicted path missed after polling — glob every sibling project dir ONCE.
+    const globHit = globTranscript(dirname(opts.transcriptDir), sessionId);
+    if (globHit !== null) return { ref: opts.putEvidence(globHit), source: 'glob_fallback' };
+    return { ref: null, source: 'not_found_after_poll_and_glob' };
   }
 
   function buildPrompt(req: AgentRequest): string {
@@ -213,12 +250,17 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
       const ar = (structuredResult as { actionRequests?: unknown }).actionRequests;
       const actionRequests: Action[] = normalizeActions(ar, opts.putEvidence);
 
-      const rawTranscriptRef = await captureTranscript(sessionId);
+      const transcript = await captureTranscript(sessionId);
       const response: AgentResponse = {
         structuredResult,
         actionRequests,
-        usage: { costUnits: ((inTok + outTok) / 1000) * per1k, raw: { input_tokens: inTok, output_tokens: outTok } },
-        rawTranscriptRef,
+        usage: {
+          costUnits: ((inTok + outTok) / 1000) * per1k,
+          // `transcriptSource` is the structured reason (predicted/glob_fallback/miss)
+          // that accompanies rawTranscriptRef — observable, never a bare null (REQ-17.5).
+          raw: { input_tokens: inTok, output_tokens: outTok, transcriptSource: transcript.source },
+        },
+        rawTranscriptRef: transcript.ref,
         adapterMeta: { adapterId: id, modelVersion: opts.model ?? 'unknown', interactive: false, toolUseCount },
       };
 

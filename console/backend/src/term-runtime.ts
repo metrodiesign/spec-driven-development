@@ -12,7 +12,7 @@ import { WebSocketServer } from 'ws';
 import type { Server } from 'node:http';
 
 import { readProjects } from './claude-data.ts';
-import { createTermManager, type CreateSessionInput, type PtyLike, type SpawnPty, type TermManager } from './term.ts';
+import { createTermManager, DEFAULT_PTY_DIMS, type CreateSessionInput, type PtyLike, type SpawnPty, type TermManager } from './term.ts';
 
 /** Build the `claude` invocation for a session. claude-only spawns the binary
  *  directly (no arbitrary shell); full-shell is an explicit opt-in (§4.1). */
@@ -25,8 +25,8 @@ function buildCommand(input: CreateSessionInput): { file: string; args: string[]
 const nodePtySpawn: SpawnPty = (file, args, opts): PtyLike => {
   const p = ptySpawn(file, args, {
     name: 'xterm-256color',
-    cols: 120,
-    rows: 32,
+    cols: DEFAULT_PTY_DIMS.cols,
+    rows: DEFAULT_PTY_DIMS.rows,
     cwd: opts.cwd,
     env: { ...process.env, ...opts.env },
   });
@@ -35,6 +35,7 @@ const nodePtySpawn: SpawnPty = (file, args, opts): PtyLike => {
     onData: (cb) => p.onData(cb),
     onExit: (cb) => p.onExit(cb),
     write: (d) => p.write(d),
+    resize: (cols, rows) => p.resize(cols, rows),
     kill: (s) => p.kill(s),
   };
 };
@@ -84,6 +85,7 @@ export function createTermRuntime(opts: { projectsRoot: string; auditPath: strin
           return;
         }
         ws.send(re.buffer); // replay ring buffer on (re)attach (REQ-13.2)
+        manager.nudgeRepaint(ptyId); // force SIGWINCH so a resumed full-screen TUI repaints (REQ-17.2)
         const off = manager.onData(ptyId, (d) => ws.send(d)); // live stream (REQ-13.2)
         ws.on('close', off);
         ws.on('message', (data: Buffer) => manager.write(ptyId, re.ticket, data.toString('utf8')));

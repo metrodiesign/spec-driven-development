@@ -20,6 +20,8 @@ function stubTerm(): TermManager {
     redeemTicket: () => true,
     onData: () => () => {},
     write: () => true,
+    resize: () => true,
+    nudgeRepaint: () => true,
     list: () => [...sessions.entries()].map(([ptyId, s]) => ({ ptyId, project: s.project, mode: s.mode, alive: true })),
     kill: (id) => sessions.delete(id),
   };
