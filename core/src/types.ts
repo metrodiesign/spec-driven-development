@@ -66,7 +66,43 @@ export type EventType =
   | 'BUDGET_EXCEEDED'
   | 'ESCALATED'
   | 'GOVERNANCE_CHANGE'
-  | 'ERROR';
+  | 'ERROR'
+  // Phase 1 additions (append-only; no existing type changes meaning — INV-10).
+  | 'PROPOSAL_INTENT'
+  | 'APPROVAL_RECORDED'
+  | 'KILL_REQUESTED'
+  | 'CONTEXT_BUILT'
+  | 'CONFORMANCE_RECORDED';
+
+/**
+ * Shared context contracts (spec §9.4). Core owns these because core/context
+ * PRODUCES them; Ring 1 imports them upward (INV-8) to place a bundle in an
+ * AgentRequest. Every piece is untrusted data (INV-3) and marked as such when
+ * serialized.
+ */
+export interface ContextPiece {
+  id: string;
+  kind: 'file' | 'excerpt' | 'feedback' | 'contract';
+  path?: string;
+  content: string;
+  /** WHY this piece was included (the inclusion-rule id) — recorded in the manifest. */
+  reason: string;
+}
+
+export interface ContextBundle {
+  pieces: ContextPiece[];
+  /** Per-request random token planted in the data-marker preamble (injection canary). */
+  canaryToken: string;
+  stats: { bytes: number; pieceCount: number };
+}
+
+/** The slice of the frozen goal contract a model is allowed to see (never the whole repo). */
+export interface TaskContractExcerpt {
+  goalId: string;
+  title: string;
+  objective: string;
+  acceptanceCriteria: { id: string; description: string }[];
+}
 
 /** Append-only event row (INV-10). `seq` is assigned by the log. */
 export interface PlatformEvent {

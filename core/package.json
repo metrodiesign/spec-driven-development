@@ -2,6 +2,11 @@
   "name": "core",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ports": "./src/ports.ts",
+    "./types": "./src/types.ts"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test --test-reporter spec 'src/**/*.test.ts' 'test/**/*.test.ts'"

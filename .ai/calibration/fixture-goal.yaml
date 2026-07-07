@@ -1,0 +1,7 @@
+# Phase-1 calibration fixture (spec §12, §14). A synthetic target repo whose tests
+# pass iff src/impl.txt contains "correct". The supervised loop must reach REVIEWING.
+goal: { id: CALIB-1, title: Calibration fixture, objective: "edit src/impl.txt so the tests pass" }
+acceptance_criteria:
+  - { id: AC-1, description: "src/impl.txt contains correct", verification: "sh run-tests.sh", golden: true }
+budget: { max_iterations_per_task: 4, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
+approval_policy: { require_human_approval: [auth_policy_change] }

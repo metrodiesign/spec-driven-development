@@ -10,10 +10,17 @@
     "test": "node --test --test-reporter spec 'src/**/*.test.ts' 'test/**/*.test.ts'"
   },
   "dependencies": {
-    "fastify": "^5.7.4"
+    "aal": "workspace:*",
+    "adapters": "workspace:*",
+    "core": "workspace:*",
+    "fastify": "^5.7.4",
+    "node-pty": "1.1.0",
+    "ws": "^8.18.0",
+    "yaml": "^2.6.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
+    "@types/ws": "^8.5.13",
     "typescript": "^5.9.3"
   }
 }

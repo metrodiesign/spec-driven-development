@@ -1,0 +1,10 @@
+{
+  "$comment": "Phase 1 tunable bounds (unified-platform-spec.md §7, §9.4, §10.3; REQ-4.5, 10.4, 11.3, 13.3, 19.1). Named keys so EARS criteria are boundary-testable instead of relying on the words 'briefly'/'short'. Values are defaults; none is a hardcoded quota cap (§5.3).",
+  "transcript_poll_interval_ms": 200,
+  "transcript_poll_attempts": 10,
+  "term_ticket_ttl_s": 30,
+  "activity_hook_timeout_ms": 1500,
+  "kill_adapter_wait_ms": 120000,
+  "repair_max_rounds": 2,
+  "cost_units_per_1k_tokens": 1
+}

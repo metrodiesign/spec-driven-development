@@ -24,3 +24,40 @@ export { computeGoldenManifest, verifyGoldenManifest, type GoldenVerdict } from 
 export { createBudget, type BudgetTracker } from './budget/budget.ts';
 export { transition, type TransitionResult, type Trigger } from './orchestrator/machine.ts';
 export { runTaskLoop, type LoopOptions, type LoopResult } from './orchestrator/loop.ts';
+export { scanForSecret, type SecretHit } from './context/secret-scan.ts';
+export {
+  buildContext,
+  computeContextMetrics,
+  serializeBundle,
+  SecretInContextError,
+  type ContextBuildInput,
+  type ContextBuildResult,
+} from './context/builder.ts';
+export {
+  freezeContract,
+  contractChanged,
+  ContractInvalidError,
+  type TaskContract,
+} from './contract/contract.ts';
+export { redactSecrets } from './human/redact.ts';
+export {
+  attestationsFor,
+  buildApprovalPackage,
+  type ApprovalPackage,
+  type ApprovalInput,
+  type ApprovalResult,
+  type RiskClass,
+} from './human/approval.ts';
+export {
+  handleHumanRequest,
+  createHumanPlaneServer,
+  type HandlerDeps,
+  type HttpLike,
+  type HttpResult,
+  type HumanPlaneServer,
+} from './human/api.ts';
+export {
+  computeCalibration,
+  type CalibrationInput,
+  type CalibrationResult,
+} from './calibration/calibration.ts';

@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "task-result.schema.json",
+  "$comment": "Structured I/O contract for an agent's per-round result (unified-platform-spec.md §11.3, REQ-1.1). The AAL enforces conformance; core never parses free text. actionRequests use the core Action DSL.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["claim", "actionRequests"],
+  "properties": {
+    "claim": {
+      "type": "string",
+      "enum": ["WORKING", "READY_FOR_VERIFICATION", "BLOCKED"]
+    },
+    "summary": { "type": "string" },
+    "actionRequests": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "costUnits": { "type": "number", "minimum": 0 }
+  }
+}
