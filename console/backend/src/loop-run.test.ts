@@ -14,9 +14,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { runSupervisedLoop } from './loop-run.ts';
-import { FakeAdapter } from 'aal';
-import { approveProposal, openEventLog, proposeFlakyQuarantine, seedFixtureSnapshot, type TaskContract } from 'core';
+import { runSupervisedLoop, wrapRouterForShadow } from './loop-run.ts';
+import { FakeAdapter, type RegisteredAdapter, type Registry, type Router } from 'aal';
+import {
+  approveProposal,
+  openEventLog,
+  proposeFlakyQuarantine,
+  seedFixtureSnapshot,
+  type EventLog,
+  type EventType,
+  type PlatformEvent,
+  type TaskContract,
+} from 'core';
 
 const CONTRACT: TaskContract = {
   hash: 'a'.repeat(64),
@@ -42,6 +51,17 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
     assert.equal(out.calibration.n, 1);
     assert.equal(out.calibration.heldOutPassRate, 1, 'held-out (golden) passed — SCRIPTED, not a §12 metric');
     assert.equal(out.calibration.reproducibility, 1);
+
+    // REQ-7.1: the composition root records shadow routes as a side channel; a
+    // single registered adapter can never diverge from its own live choice.
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      const shadowRoutes = log.all({ type: 'SHADOW_ROUTE' });
+      assert.ok(shadowRoutes.length >= 1, 'each live route decision records a SHADOW_ROUTE event');
+      assert.equal(shadowRoutes[0]?.payload['live'], shadowRoutes[0]?.payload['wouldChoose']);
+    } finally {
+      log.close();
+    }
 
     // REQ-18.1: the Human Plane server ran and left its {url,token} discovery file 0600.
     const metaPath = join(persistDir, 'human-plane.json');
@@ -173,4 +193,167 @@ test('a governance-approved flaky_quarantine takes effect on load — the task i
     rmSync(persistDir, { recursive: true, force: true });
     rmSync(policyDir, { recursive: true, force: true });
   }
+});
+
+// --- wrapRouterForShadow (REQ-7): isolated from the fixture so freeze/failure
+// scenarios that the single-adapter E2E loop above can never exercise are
+// provable directly. ---
+
+function registeredAdapter(id: string, stale = false): RegisteredAdapter {
+  return {
+    adapter: new FakeAdapter({ id }),
+    record: {
+      adapterId: id,
+      modelVersion: 'v1',
+      ranAt: '2026-07-08T00:00:00Z',
+      probes: [],
+      p7: { susceptibilityScore: 0, evidenceRef: 'blob://p7' },
+    },
+    stale,
+    susceptibilityScore: 0,
+    lineage: 'unknown',
+  };
+}
+
+function fakeRouter(eligible: RegisteredAdapter[]): Router {
+  return {
+    route: () => {
+      throw new Error('unused by these tests');
+    },
+    eligibleAdapters: () => eligible,
+    refreshHealth: async () => [],
+  };
+}
+
+function fakeRegistry(all: RegisteredAdapter[]): Registry {
+  return {
+    register: () => undefined,
+    recordConformance: () => undefined,
+    eligible: () => all,
+    all: () => all,
+    refreshHealth: async () => [],
+    get: () => undefined,
+  };
+}
+
+function fakeLog(failType?: EventType): EventLog & { appended: PlatformEvent[] } {
+  const appended: PlatformEvent[] = [];
+  let seq = 0;
+  return {
+    appended,
+    append(e) {
+      if (failType !== undefined && e.type === failType) throw new Error('append failed');
+      seq += 1;
+      const event: PlatformEvent = { seq, ts: `t${seq}`, ...e };
+      appended.push(event);
+      return event;
+    },
+    all(filter) {
+      return appended.filter(
+        (e) =>
+          (filter?.type === undefined || e.type === filter.type) &&
+          (filter?.taskId === undefined || e.taskId === filter.taskId),
+      );
+    },
+    exportJsonl: () => '',
+    projection: () => ({ tasks: {}, eventCount: appended.length }),
+    close: () => undefined,
+  };
+}
+
+test('wrapRouterForShadow never alters the eligible list — with or without the recorder (REQ-7.4)', () => {
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')];
+  const router = fakeRouter(adapters);
+  const wrapped = wrapRouterForShadow(router, {
+    registry: fakeRegistry(adapters),
+    log: fakeLog(),
+    runId: 'RUN-1',
+    taskId: 'T-1',
+  });
+  assert.deepEqual(wrapped.eligibleAdapters('implementer'), router.eligibleAdapters('implementer'));
+});
+
+test('wrapRouterForShadow records a SHADOW_ROUTE event carrying the live choice (REQ-7.1/7.2)', () => {
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')];
+  const log = fakeLog();
+  const wrapped = wrapRouterForShadow(fakeRouter(adapters), {
+    registry: fakeRegistry(adapters),
+    log,
+    runId: 'RUN-1',
+    taskId: 'T-1',
+  });
+  wrapped.eligibleAdapters('implementer');
+  assert.equal(log.appended.length, 1);
+  const event = log.appended[0];
+  assert.equal(event?.type, 'SHADOW_ROUTE');
+  assert.equal(event?.payload['role'], 'implementer');
+  assert.equal(event?.payload['live'], 'a@v1');
+  assert.equal(event?.payload['frozen'], false);
+  assert.equal(event?.payload['basis'], 'insufficient_data', 'no outcome history yet');
+});
+
+test('any registered adapter gone stale freezes recording — no SHADOW_ROUTE appended (REQ-7.3)', () => {
+  const adapters = [registeredAdapter('a'), registeredAdapter('b', true)];
+  const log = fakeLog();
+  const wrapped = wrapRouterForShadow(fakeRouter(adapters), {
+    registry: fakeRegistry(adapters),
+    log,
+    runId: 'RUN-1',
+    taskId: 'T-1',
+  });
+  const eligible = wrapped.eligibleAdapters('implementer');
+  assert.equal(eligible.length, 2, 'the recorder never filters — that stays eligibleAdapters()\'s own job');
+  assert.equal(log.appended.length, 0, 'frozen -> recording skipped entirely');
+});
+
+test('a failed SHADOW_ROUTE append logs ERROR and continues — the round is never blocked (REQ-7.5)', () => {
+  const adapters = [registeredAdapter('a')];
+  const log = fakeLog('SHADOW_ROUTE');
+  const wrapped = wrapRouterForShadow(fakeRouter(adapters), {
+    registry: fakeRegistry(adapters),
+    log,
+    runId: 'RUN-1',
+    taskId: 'T-1',
+  });
+  const eligible = wrapped.eligibleAdapters('implementer');
+  assert.equal(eligible.length, 1, 'the recording failure never blocks the live route');
+  assert.equal(log.appended.length, 1);
+  assert.equal(log.appended[0]?.type, 'ERROR');
+  assert.equal(log.appended[0]?.payload['reason'], 'shadow_append_failed');
+});
+
+test('no eligible adapters -> nothing to shadow, no event appended', () => {
+  const log = fakeLog();
+  const wrapped = wrapRouterForShadow(fakeRouter([]), {
+    registry: fakeRegistry([]),
+    log,
+    runId: 'RUN-1',
+    taskId: 'T-1',
+  });
+  assert.deepEqual(wrapped.eligibleAdapters('implementer'), []);
+  assert.equal(log.appended.length, 0);
+});
+
+test('outcome stats accumulate across rounds sharing a log — a proven adapter can shadow-diverge from the live pick (REQ-7.2)', () => {
+  // 'b' routes first (registry/lineage order), but 'a' is the one with a proven
+  // reviewing-reached history from earlier tasks in this same shared log.
+  const adapters = [registeredAdapter('b'), registeredAdapter('a')];
+  const log = fakeLog();
+  log.append({ runId: 'RUN-1', taskId: 'T-old-a', type: 'SHADOW_ROUTE', payload: { role: 'implementer', live: 'a@v1', wouldChoose: 'a@v1', basis: 'insufficient_data', frozen: false } });
+  log.append({ runId: 'RUN-1', taskId: 'T-old-a', type: 'TASK_STATE', payload: { state: 'REVIEWING' } });
+  log.append({ runId: 'RUN-1', taskId: 'T-old-b', type: 'SHADOW_ROUTE', payload: { role: 'implementer', live: 'b@v1', wouldChoose: 'b@v1', basis: 'insufficient_data', frozen: false } });
+  log.append({ runId: 'RUN-1', taskId: 'T-old-b', type: 'TASK_STATE', payload: { state: 'BLOCKED' } });
+
+  const wrapped = wrapRouterForShadow(fakeRouter(adapters), {
+    registry: fakeRegistry(adapters),
+    log,
+    runId: 'RUN-1',
+    taskId: 'T-new',
+  });
+  wrapped.eligibleAdapters('implementer');
+  const latest = log.appended.at(-1);
+  assert.equal(latest?.type, 'SHADOW_ROUTE');
+  assert.equal(latest?.payload['live'], 'b@v1', 'live choice is still eligible[0] — the recorder never influences it');
+  assert.equal(latest?.payload['wouldChoose'], 'a@v1', 'a has the only proven reviewing-reached history — a real divergence');
+  assert.equal(latest?.payload['basis'], 'highest_reviewing_rate');
 });

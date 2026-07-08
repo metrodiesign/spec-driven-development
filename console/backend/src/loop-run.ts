@@ -31,23 +31,32 @@ import {
   transition,
   type CalibrationResult,
   type Clock,
+  type EventLog,
   type HandlerDeps,
   type MappedAc,
+  type PlatformEvent,
   type RiskClass,
+  type Role,
   type TaskContract,
   type TaskState,
   type ToolHandler,
 } from 'core';
 import {
+  breakerKey,
   createAALProposalSource,
   createBreaker,
   createRegistry,
   createRouter,
   DEFAULT_BREAKER_OPTIONS,
   PASS_FAIL_PROBES,
+  shadowFrozen,
+  shadowWouldChoose,
   type AdapterHealth,
   type AdapterInterface,
   type ConformanceRecord,
+  type Registry,
+  type RouteHints,
+  type Router,
 } from 'aal';
 
 function git(cwd: string, ...args: string[]): void {
@@ -60,6 +69,77 @@ function sha256(b: Uint8Array): string {
 /** Read the per-task risk class from the frozen contract; anything unrecognized → null (→ L2, REQ-7.6). */
 function parseRisk(v: unknown): RiskClass | null {
   return v === 'L0' || v === 'L1' || v === 'L2' || v === 'L3' || v === 'L4' ? v : null;
+}
+
+/**
+ * Per-adapter reviewing-reached stats (REQ-7.2), the cheapest outcome signal
+ * that exists today: replay every prior SHADOW_ROUTE this log has recorded and
+ * check whether ITS task ever reached REVIEWING. A task still in flight (the
+ * common case for its own most-recent round) simply contributes 0 so far —
+ * stats sharpen as a shared log accumulates across many tasks (e.g. the
+ * calibration corpus), never from this round's own not-yet-known outcome.
+ */
+function computeShadowOutcomeStats(events: PlatformEvent[]): Record<string, { attempts: number; reviewingReached: number }> {
+  const stats: Record<string, { attempts: number; reviewingReached: number }> = {};
+  for (const e of events) {
+    if (e.type !== 'SHADOW_ROUTE') continue;
+    const live = e.payload['live'] as string;
+    const s = (stats[live] ??= { attempts: 0, reviewingReached: 0 });
+    s.attempts += 1;
+    const reachedReviewing = events.some(
+      (e2) => e2.type === 'TASK_STATE' && e2.taskId === e.taskId && e2.payload['state'] === 'REVIEWING',
+    );
+    if (reachedReviewing) s.reviewingReached += 1;
+  }
+  return stats;
+}
+
+/**
+ * SHADOW_ROUTE recording from the composition root (REQ-7.1/7.3/7.4/7.5). Wraps
+ * only `eligibleAdapters` — the one router method the main proposal flow
+ * (`source.ts`) actually calls each round to pick its live choice (`eligible[0]`).
+ * The wrapper NEVER changes the returned list (REQ-7.4: route(x) identical with
+ * and without the recorder attached) — it only observes, then best-effort
+ * appends a SHADOW_ROUTE event as a side channel. Frozen (any registered adapter
+ * stale, REQ-7.3) skips recording entirely; a failed append never blocks the
+ * round — it logs ERROR and continues (REQ-7.5).
+ */
+export function wrapRouterForShadow(
+  router: Router,
+  deps: { registry: Registry; log: EventLog; runId: string; taskId: string },
+): Router {
+  return {
+    ...router,
+    eligibleAdapters(role: Role, hints?: RouteHints) {
+      const eligible = router.eligibleAdapters(role, hints);
+      const live = eligible[0];
+      if (live !== undefined && !shadowFrozen(deps.registry.all())) {
+        const liveKey = breakerKey(live.record.adapterId, live.record.modelVersion);
+        const { wouldChoose, basis } = shadowWouldChoose({
+          role,
+          liveChoice: liveKey,
+          eligible: eligible.map((r) => breakerKey(r.record.adapterId, r.record.modelVersion)),
+          outcomeStats: computeShadowOutcomeStats(deps.log.all()),
+        });
+        try {
+          deps.log.append({
+            runId: deps.runId,
+            taskId: deps.taskId,
+            type: 'SHADOW_ROUTE',
+            payload: { role, live: liveKey, wouldChoose, basis, frozen: false },
+          });
+        } catch (err) {
+          deps.log.append({
+            runId: deps.runId,
+            taskId: deps.taskId,
+            type: 'ERROR',
+            payload: { reason: 'shadow_append_failed', detail: (err as Error).message },
+          });
+        }
+      }
+      return eligible;
+    },
+  };
 }
 
 /** A synthetic target repo whose tests pass iff src/impl.txt contains `correct`. */
@@ -190,7 +270,9 @@ export async function runSupervisedLoop(opts: {
     const source = createAALProposalSource({
       runId: 'RUN-LIVE',
       taskId: 'T-1',
-      router: createRouter(reg),
+      // Shadow routing (REQ-7): observes each round's live choice in shadow only,
+      // never influences it (REQ-7.4).
+      router: wrapRouterForShadow(createRouter(reg), { registry: reg, log, runId: 'RUN-LIVE', taskId: 'T-1' }),
       breaker,
       worktreeDir: fx.wt,
       taskContract: {

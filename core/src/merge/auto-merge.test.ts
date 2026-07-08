@@ -11,7 +11,9 @@ import { test } from 'node:test';
 
 import { createEvidenceStore } from '../evidence/store.ts';
 import { createGateRunner } from '../gates/runner.ts';
+import { createLeaseManager } from '../state/lease.ts';
 import { openEventLog } from '../state/event-log.ts';
+import { createMergeQueue } from './queue.ts';
 import {
   auditSampleValue,
   decideAutoApprove,
@@ -316,6 +318,141 @@ test('a conflicting merge escalates merge_conflict with no auto-resolution (REQ-
     git(fix.worktree, 'checkout', '-q', 'main');
     assert.equal(readFileSync(join(fix.worktree, 'src/impl.txt'), 'utf8'), 'main-side\n');
     assert.equal(git(fix.worktree, 'status', '--porcelain').trim(), '', 'no half-merged state left behind');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Queue-routed path (REQ-13.6): the queue owns merge+T2; sampled audit/revert
+// below stay exactly as tested above — unchanged either way.
+// ---------------------------------------------------------------------------
+function setupIntegrationWorktree(fix: Fixture): string {
+  const dir = join(fix.root, 'integration');
+  git(fix.worktree, 'worktree', 'add', '--detach', dir, 'main');
+  return dir;
+}
+
+test('runAutoMerge routed through the queue: T2 not_enabled -> merges, sampled audit reproduces -> COMPLETED (REQ-13.2/13.3/13.6/13.9)', async () => {
+  const fix = makeFixture();
+  try {
+    const { log, clock } = openLog(fix);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n' });
+    const originalReport = await runT1(fix, log, evidence, clock);
+
+    const integrationDir = setupIntegrationWorktree(fix);
+    const lease = createLeaseManager(fix.dbPath, clock, RUN_ID);
+    const gates = createGateRunner({
+      worktreeDir: integrationDir,
+      configPath: join(integrationDir, 'gate-ladder.json'),
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      log,
+      evidence,
+      clock,
+    });
+    const queue = createMergeQueue({
+      runId: RUN_ID,
+      repoDir: fix.worktree,
+      mainBranch: 'main',
+      worktreeDir: integrationDir,
+      gates,
+      log,
+      lease,
+    });
+
+    const out = await runAutoMerge({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      state: 'REVIEWING',
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+      decision: { riskClass: 'L1', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
+      originalReport,
+      gateConfigRelPath: 'gate-ladder.json',
+      auditSampleRate: 100,
+      log,
+      evidence,
+      clock,
+      queue,
+    });
+
+    assert.equal(out.decision, 'auto_approve');
+    assert.equal(out.reproduced, true, 'clean-checkout re-run still reproduces through the queue path');
+    assert.equal(out.finalState, 'COMPLETED');
+    assert.equal(log.all({ type: 'MERGE_ENQUEUED' }).length, 1);
+    const mr = log.all({ type: 'MERGE_RESULT' }).at(-1);
+    assert.equal(mr?.payload['outcome'], 'merged');
+    assert.equal(mr?.payload['tier'], 't1_only');
+
+    git(fix.worktree, 'checkout', '-q', 'main');
+    assert.equal(readFileSync(join(fix.worktree, 'src/impl.txt'), 'utf8'), 'correct\n');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('runAutoMerge routed through the queue: T2 fails -> ESCALATED(t2_failed), main untouched (REQ-13.4)', async () => {
+  const fix = makeFixture();
+  try {
+    const { log, clock } = openLog(fix);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n' });
+    const originalReport = await runT1(fix, log, evidence, clock);
+
+    git(fix.worktree, 'checkout', '-q', 'main');
+    const ladder = JSON.parse(readFileSync(fix.gateConfigPath, 'utf8')) as Record<string, unknown>;
+    ladder['t2'] = { secretScan: 'false' };
+    writeFileSync(fix.gateConfigPath, JSON.stringify(ladder));
+    git(fix.worktree, 'add', '-A');
+    git(fix.worktree, 'commit', '-q', '-m', 'enable failing t2');
+    const mainTipBefore = git(fix.worktree, 'rev-parse', 'main').trim();
+
+    const integrationDir = setupIntegrationWorktree(fix);
+    const lease = createLeaseManager(fix.dbPath, clock, RUN_ID);
+    const gates = createGateRunner({
+      worktreeDir: integrationDir,
+      configPath: join(integrationDir, 'gate-ladder.json'),
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      log,
+      evidence,
+      clock,
+    });
+    const queue = createMergeQueue({
+      runId: RUN_ID,
+      repoDir: fix.worktree,
+      mainBranch: 'main',
+      worktreeDir: integrationDir,
+      gates,
+      log,
+      lease,
+    });
+
+    const out = await runAutoMerge({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      state: 'REVIEWING',
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+      decision: { riskClass: 'L1', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
+      originalReport,
+      gateConfigRelPath: 'gate-ladder.json',
+      auditSampleRate: 100,
+      log,
+      evidence,
+      clock,
+      queue,
+    });
+
+    assert.equal(out.mergeCommit, null);
+    assert.equal(out.finalState, 'ESCALATED');
+    const esc = log.all({ type: 'ESCALATED' }).at(-1);
+    assert.equal(esc?.payload['why'], 't2_failed');
+    assert.equal(git(fix.worktree, 'rev-parse', 'main').trim(), mainTipBefore, 'main untouched — T2 failure never lands');
   } finally {
     fix.cleanup();
   }

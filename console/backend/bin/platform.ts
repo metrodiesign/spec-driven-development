@@ -23,12 +23,14 @@ import {
 } from '../src/loop-cli.ts';
 import { createTermRuntime } from '../src/term-runtime.ts';
 import { runGovernanceCommand } from '../src/governance-cli.ts';
+import { runAuditorCommand } from '../src/auditor-cli.ts';
 
 const HELP = `usage:
   platform console [--port <n>] [--host <h>] [--no-open] [--insecure]
   platform loop run --goal <path> [--live] [--task <id>]
   platform conformance --live
   platform governance list | platform governance approve <id>
+  platform auditor run --db <path> --repo <dir> [--rate <pct>]
 
   console:
     --port      port to listen on (default 9119)
@@ -45,6 +47,10 @@ const HELP = `usage:
     --live      run P1-P8 against the REAL adapter (~10 requests) and persist the
                 ConformanceRecord to .ai/calibration/ — same structural guards as loop --live
     --force-quota-override  bypass the automation quota guard's refusal ONLY
+  auditor run:
+    --db        path to the events.db to audit (its own EventLog handle — a separate process, REQ-14.7)
+    --repo      path to that db's repo (cloned into a private temp dir per target, never a live worktree)
+    --rate      percent of eligible COMPLETED tasks to sample (default: automation.json auditSampleRate)
 `;
 
 // Core-owned system prompt for the autonomous adapter (D-004) — shared by the
@@ -74,6 +80,39 @@ function runGovernance(rest: string[]): void {
     argv: rest,
     logPath: join(aiDir(), 'governance', 'events.jsonl'),
     policyDir: join(aiDir(), 'policies'),
+    now: () => Date.now(),
+  });
+  if (result.out !== '') process.stdout.write(result.out);
+  if (result.err !== '') process.stderr.write(result.err);
+  process.exit(result.code);
+}
+
+/** `platform auditor run` (REQ-14.7) — a separate process; own EventLog handle, no console server needed. */
+async function runAuditor(rest: string[]): Promise<void> {
+  if (rest[0] !== 'run') {
+    process.stderr.write(HELP);
+    process.exit(1);
+  }
+  const { values } = parseArgs({
+    args: rest.slice(1),
+    options: {
+      db: { type: 'string' },
+      repo: { type: 'string' },
+      rate: { type: 'string' },
+    },
+  });
+  if (values.db === undefined || values.repo === undefined) {
+    process.stderr.write('platform auditor run: --db <path> and --repo <dir> are required\n');
+    process.exit(1);
+  }
+  const cfg = loadAutomationConfig(join(aiDir(), 'policies', 'automation.json'));
+  const result = await runAuditorCommand({
+    argv: values.rate !== undefined ? ['run', '--rate', values.rate] : ['run'],
+    dbPath: values.db,
+    repoDir: values.repo,
+    gateConfigRelPath: 'gate-ladder.json',
+    defaultRate: cfg.auditSampleRate,
+    evidenceDir: join(homedir(), '.platform', 'oob-evidence'),
     now: () => Date.now(),
   });
   if (result.out !== '') process.stdout.write(result.out);
@@ -371,6 +410,10 @@ async function main(): Promise<void> {
   }
   if (command === 'governance') {
     runGovernance(rest);
+    return;
+  }
+  if (command === 'auditor') {
+    await runAuditor(rest);
     return;
   }
   if (command !== 'console') {

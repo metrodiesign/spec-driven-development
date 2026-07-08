@@ -1,0 +1,95 @@
+// Outcome-routing shadow (§10.4, REQ-7). Off -> shadow only: routing NEVER
+// consults outcome data in Phase 3 (active = Phase 4) — these are pure helpers
+// the composition root uses to DECIDE what to record; they never touch route()
+// or eligibleAdapters() themselves (recorder never alters route results, REQ-7.4).
+
+import type { RegisteredAdapter } from './registry.ts';
+import type { PlatformEvent, Role } from 'core/types';
+
+export interface ShadowOutcomeStats {
+  attempts: number;
+  reviewingReached: number;
+}
+
+export interface ShadowChoiceInput {
+  role: Role;
+  /** adapterId@model — the router's actual pick this round. */
+  liveChoice: string;
+  /** adapterId@model keys, in router order (breaker-, health-, and hint-filtered). */
+  eligible: string[];
+  outcomeStats: Record<string, ShadowOutcomeStats>;
+}
+
+export interface ShadowChoice {
+  wouldChoose: string;
+  basis: string;
+}
+
+/**
+ * Deterministic outcome-based pick (REQ-7.2): the eligible adapter with the
+ * highest reviewing-reached rate wins; a tie keeps the first in eligible order
+ * (router order — never randomized, so re-running with the same input always
+ * agrees). No adapter has attempts yet -> the live choice stands unchanged,
+ * basis 'insufficient_data' (never invents a preference from zero evidence).
+ */
+export function shadowWouldChoose(input: ShadowChoiceInput): ShadowChoice {
+  const rated = input.eligible
+    .map((key) => {
+      const stats = input.outcomeStats[key];
+      return stats === undefined || stats.attempts === 0
+        ? null
+        : { key, rate: stats.reviewingReached / stats.attempts };
+    })
+    .filter((r): r is { key: string; rate: number } => r !== null);
+
+  if (rated.length === 0) return { wouldChoose: input.liveChoice, basis: 'insufficient_data' };
+
+  const best = rated.reduce((a, b) => (b.rate > a.rate ? b : a));
+  return { wouldChoose: best.key, basis: 'highest_reviewing_rate' };
+}
+
+/**
+ * Conformance drift canary (REQ-7.3): any registered adapter gone stale freezes
+ * shadow recording entirely — a drifted registered set makes outcome comparisons
+ * meaningless. Caller passes `registry.all()`, the one enumeration that still
+ * sees stale entries (`eligible()` already filters them out).
+ */
+export function shadowFrozen(adapters: RegisteredAdapter[]): boolean {
+  return adapters.some((a) => a.stale);
+}
+
+export interface ShadowDivergence {
+  at: string;
+  live: string;
+  shadow: string;
+}
+
+export interface ShadowComparison {
+  n: number;
+  agreementRate: number;
+  divergences: ShadowDivergence[];
+}
+
+/**
+ * Retrospective agreement math (REQ-7.6) — a pure fold over recorded SHADOW_ROUTE
+ * events (any other event type in the array is ignored, so callers may pass a
+ * pre-filtered slice or a raw log). No recorded routes yet -> agreementRate 1
+ * (vacuous — no divergence has ever been observed), matching computeCalibration's
+ * zero-n convention.
+ */
+export function compareShadow(events: PlatformEvent[]): ShadowComparison {
+  const routes = events.filter((e) => e.type === 'SHADOW_ROUTE');
+  const divergences = routes
+    .filter((e) => e.payload['live'] !== e.payload['wouldChoose'])
+    .map((e) => ({
+      at: e.ts,
+      live: e.payload['live'] as string,
+      shadow: e.payload['wouldChoose'] as string,
+    }));
+  const n = routes.length;
+  return {
+    n,
+    agreementRate: n === 0 ? 1 : (n - divergences.length) / n,
+    divergences,
+  };
+}

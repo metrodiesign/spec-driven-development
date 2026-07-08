@@ -164,7 +164,14 @@ export type EventType =
   | 'FUSION_PANEL'
   | 'FUSION_CANDIDATE'
   | 'FUSION_RESOLVED'
-  | 'FUSION_DISSENT';
+  | 'FUSION_DISSENT'
+  // Phase 3 merge-queue additions (append-only, INV-10).
+  | 'MERGE_ENQUEUED'
+  | 'MERGE_RESULT'
+  // Phase 3 out-of-band auditor addition (append-only, INV-10).
+  | 'OOB_AUDIT_RESULT'
+  // Phase 3 outcome-routing shadow addition (append-only, INV-10; REQ-7).
+  | 'SHADOW_ROUTE';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

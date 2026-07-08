@@ -29,6 +29,16 @@ export {
 export { createRouter, NoCapacityError, type Router, type RouteHints } from './router.ts';
 export { createTokenBucket, type TokenBucket, type TokenBucketOptions } from './ratelimit.ts';
 export {
+  shadowWouldChoose,
+  shadowFrozen,
+  compareShadow,
+  type ShadowOutcomeStats,
+  type ShadowChoiceInput,
+  type ShadowChoice,
+  type ShadowDivergence,
+  type ShadowComparison,
+} from './shadow.ts';
+export {
   createDispatcher,
   type DispatcherOptions,
   type DispatchItem,

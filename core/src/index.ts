@@ -117,6 +117,7 @@ export {
   decideAutoApprove,
   matchesDepManifest,
   auditSampleValue,
+  reproduces,
   runAutoMerge,
   type AutoApproveInput,
   type AutoApproveDecision,
@@ -125,3 +126,16 @@ export {
   type MappedAc,
   type RunAutoMergeOptions,
 } from './merge/auto-merge.ts';
+export {
+  createMergeQueue,
+  type MergeCandidate,
+  type MergeQueue,
+  type MergeQueueOptions,
+  type MergeQueueResult,
+} from './merge/queue.ts';
+export {
+  runOobAudit,
+  selectAuditTargets,
+  type OobAuditorOptions,
+  type OobVerdict,
+} from './audit/oob.ts';
