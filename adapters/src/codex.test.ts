@@ -133,6 +133,21 @@ test('non-zero exit with rate-limit stderr -> AdapterError quota_limited, no sel
   } finally { h.cleanup(); }
 });
 
+test('non-zero exit with a generic stderr but a quota-shaped --json error event -> classifies quota_limited, not transport (Codex review, PR #47)', async () => {
+  const h = harness(fakeExec({
+    exitCode: 1,
+    stderr: 'Reading additional input from stdin...', // codex-cli's generic startup chatter, no quota signal
+    events: [
+      { type: 'thread.started' },
+      { type: 'turn.started' },
+      { type: 'error', message: '429 rate limit exceeded' },
+    ],
+  }));
+  try {
+    await assert.rejects(h.adapter.send(req()), (e: unknown) => e instanceof AdapterError && (e as AdapterError).kind === 'quota_limited');
+  } finally { h.cleanup(); }
+});
+
 test('non-zero exit with auth stderr -> auth_unavailable; unmatched stderr -> transport (REQ-2.7/1.5)', async () => {
   const auth = harness(fakeExec({ exitCode: 1, stderr: 'not logged in: run codex login' }));
   try {

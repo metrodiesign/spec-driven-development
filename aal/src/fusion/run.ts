@@ -213,6 +213,7 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
   // escalate (plan/reviews).
   const remaining = base.budget.costUnits - usage;
   let judgeValid = false;
+  let judgeAnalysisRef: string | undefined;
   if (remaining >= estimate) {
     try {
       const judgeAdapter = deps.router.route('reviewer');
@@ -221,7 +222,7 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
       usage += outcome.totalUsage.costUnits;
       if (outcome.valid) {
         judgeValid = true;
-        deps.evidence.put(JSON.stringify(asDeliberation(outcome.response.structuredResult)));
+        judgeAnalysisRef = deps.evidence.put(JSON.stringify(asDeliberation(outcome.response.structuredResult)));
       }
     } catch (err) {
       // No reviewer adapter (NoCapacityError) or a transport failure -> judge unavailable.
@@ -232,17 +233,22 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
   // RESOLVE (REQ-10): judge-load-bearing artifacts (plan/reviews) escalate when the
   // judge is unavailable; the others resolve mechanically regardless of the judge.
   let resolution: Resolution;
-  let judgeMarker: Record<string, unknown>;
+  let judgeMarker: Record<string, unknown> | undefined;
   if (judgeLoadBearing(profile.artifact) && !judgeValid) {
     const reason: FusionEscalateReason = remaining >= estimate ? 'judge_invalid' : 'budget_cap';
     resolution = { winner: null, resolved: profile.resolve, escalateReason: reason, dissent: [] };
     judgeMarker = { judge: 'unavailable', reason };
   } else {
     resolution = resolveMechanical(profile.artifact, candidates);
-    judgeMarker = { judge: judgeValid ? 'valid' : 'not_load_bearing' };
+    judgeMarker = judgeValid ? undefined : { judge: 'not_load_bearing' };
   }
 
-  const deliberationRef = deps.evidence.put(JSON.stringify(judgeMarker));
+  // A valid judge round always gets referenced by its OWN real analysis blob —
+  // a marker is only a stand-in for when no analysis exists at all (PR #47 review
+  // finding: this used to always re-put a tiny {judge:'valid'} marker and silently
+  // drop the real ref, leaving audit consumers unable to inspect the deliberation
+  // that was actually produced and paid for).
+  const deliberationRef = judgeAnalysisRef ?? deps.evidence.put(JSON.stringify(judgeMarker));
 
   // CAPTURE dissent (REQ-10.6): each finding not raised by all candidates becomes a
   // FUSION_DISSENT event with an evidence ref.

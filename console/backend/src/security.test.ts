@@ -93,6 +93,15 @@ test('host header allowlist: the --behind-proxy public host is allowed at any po
   assert.equal(hostHeaderAllowed('box.tailnet.ts.net', '127.0.0.1', 9119), false);
 });
 
+test('host header allowlist: a --behind-proxy URL naming its OWN non-default port still matches (Codex review, PR #47)', () => {
+  // --behind-proxy https://box.tailnet.ts.net:8443 -> parseBehindProxy's `host` keeps
+  // the port; the incoming Host header (any port, per REQ-20.2) must still match on
+  // hostname alone, not fail because proxyHost's raw string still carries ":8443".
+  assert.equal(hostHeaderAllowed('box.tailnet.ts.net:8443', '127.0.0.1', 9119, 'box.tailnet.ts.net:8443'), true);
+  assert.equal(hostHeaderAllowed('box.tailnet.ts.net', '127.0.0.1', 9119, 'box.tailnet.ts.net:8443'), true);
+  assert.equal(hostHeaderAllowed('box.tailnet.ts.net:1234', '127.0.0.1', 9119, 'box.tailnet.ts.net:8443'), true);
+});
+
 test('CORS origin allowlist also honors the --behind-proxy host (REQ-20.2)', () => {
   assert.equal(corsOriginAllowed('https://box.tailnet.ts.net', '127.0.0.1', 9119, 'box.tailnet.ts.net'), true);
   assert.equal(corsOriginAllowed('https://evil.example.com', '127.0.0.1', 9119, 'box.tailnet.ts.net'), false);

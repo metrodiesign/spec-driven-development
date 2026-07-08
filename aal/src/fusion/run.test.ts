@@ -219,6 +219,18 @@ test('plan escalates judge_invalid when the blind judge cannot produce a valid d
   assert.equal(out.escalateReason, 'judge_invalid');
 });
 
+test('a valid judge round is referenced by its OWN real analysis blob, not a bare marker (PR #47 review)', async () => {
+  const s = setupWith([{ id: 'A', lineage: 'familyA' }, { id: 'B', lineage: 'familyB' }]);
+  const base = { ...s.base, agentRole: 'planner' as const };
+  const out = await runFusion(s.deps, profile({ artifact: 'plan', resolve: 'deliberate_synthesis' }), base);
+  assert.ok(out.winner !== null, 'judge was valid, plan resolves');
+  const stored = JSON.parse(s.evidence.getText(out.deliberationRef)) as Record<string, unknown>;
+  assert.ok(
+    Array.isArray(stored['consensus']),
+    'deliberationRef dereferences to the real DeliberationAnalysis (has a consensus array), not a {judge:...} marker',
+  );
+});
+
 test('pre-judge budget shortfall: a load-bearing plan escalates budget_cap (REQ-10.8)', async () => {
   // panel usage (2 x 2) leaves < estimate budget for the judge round -> judge skipped.
   const s = setupWith([{ id: 'A', lineage: 'familyA' }, { id: 'B', lineage: 'familyB' }], 5);

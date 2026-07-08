@@ -141,7 +141,10 @@ export function createCodexAdapter(opts: CodexAdapterOptions): AdapterInterface 
       if (result.exitCode !== 0) {
         const apiError = result.events.find((e) => e.type === 'error')?.['message'];
         const detail = typeof apiError === 'string' ? apiError : result.stderr;
-        throw new AdapterError(classifyAdapterError(result.stderr), `codex exec exited ${result.exitCode}: ${detail}`);
+        // Classify from the SAME detail the message reports — a quota/auth signal
+        // that only appears in the --json error event (stderr stays generic) must
+        // not silently classify as transport (Codex review finding on PR #47).
+        throw new AdapterError(classifyAdapterError(detail), `codex exec exited ${result.exitCode}: ${detail}`);
       }
 
       let structuredResult: unknown;
