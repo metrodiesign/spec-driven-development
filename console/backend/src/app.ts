@@ -15,6 +15,7 @@ import { allTimestamps, readProjects, readSessions } from './claude-data.ts';
 import { buildEstimate, MONEY_DISCLAIMER, type UsageConfig } from './usage.ts';
 import { corsOriginAllowed, hostHeaderAllowed, redactText } from './security.ts';
 import { termAccessAllowed, type CreateSessionInput, type TermManager } from './term.ts';
+import { discoverRuns, findRun, loopFetch } from './loop-proxy.ts';
 import {
   installGuardRules,
   permissionDecision,
@@ -54,6 +55,8 @@ export interface AppDeps {
   termManager?: TermManager;
   /** Per-source spawn rate limiter for F-Term (REQ-13.5); default allows all. */
   termRateOk?(): boolean;
+  /** F-Loop (REQ-15): root dir whose subdirectories hold each run's human-plane.json. Absent = routes do not register (mirrors termManager). */
+  loopRunsRoot?: string;
   /** Per-install token for the activity ingest endpoint (REQ-19.2). */
   activityToken?: string;
   /**
@@ -660,6 +663,91 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     audit({ event: 'retention_prune', count: candidates.length, cleanupPeriodDays: days });
     return { pruned: candidates.length, files: candidates };
   });
+
+  // --- F-Loop (REQ-15): Human Plane discovery + proxy. Console = client, owns no
+  // state (INV-11) — the Bearer token read from a run's discovery file is injected
+  // server-side per request and never appears in a response (REQ-15.2/15.3).
+  const loopRunsRoot = deps.loopRunsRoot;
+  if (loopRunsRoot !== undefined) {
+    // REQ-15.10: no auth provider ships yet (Task 10) — every loop audit entry
+    // records the fixed local-operator principal until then.
+    const localOperator = { principal: 'local-operator', method: 'none' };
+    const resolveRun = async (runId: string, reply: FastifyReply): Promise<ReturnType<typeof findRun>> => {
+      const ref = findRun(loopRunsRoot, runId);
+      if (ref === null) {
+        await reply.code(404).send({ error: 'no_such_run' });
+        return null;
+      }
+      return ref;
+    };
+
+    app.get('/api/loop/runs', async () => {
+      return { runs: discoverRuns(loopRunsRoot).map((r) => ({ runId: r.runId, ended: r.ended })) };
+    });
+
+    app.get<{ Params: { run: string } }>('/api/loop/:run/approvals', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'GET', path: '/approvals' });
+      return reply.code(res.status).send(res.body);
+    });
+
+    app.post<{ Params: { run: string; id: string }; Body: unknown }>(
+      '/api/loop/:run/approvals/:id',
+      async (req, reply) => {
+        const ref = await resolveRun(req.params.run, reply);
+        if (ref === null) return reply;
+        if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+        const res = await loopFetch(ref, { method: 'POST', path: `/approvals/${req.params.id}`, body: req.body });
+        if (res.status === 200) {
+          audit({ event: 'loop_approval', run: req.params.run, approvalId: req.params.id, ...localOperator });
+        }
+        return reply.code(res.status).send(res.body);
+      },
+    );
+
+    // REQ-15.8: since-based pagination over the existing /events route (no new WS
+    // surface) — the upstream route has no since support of its own, so the proxy
+    // fetches the full (already-redacted) log and slices by PlatformEvent.seq here.
+    app.get<{ Params: { run: string }; Querystring: { since?: string } }>('/api/loop/:run/events', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'GET', path: '/events' });
+      if (res.status !== 200) return reply.code(res.status).send(res.body);
+      const sinceRaw = Number(req.query.since ?? '0');
+      const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
+      const all = Array.isArray(res.body) ? (res.body as { seq?: number }[]) : [];
+      return all.filter((e) => (e.seq ?? 0) > since);
+    });
+
+    app.post<{ Params: { run: string; action: string }; Body: unknown }>(
+      '/api/loop/:run/steering/:action',
+      async (req, reply) => {
+        const ref = await resolveRun(req.params.run, reply);
+        if (ref === null) return reply;
+        if (!['pause', 'inject', 'resume'].includes(req.params.action)) {
+          return reply.code(404).send({ error: 'not_found' });
+        }
+        if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+        const res = await loopFetch(ref, { method: 'POST', path: `/steering/${req.params.action}`, body: req.body });
+        if (res.status === 202) {
+          audit({ event: `loop_steer_${req.params.action}`, run: req.params.run, ...localOperator });
+        }
+        return reply.code(res.status).send(res.body);
+      },
+    );
+
+    app.post<{ Params: { run: string } }>('/api/loop/:run/kill', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'POST', path: '/kill' });
+      if (res.status === 200) audit({ event: 'loop_kill', run: req.params.run, ...localOperator });
+      return reply.code(res.status).send(res.body);
+    });
+  }
 
   // --- Static SPA (built console/web) — path-contained, no directory listing ---
   const dist = deps.webDistDir;

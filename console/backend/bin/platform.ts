@@ -467,6 +467,12 @@ async function main(): Promise<void> {
     dataDir,
     now: () => Date.now(),
     webDistDir: join(import.meta.dirname, '..', '..', 'web', 'dist'),
+    // F-Loop (REQ-15): discover runs under the same `~/.ai/runs/` a live `platform
+    // loop run` persists to. §13.3 audit trail (REQ-15.4/18.3): the console now
+    // wires the same appender the CLI uses — every governed write in app.ts (hook
+    // install, retention prune, ...) starts recording too, not just F-Loop.
+    loopRunsRoot: join(homedir(), '.ai', 'runs'),
+    audit: auditAppend,
     ...(termRuntime ? { termManager: termRuntime.manager } : {}),
   });
 

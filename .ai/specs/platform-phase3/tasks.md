@@ -60,8 +60,50 @@
        - spec-trace: `bash scripts/spec-trace.sh platform-phase3` -> OK, 142/142 EARS criteria covered
        - viewports: n/a — logic-only
        - deviations: (1) Outcome-stats computation (`computeShadowOutcomeStats`) lives in the composition root (`loop-run.ts`), not in `aal/` — `shadow.ts` stays pure and log-agnostic (matches breaker.ts's documented convention: "aal stays log-agnostic like the rest of Ring 1"); it replays each prior `SHADOW_ROUTE` + `TASK_STATE` from the SAME shared log, so stats sharpen as a log accumulates across many tasks (e.g. the calibration corpus) and a task still in flight simply contributes 0 to its own round (its outcome isn't known yet — proven by the dedicated cross-task divergence test, not the single-adapter E2E fixture). (2) The recorder wraps only `Router.eligibleAdapters` — the one method the main proposal flow (`source.ts`) actually calls each round to pick its live choice (`eligible[0]`); fusion's separate `router.route('reviewer')` call for the blind judge (REQ-9/10) is outside REQ-7's "a supervised loop" scope and stays unwrapped. (3) When frozen (any adapter stale), the recorder skips the `SHADOW_ROUTE` append entirely rather than appending `frozen:true` — matches the design's literal `{..., frozen:false}` example (an event is only ever appended when NOT frozen) and reads "freeze shadow recording" as pausing the recording itself. (4) `wrapRouterForShadow` is exported from `loop-run.ts` (no new console/backend file) since the design's file-mapping table names only `aal/src/shadow.ts` for REQ-7; keeping the wrapper co-located with the composition root it modifies made it directly unit-testable via fakes (Router/Registry/EventLog stubs) for freeze/append-failure/never-influences scenarios the single-adapter loop-run fixture cannot reach on its own.
-- [ ] 8. F-Loop + inject-without-pause — `loop-proxy.ts` (discoverRuns + loopFetch, token never leaves backend), loop routes (runs/approvals/events/steering/kill proxy, 502/409 paths, ended = absent-or-tombstoned + loop-run tombstone on exit), audit entries incl. local-operator principal, `core/human/api.ts` atNextBoundary queueing + loop boundary drain, web `Loop.tsx` + `logic/loop.ts` (package render + attestations + controls).
+- [x] 8. F-Loop + inject-without-pause — `loop-proxy.ts` (discoverRuns + loopFetch, token never leaves backend), loop routes (runs/approvals/events/steering/kill proxy, 502/409 paths, ended = absent-or-tombstoned + loop-run tombstone on exit), audit entries incl. local-operator principal, `core/human/api.ts` atNextBoundary queueing + loop boundary drain, web `Loop.tsx` + `logic/loop.ts` (package render + attestations + controls).
      Satisfies: REQ-15, REQ-17. Verify: `pnpm -C core test && pnpm -C console/backend test && pnpm -C console/web test`.
+     Evidence:
+       - test: `pnpm -r test` -> 479 passed / 0 failed (core 174 [+3 REQ-17 atNextBoundary], aal 99, adapters 37,
+         console/backend 142 [+20: 9 loop-proxy.test.ts REQ-15.1/15.2/15.3/15.5/15.6/15.9, 11 app-loop.test.ts
+         REQ-15.1/15.2/15.3/15.4/15.5/15.6/15.8/15.10 + loop-run.test.ts AZ-4 tombstone assertion updated],
+         console/web 27 [+12 logic/loop.test.ts REQ-15.7])
+       - typecheck/lint: `pnpm -r typecheck` -> 6/6 projects clean · `pnpm lint` -> 0 issues · `pnpm vendor-check` -> OK (core+aal vendor-name-free, INV-7)
+       - spec-trace: `bash scripts/spec-trace.sh platform-phase3` -> OK, 142/142 EARS criteria covered
+       - viewports: 375 OK (clientWidth 375, mobile-emulate) | 768 OK (clientWidth 768) | 1440 OK (clientWidth 1440) —
+         all three `scrollWidth === clientWidth` (no h-overflow); served the vite prod build via `buildApp` on
+         127.0.0.1:9191 with a seeded live run (real `createHumanPlaneServer`) + an ended run; chrome-devtools MCP.
+         Interactive proof at 1440: selected RUN-VERIFY -> state badge "IMPLEMENTING" -> ticked both attestation
+         checkboxes (Approve stayed disabled at 1/2, enabled at 2/2, mirrors `canApprove`) -> clicked Approve ->
+         proxied through to the real Human Plane server (`[decision] T-1 approve` in the server log) -> console
+         audit fired `{event:'loop_approval',run:'RUN-VERIFY',approvalId:'A-1',principal:'local-operator',
+         method:'none'}` (REQ-15.4/15.10) -> next poll (since=) showed the package gone ("none pending").
+       - deviations: (1) console-side F-Loop audit entries use field name `event` (not the literal word "kind"
+         from REQ-15.4's prose) — matches the pre-existing convention already used by this same file's F-Hook/
+         F-Sys audit calls and by loop-run.ts's own audit mirror, so the shared `~/.platform/audit.jsonl` stream
+         stays one shape; values are prefixed `loop_*` (`loop_approval`, `loop_steer_pause/inject/resume`,
+         `loop_kill`) to stay distinguishable from an upstream run's OWN audit entries when both land in the same
+         file. (2) `LoopRunRef` carries `token` internally (the design sketch's interface omits it) — `loopFetch`
+         needs it to inject the Bearer header; `GET /api/loop/runs` only ever returns `{runId,ended}`, proven by
+         an explicit "token never appears in the response body" test. (3) REQ-15.8 since-pagination is proxy-side:
+         core's `/events` route is unchanged (design lists ONLY the inject change for `core/human/api.ts`) — the
+         proxy fetches the full redacted log and slices by `PlatformEvent.seq > since`. (4) Ended-run 409 applies
+         to every `:run`-scoped route, GET included, not only mutations — REQ-15.6 names mutations explicitly but
+         a GET has equally nothing to proxy to (no url/token); the list route is the only one that lists ended
+         runs instead of erroring. (5) REQ-17.4 (AC/scope-touching guidance needs a governance contract amendment)
+         needed no new code — design.md marks it "(unchanged rule)"; same posture as task 5/6's no-new-code
+         deviations for a procedural, non-mechanical AC. (6) `runSupervisedLoop`'s `onInject` mode propagation
+         (`opts.atNextBoundary ? 'next_boundary' : 'immediate'`) has no dedicated E2E test — the loop's Human
+         Plane server has no external seam to reach mid-run without refactoring a working composition root for a
+         one-line, obviously-correct pass-through; the GATING contract it depends on is fully proven in core's
+         `api.test.ts` (3 new tests), and the full `loop-run.test.ts` suite (11 tests) stays green with the wider
+         signature wired through. (7) Kill has no state gate server-side (unlike pause/resume/inject) — `Loop.tsx`
+         disables it on `ended` alone, not `steeringControls()`, matching the Human Plane API's actual `/kill`
+         contract (no `STEERABLE` check there). (8) F-Loop routes register only when `AppDeps.loopRunsRoot` is
+         set (mirrors `termManager`'s optional-registration pattern) — every other test file's `AppDeps` helper
+         is unaffected; `platform console` now always passes `~/.ai/runs` for it. (9) `platform console` also
+         wires `deps.audit: auditAppend` for the first time (design.md: "today the console path leaves it
+         unwired") — this retroactively activates the pre-existing F-Hook/F-Sys audit call sites in `app.ts`,
+         in scope per workstream E's own description, not overreach.
 - [ ] 9. F-Sched + F-MCP Authenticate — `sched.ts` (decideSchedStart, exact-match allowlist from governed routing.json, no modify route), sched routes (start two-step confirm + per-source rate limit, stop SIGTERM, status exit codes, audit entries), web `Sched.tsx` + `logic/sched.ts`; F-MCP Authenticate deep link to claude-only F-Term `claude mcp` (no token endpoints; disabled+hint when request is remote).
      Satisfies: REQ-16, REQ-18. Depends on: 8. Verify: `pnpm -C console/backend test && pnpm -C console/web test`.
 - [ ] 10. Remote auth gate + Basic provider — `auth/provider.ts` (mintSession/verifySession HMAC + expiry + tamper, loadAuthConfig 0600), `auth/basic.ts` (scrypt constant-time, IP lockout), platform.ts wiring (hasAuthProvider real -> unchanged decideStartup), app.ts onRequest auth hook (generic 401, /auth/* + login assets exempt), cookie flags, login rate limit, F-Term loopback-hard regardless of auth, web `Login.tsx`.

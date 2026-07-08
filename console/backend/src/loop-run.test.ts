@@ -63,12 +63,13 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
       log.close();
     }
 
-    // REQ-18.1: the Human Plane server ran and left its {url,token} discovery file 0600.
+    // AZ-4/REQ-15.9: the run's finally block tombstones its human-plane.json on exit —
+    // "ended" is discovery-file-absent-or-tombstoned, never a stale {url,token} that
+    // would look live after the server that owned it has already closed.
     const metaPath = join(persistDir, 'human-plane.json');
-    const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { url: string; token: string };
-    assert.match(meta.url, /^http:\/\/127\.0\.0\.1:\d+$/);
-    assert.equal(typeof meta.token, 'string');
-    assert.equal(statSync(metaPath).mode & 0o777, 0o600, 'discovery file is 0600 (REQ-18.1)');
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { tombstoned?: boolean };
+    assert.equal(meta.tombstoned, true);
+    assert.equal(statSync(metaPath).mode & 0o777, 0o600, 'tombstoned discovery file stays 0600');
   } finally {
     rmSync(persistDir, { recursive: true, force: true });
   }

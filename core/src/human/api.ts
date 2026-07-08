@@ -55,7 +55,13 @@ export interface HandlerDeps {
   steeringState?(): TaskState;
   onPause?(): void;
   onResume?(): void;
-  onInject?(guidance: string): { ok: true; evidenceRef: string } | { ok: false; reason: string };
+  /**
+   * `opts.atNextBoundary` echoes the request (REQ-17.3): PAUSED-immediate inject
+   * always passes `false`; the queue-at-boundary path (REQ-17.1) passes `true`. The
+   * composition root uses it only to pick the `GUIDANCE_INJECTED` mode label —
+   * both paths feed the SAME queue `runTaskLoop` drains at its next boundary.
+   */
+  onInject?(guidance: string, opts: { atNextBoundary: boolean }): { ok: true; evidenceRef: string } | { ok: false; reason: string };
 }
 
 export interface HttpLike {
@@ -166,18 +172,32 @@ export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult
     }
 
     if (path === '/steering/inject') {
-      // Guidance is atomic with the pause window (REQ-10.4).
-      if (state !== 'PAUSED') return { status: 409, body: { error: 'not_paused', state } };
-      let guidance: unknown;
+      let parsed: { guidance?: unknown; atNextBoundary?: unknown };
       try {
-        guidance = (JSON.parse(req.body) as { guidance?: unknown }).guidance;
+        parsed = JSON.parse(req.body) as typeof parsed;
       } catch {
         return { status: 400, body: { error: 'bad_json' } };
       }
+      const guidance = parsed.guidance;
       if (typeof guidance !== 'string' || guidance.length === 0) {
         return { status: 400, body: { error: 'guidance must be a non-empty string' } };
       }
-      const res = deps.onInject?.(guidance);
+      if (state !== 'PAUSED') {
+        // REQ-17.1: a steerable non-PAUSED state queues at the next boundary instead
+        // of refusing outright, but ONLY when the caller opts in explicitly —
+        // REQ-17.5 keeps the plain not_paused 409 for every other case (default).
+        const atNextBoundary = parsed.atNextBoundary === true;
+        if (!atNextBoundary || state === undefined || !STEERABLE.has(state)) {
+          return { status: 409, body: { error: 'not_paused', state } };
+        }
+        const res = deps.onInject?.(guidance, { atNextBoundary: true });
+        if (res === undefined || !res.ok) {
+          return { status: 409, body: { error: res?.reason ?? 'inject_failed' } };
+        }
+        return { status: 202, body: { queued: true, evidenceRef: res.evidenceRef } };
+      }
+      // Guidance is atomic with the pause window (REQ-10.4) — immediate mode.
+      const res = deps.onInject?.(guidance, { atNextBoundary: false });
       if (res === undefined || !res.ok) {
         return { status: 409, body: { error: res?.reason ?? 'inject_failed' } };
       }

@@ -308,11 +308,16 @@ export async function runSupervisedLoop(opts: {
       audit({ event: 'approval', taskId, decision, state: tr.next });
       return { ok: true, state: tr.next };
     };
-    const onInject: HandlerDeps['onInject'] = (guidance) => {
+    const onInject: HandlerDeps['onInject'] = (guidance, opts) => {
+      // REQ-17.3: mode is purely an observability label — both paths feed the SAME
+      // guidanceQueue that runTaskLoop's takeGuidance() drains at its next boundary
+      // (REQ-17.2); PAUSED-immediate already sits at that boundary, so there is no
+      // separate delivery mechanism to build.
+      const mode = opts.atNextBoundary ? 'next_boundary' : 'immediate';
       const evidenceRef = evidence.put(guidance);
-      log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GUIDANCE_INJECTED', payload: { evidenceRef } });
+      log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GUIDANCE_INJECTED', payload: { evidenceRef, mode } });
       guidanceQueue.push(guidance);
-      audit({ event: 'steer_inject', taskId: TASK_ID, evidenceRef });
+      audit({ event: 'steer_inject', taskId: TASK_ID, evidenceRef, mode });
       return { ok: true, evidenceRef };
     };
     const govLog = opts.governanceLogPath;
@@ -434,6 +439,15 @@ export async function runSupervisedLoop(opts: {
     }
   } finally {
     log.close();
+    // AZ-4/REQ-15.9: F-Loop defines "ended" as discovery-file-absent-or-tombstoned
+    // (REQ-15.6) — never a stale {url,token} that LOOKS live after the server that
+    // owned it has already closed. Best-effort: an already-vanished stateDir (the
+    // ephemeral fixture-root case, cleaned up below) still reads as "ended" (absent).
+    try {
+      writeFileSync(join(stateDir, 'human-plane.json'), JSON.stringify({ tombstoned: true }), { mode: 0o600 });
+    } catch {
+      // best-effort, see above
+    }
     fx.cleanup();
   }
 }

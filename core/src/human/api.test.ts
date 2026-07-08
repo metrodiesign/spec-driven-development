@@ -155,7 +155,7 @@ function steerDeps(over?: Partial<HandlerDeps>) {
     steeringState: () => state,
     onPause: () => { calls.push('pause'); },
     onResume: () => { calls.push('resume'); },
-    onInject: (g) => { calls.push(`inject:${g}`); return { ok: true, evidenceRef: 'blob://guid' }; },
+    onInject: (g, opts) => { calls.push(`inject:${g}:${opts.atNextBoundary}`); return { ok: true, evidenceRef: 'blob://guid' }; },
     ...over,
   });
   return { ...h, calls, setState: (s: import('../types.ts').TaskState) => { state = s; } };
@@ -180,7 +180,40 @@ test('POST /steering/inject legal ONLY in PAUSED — 409 otherwise (REQ-10.4)', 
     const paused = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/inject', headers: auth(), body: JSON.stringify({ guidance: 'try X' }) }), h.d);
     assert.equal(paused.status, 202);
     assert.deepEqual(paused.body, { evidenceRef: 'blob://guid' });
-    assert.deepEqual(h.calls, ['inject:try X']);
+    assert.deepEqual(h.calls, ['inject:try X:false'], 'PAUSED path is immediate mode (atNextBoundary:false)');
+  } finally { h.cleanup(); }
+});
+
+test('POST /steering/inject atNextBoundary:true in a steerable non-PAUSED state -> 202 queued (REQ-17.1)', () => {
+  const h = steerDeps();
+  try {
+    const body = JSON.stringify({ guidance: 'try Y', atNextBoundary: true });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/inject', headers: auth(), body }), h.d);
+    assert.equal(r.status, 202);
+    assert.deepEqual(r.body, { queued: true, evidenceRef: 'blob://guid' });
+    assert.deepEqual(h.calls, ['inject:try Y:true'], 'the queue path is mode next_boundary (atNextBoundary:true)');
+  } finally { h.cleanup(); }
+});
+
+test('POST /steering/inject atNextBoundary:true from a non-steerable state -> still 409 (REQ-17.1 scope)', () => {
+  const h = steerDeps();
+  try {
+    h.setState('MERGE_QUEUED'); // past the last boundary — no steering window exists (REQ-10.8)
+    const body = JSON.stringify({ guidance: 'try Z', atNextBoundary: true });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/inject', headers: auth(), body }), h.d);
+    assert.equal(r.status, 409);
+    assert.deepEqual(h.calls, [], 'no queue call for a state with no boundary');
+  } finally { h.cleanup(); }
+});
+
+test('POST /steering/inject atNextBoundary absent, non-PAUSED -> unchanged 409 (REQ-17.5)', () => {
+  const h = steerDeps();
+  try {
+    const body = JSON.stringify({ guidance: 'try W' }); // atNextBoundary omitted entirely
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/steering/inject', headers: auth(), body }), h.d);
+    assert.equal(r.status, 409);
+    assert.deepEqual(r.body, { error: 'not_paused', state: 'IMPLEMENTING' });
+    assert.deepEqual(h.calls, []);
   } finally { h.cleanup(); }
 });
 
