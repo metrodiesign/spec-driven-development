@@ -44,7 +44,7 @@ propose/dispose safety and quota-survivability escape hatch.
 - 2.6 THE SYSTEM SHALL record the requested model as adapterMeta.modelVersion (codex events do not echo the model — SPIKE-6)
 - 2.7 IF codex exec exits non-zero or its stderr matches a rate-limit or auth pattern THEN THE SYSTEM SHALL throw a typed AdapterError via classifyAdapterError and never self-retry
 - 2.8 WHERE the live exec path runs THE SYSTEM SHALL spawn codex exec with `--sandbox read-only --ephemeral --skip-git-repo-check --ignore-user-config --output-schema` and stdin ignored
-- 2.9 IF a live codex exec exceeds its kill timeout THEN THE SYSTEM SHALL terminate the child process and throw AdapterError transport
+- 2.9 IF a live codex exec exceeds killTimeoutMs (a CodexAdapterOptions field, default 600000 ms — recorded calibration knob) THEN THE SYSTEM SHALL terminate the child process and throw AdapterError transport
 - 2.10 THE SYSTEM SHALL register the codex adapter without a healthProbe (no quota signal exists — its breaker operates on error rate only, recorded residual)
 
 ## REQ-3: Codex conformance + adapter template (design: "A: _template.ts" + Testing "A conformance")
@@ -121,6 +121,7 @@ event by construction (INV-16).
 - 8.2 THE SYSTEM SHALL load routing configuration (maxSusceptibility, maxParallel, tokenBuckets) from `.ai/policies/routing.json` with type-guarded fallbacks that never loosen
 - 8.3 WHEN fusion-profiles.json and routing.json join POLICY_FILES THE SYSTEM SHALL refuse the next run as policy_unapproved until the operator approves the new snapshot
 - 8.4 IF a profile's resolve rule contradicts the fixed artifact mapping THEN THE SYSTEM SHALL reject the profile at load with a structured error
+- 8.5 IF a profile omits estimateCostUnitsPerCandidate THEN THE SYSTEM SHALL reject it at load with a structured error
 
 ## REQ-9: Fusion PANEL + EVIDENCE + ANALYZE (design: "C: run.ts / panel.ts / analyze.ts")
 
@@ -133,8 +134,10 @@ without adding an execution authority.
 - 9.2 WHERE the artifact is code_diff or tests THE SYSTEM SHALL obtain a core-produced GateReport per candidate through the CandidateEvidenceRunner port in separate worktrees
 - 9.3 THE SYSTEM SHALL route the blind judge as role reviewer with anonymized candidates carrying no adapter identity and no persuasion text
 - 9.4 WHEN the judge responds THE SYSTEM SHALL validate the response against deliberation-analysis.schema.json with one bounded repair round
-- 9.5 IF the judge output remains invalid THEN THE SYSTEM SHALL fall back to gate-evidence-only ranking for code_diff and tests and escalate for plan and reviews
+- 9.5 IF the judge output remains invalid THEN THE SYSTEM SHALL fall back to gate-evidence-only ranking for code_diff and tests, proceed with the mechanical union resolve for hypotheses, and escalate for plan and reviews
 - 9.6 WHEN fusion runs THE SYSTEM SHALL append FUSION_PANEL, FUSION_CANDIDATE, and FUSION_RESOLVED events to the event log
+- 9.7 IF a cross_lineage profile names a lineage with no eligible adapter THEN THE SYSTEM SHALL escalate panel_degraded before dispatch instead of fanning out same-lineage substitutes
+- 9.8 IF surviving panel candidates fall below two THEN THE SYSTEM SHALL escalate panel_degraded rather than resolve
 
 ## REQ-10: Fusion RESOLVE + CAPTURE + budget/depth guards (design: "C: resolve.ts + entry points")
 
@@ -147,10 +150,10 @@ never crosses a gate (§16).
 - 10.2 THE SYSTEM SHALL emit exactly one candidate's actions as the code_diff winner and never a synthesis of candidates
 - 10.3 WHEN resolving tests THE SYSTEM SHALL union candidates with per-test dedupe and flag each test for downstream RED-check verification
 - 10.4 WHEN resolving hypotheses THE SYSTEM SHALL union candidates and rank by probe count ascending
-- 10.5 WHEN resolving reviews THE SYSTEM SHALL apply a weighted ensemble and raise an escalation marker on disagreement rather than letting a majority silence dissent
-- 10.6 WHEN dissent exists after resolve THE SYSTEM SHALL capture it as FUSION_DISSENT events with evidence refs
-- 10.7 IF the panel size times the per-candidate estimate exceeds the profile budget cap THEN THE SYSTEM SHALL shrink the panel or escalate budget_cap before dispatch
-- 10.8 IF the remaining budget cannot cover the judge round THEN THE SYSTEM SHALL resolve on gate evidence alone for code_diff and tests or escalate for plan and reviews
+- 10.5 WHEN resolving reviews THE SYSTEM SHALL apply an equal-weight ensemble in which a review item survives if any candidate raises it and an escalation marker fires when candidates disagree on the severity or blocking status of any finding (calibration-derived weights = Phase 4)
+- 10.6 WHEN a finding is not raised by all candidates THE SYSTEM SHALL capture it as FUSION_DISSENT events with evidence refs
+- 10.7 IF the panel size times the profile's estimateCostUnitsPerCandidate exceeds budgetCapCostUnits THEN THE SYSTEM SHALL shrink the panel or escalate budget_cap before dispatch
+- 10.8 IF the remaining budget cannot cover the judge round THEN THE SYSTEM SHALL resolve on gate evidence alone for code_diff and tests, proceed with the mechanical union resolve for hypotheses, and escalate for plan and reviews
 - 10.9 IF a fusion.deliberate request arrives for a task that already consumed its fusion activation THEN THE SYSTEM SHALL reject it as structured feedback depth_exceeded
 - 10.10 WHILE running under CI THE SYSTEM SHALL never activate fusion (live-run refusal path)
 
@@ -191,6 +194,8 @@ attribution (§6.5).
 - 13.6 WHEN auto-merge runs with a queue supplied THE SYSTEM SHALL route the merge through queue.process while keeping the in-band sampling audit and revert authority unchanged
 - 13.7 WHEN a candidate enters the queue THE SYSTEM SHALL append MERGE_ENQUEUED
 - 13.8 THE SYSTEM SHALL label approval-package gate evidence with its tier (T1-only before the queue — recorded deviation)
+- 13.9 WHEN the ladder T2 tier is not_enabled THE SYSTEM SHALL merge the candidate and label MERGE_RESULT with tier t1_only
+- 13.10 WHEN the queue starts a candidate (including after a prior abort) THE SYSTEM SHALL reset the integration worktree to the main branch head with hard reset plus clean and assert a clean status
 
 ## REQ-14: Out-of-band auditor (design: "D: audit/oob.ts")
 
@@ -200,7 +205,7 @@ the in-band audit has a second, uncorrelated chance of detection.
 
 **Acceptance Criteria (EARS):**
 - 14.1 THE SYSTEM SHALL select audit targets from COMPLETED events using the salted fold hash of runId, taskId, and the oob salt modulo 100 under the configured rate
-- 14.2 THE SYSTEM SHALL exclude targets already carrying an in-band sampled AUDIT_RESULT
+- 14.2 THE SYSTEM SHALL exclude targets already carrying an in-band sampled AUDIT_RESULT or any prior OOB_AUDIT_RESULT (idempotent across cycles)
 - 14.3 WHEN auditing a target THE SYSTEM SHALL clone the repo into a private temp dir at the merge commit and re-run gates in the clone without opening worktrees in the live repo
 - 14.4 IF a re-run divergence persists after one retry THEN THE SYSTEM SHALL record verdict non_repro and append OOB_AUDIT_RESULT reproduced false plus ESCALATED
 - 14.5 IF a re-run fails then passes on the retry THEN THE SYSTEM SHALL record flaky_suspect without quarantining
@@ -221,9 +226,11 @@ require a terminal on the host (§8 F-Loop, DoD).
 - 15.3 THE SYSTEM SHALL never include the Human Plane token in any response body or client-visible payload
 - 15.4 WHEN an approval, steering, or kill mutation succeeds through the Console THE SYSTEM SHALL append an audit entry with kind, principal, and timestamp
 - 15.5 IF the Human Plane API is unreachable THEN THE SYSTEM SHALL return 502 with upstream human_plane_unreachable
-- 15.6 IF a run's discovery file is stale THEN THE SYSTEM SHALL list the run as ended and reject mutations with 409
+- 15.6 IF a run's discovery file is absent or tombstoned THEN THE SYSTEM SHALL list the run as ended and reject mutations with 409 (present-but-unreachable stays 502 per 15.5)
 - 15.7 THE SYSTEM SHALL render approval packages with the attestation checklist and Approve, Reject, Steer, and Kill controls backed by pure logic in logic/loop.ts
 - 15.8 WHEN polling loop events THE SYSTEM SHALL use since-based pagination over the existing events route without adding a WS surface
+- 15.9 WHEN a supervised loop run exits THE SYSTEM SHALL remove or tombstone its human-plane.json discovery file
+- 15.10 WHERE no auth provider is active THE SYSTEM SHALL record audit principal local-operator with method none
 
 ## REQ-16: F-Sched (design: "E: sched.ts + app routes")
 
@@ -240,6 +247,7 @@ schedulable without the Console ever owning task scheduling (§8 F-Sched).
 - 16.6 WHEN stop is requested THE SYSTEM SHALL terminate the registered child with SIGTERM
 - 16.7 IF a requested script is not an exact allowlist match THEN THE SYSTEM SHALL reject the request with a structured error
 - 16.8 WHEN a sched start or stop occurs THE SYSTEM SHALL append an audit entry
+- 16.9 THE SYSTEM SHALL read the script allowlist only from the governed routing policy file (hashed under POLICY_FILES) with no Console route able to modify it
 
 ## REQ-17: Steering inject-without-pause (design: "E: core/human/api.ts MOD")
 
@@ -263,7 +271,7 @@ itself, so that the platform never touches or stores third-party tokens
 **Acceptance Criteria (EARS):**
 - 18.1 WHEN the operator triggers Authenticate on an MCP server THE SYSTEM SHALL deep-link into the claude-only F-Term running the claude mcp flow for that server
 - 18.2 THE SYSTEM SHALL store no MCP OAuth token and expose no token endpoint
-- 18.3 WHILE the Console session is remote THE SYSTEM SHALL disable the Authenticate action with an explanatory hint
+- 18.3 WHILE a request is remote (behind-proxy set or non-loopback peer — the single remote definition, REQ-20.8) THE SYSTEM SHALL disable the Authenticate action with an explanatory hint
 
 ## REQ-19: Auth gate + Basic provider (design: "F: provider.ts + basic.ts")
 
@@ -297,6 +305,8 @@ standards-based provider (user decision #2).
 - 20.5 IF state, nonce, issuer, audience, or subject verification fails THEN THE SYSTEM SHALL return a generic 401
 - 20.6 THE SYSTEM SHALL read the client secret from the 0600 config outside the repo and never log or expose it
 - 20.7 WHEN logout is requested THE SYSTEM SHALL delete the session cookie with stateless expiry as the recorded simplification
+- 20.8 THE SYSTEM SHALL define a request as remote when behind-proxy is set or the peer address is non-loopback, and anchor 18.3, 19.9, and 19.10 on this single definition
+- 20.9 WHILE behind-proxy is set THE SYSTEM SHALL treat every request as remote — refusing F-Term routes and WS ticket issuance and disabling the MCP Authenticate action — regardless of socket address
 
 ## REQ-21: §13.3 hardening sweep (design: "F" + Non-Functional security)
 
@@ -346,3 +356,81 @@ without adding parser dependencies to Ring 0 (carried item).
   codex-cli 0.139.0 observations; a CLI upgrade that changes the JSONL shape
   surfaces as invalid_response, and the fix is a versioned adapter change
   recorded in DEVIATIONS.md.
+
+### /spec-analyze findings log (anchor: 8e124f3, audited 2026-07-08)
+
+Multi-agent audit (5 category finders + adversarial verifier per finding;
+37 raw findings, 15 confirmed, 22 refuted, confirmed merged to 12 distinct).
+User decision: apply the recommended option on all 12.
+
+Applied (AZ-1..AZ-12):
+
+- **AZ-1** (18.3/19.9/19.10 vs 20.1/20.2) behind-proxy made every remote
+  request loopback-socketed, structurally defeating F-Term loopback-hard +
+  making "remote" undecidable → added 20.8 (single remote definition) + 20.9
+  (behind-proxy = everything remote; F-Term/WS-tickets refused, Authenticate
+  disabled); 18.3 re-anchored.
+- **AZ-2** (9.5/10.8) hypotheses missing from both fusion fallback partitions
+  → both criteria now name the mechanical union resolve for hypotheses.
+- **AZ-3** (10.7) "per-candidate estimate" had no defined source → new
+  FusionProfile field estimateCostUnitsPerCandidate, load-validated (new 8.5),
+  cited in 10.7.
+- **AZ-4** (15.6) "stale" undefined → 15.9 loop-run removes/tombstones
+  human-plane.json on exit; 15.6 = absent-or-tombstoned → ended/409;
+  present-but-unreachable = 502.
+- **AZ-5** (10.5/10.6) weight source + dissent/disagreement undefined →
+  equal-weight ensemble, any-candidate survival, escalation on
+  severity/blocking disagreement; dissent = finding not raised by all.
+- **AZ-6** (2.9) codex kill timeout had no value/home → killTimeoutMs option,
+  default 600000 ms, recorded calibration knob.
+- **AZ-7** (12.1 vs 13.3/13.4) T2 not_enabled had no queue outcome → new 13.9:
+  merge + MERGE_RESULT tier t1_only.
+- **AZ-8** (9.1/9.2/10.7) degraded panel undefined → new 9.7 (cross_lineage
+  with unavailable lineage = fail fast panel_degraded) + 9.8 (<2 survivors =
+  escalate, never single-candidate "fusion").
+- **AZ-9** (14.1/14.2) deterministic salt reselects same targets forever →
+  14.2 now excludes prior OOB_AUDIT_RESULT too (idempotent across cycles).
+- **AZ-10** (15.4/19.3) principal undefined without auth → new 15.10:
+  principal local-operator, method none.
+- **AZ-11** (13.2/13.5) integration worktree lifecycle undefined → new 13.10:
+  hard reset + clean to main head before each candidate, clean-status assert.
+- **AZ-12** (16.1/16.7) script allowlist location/mutability undefined → new
+  16.9: read only from governed routing policy (POLICY_FILES-hashed), no
+  Console route can modify it.
+
+Dismissed (verifier-refuted, one-line reasons):
+
+- R1 T2-not_enabled queue conflict duplicate — resolved by AZ-7 (13.9).
+- R2 19.2-vs-19.10 insecure precedence — existing decideStartup order already
+  decides it (insecure checked before provider).
+- R3 10.1-vs-10.3 tests union — criteria conjunctive; gate filter applies to
+  tests per design.
+- R4/R13 7.1-vs-7.3 shadow freeze — design's shadowFrozen predicate + frozen
+  field already reconcile append-vs-freeze.
+- R5 14.9 "unconditional detection" — sensitivity criterion on the planted
+  fixture, not a coverage guarantee.
+- R6 9.1-vs-10.7 fan-out order — budget guard runs pre-panel per design
+  sequence diagram.
+- R7/R20 outcome-stats provenance — design ShadowChoiceInput defines injected
+  stats derived from the event log.
+- R8 rate-limit numbers absent — same granularity as upstream §13.3; criteria
+  decidable as written.
+- R9 17.1 "steerable" — STEERABLE set already enumerated in
+  core/src/human/api.ts (Phase 2).
+- R10 21.1 "testable set" — §13.3 is a fixed 14-line list; membership
+  deterministic.
+- R11 5.5 Phase-2 regression — no Phase-2 loop path routes test_designer.
+- R12/R19 estimate-vs-quota conflict — profile constant, not a runtime quota
+  reading; superseded by AZ-3.
+- R14 hypotheses fallback duplicate — resolved by AZ-2.
+- R15 queue crash mid-merge — lease TTL/CAS takeover + INTENT/APPLIED replay +
+  AZ-11 reset cover recovery.
+- R16 behind-proxy source-IP limits — single-operator; DoD path is direct
+  tailnet bind with real peer IPs.
+- R17 sched orphan on Console restart — discovery-file-based kill via Human
+  Plane survives restarts; status reports exited.
+- R18 queued guidance never drained — existing takeGuidance/terminal-path
+  mechanism covers it.
+- R21 principal duplicate — resolved by AZ-10 (15.10).
+- R22 "login assets" — static surface is exactly the two hardcoded
+  path-contained routes in app.ts.

@@ -1,6 +1,6 @@
 # Design: platform-phase3 — Multi-model + Fusion + Merge Queue/T2 + Auditor + F-Loop/F-Sched + Remote Auth
 
-> Status: approved 2026-07-08, amended 2026-07-08 (traceability backfilled from derived requirements.md)
+> Status: approved 2026-07-08, amended 2026-07-08 (traceability backfill + /spec-analyze AZ-1..AZ-12 sync)
 > Mode: design-first (requirements.md derived FROM this design; REQ IDs backfilled below).
 > Upstream: unified-platform-spec.md v1.2 §5.3-5.4, §6.4-6.6, §7, §8 (F-Loop/F-Sched rows),
 > §10.2-10.4, §11.3, §12, §13, §14 Phase 3 + invariants §2. User decisions binding:
@@ -211,6 +211,7 @@ export interface CodexAdapterOptions {
   replayDir: string;           // durable requestId replay (P8), per-run, never committed
   putEvidence: (content: string) => string;
   costUnitsPer1k?: number;     // default 1; costUnits = (input+output+reasoning)/1000 * per1k
+  killTimeoutMs?: number;      // default 600_000 — recorded calibration knob (AZ-6)
 }
 export function createCodexAdapter(opts: CodexAdapterOptions): AdapterInterface;
 ```
@@ -343,6 +344,8 @@ export interface FusionProfile {
     diversity: { kind: 'self'; seeds: number[] } | { kind: 'cross_lineage'; lineages: string[] } };
   resolve: ResolveRule;                              // fixed per artifact (validated against §7.5 table)
   budgetCapCostUnits: number;                        // hard cap per activation
+  estimateCostUnitsPerCandidate: number;             // REQUIRED (load-rejected if absent, AZ-3) —
+                                                     // pre-panel guard: N x this must fit the cap
 }
 export function loadFusionProfiles(path: string): Map<FusionArtifact, FusionProfile>;
 ```
@@ -366,8 +369,17 @@ export interface FusionOutcome {
   dissentRefs: string[];                             // CAPTURE outputs
   usage: { costUnits: number };                      // summed across panel + judge
   resolved: ResolveRule; escalateReason?: 'budget_cap' | 'depth_exceeded'
-    | 'no_gate_survivor' | 'judge_invalid';
+    | 'no_gate_survivor' | 'judge_invalid' | 'panel_degraded';
 }
+// panel_degraded (AZ-8): a cross_lineage profile naming an unavailable lineage fails fast
+// pre-dispatch; surviving candidates < 2 after AdapterErrors escalates instead of resolving —
+// a single-candidate "panel" would make uplift numbers meaningless.
+// Fallback partitions (AZ-2): judge_invalid and budget-short-of-judge both resolve
+// mechanically for hypotheses (union + probe-count rank — the judge is not load-bearing there),
+// gate-evidence-only for code_diff/tests, escalate for plan/reviews.
+// Reviews resolve (AZ-5): equal-weight in Phase 3 (calibration-derived = Phase 4); an item
+// survives if ANY candidate raises it; the escalation marker fires on severity/blocking
+// disagreement; dissent = any finding not raised by all candidates.
 export function runFusion(deps: FusionDeps, profile: FusionProfile,
   baseRequest: AgentRequest): Promise<FusionOutcome>;
 ```
@@ -455,6 +467,13 @@ with merge queue" — consequence: an L2+ approval package carries T1-only
 evidence, and a post-approval T2 failure in the queue re-escalates an
 already-approved task. Intentional, labeled in the package
 (`evidence.gateReports` names its tier).
+Two AZ refinements: (AZ-7) while the committed ladder keeps T2 `{status}` =
+not_enabled, the queue still merges and labels `MERGE_RESULT` with tier
+`t1_only` — the queue never wedges on the legal initial state, and enabling
+T2 remains the governance event. (AZ-11) before EVERY candidate (including
+after a prior abort) the queue hard-resets + cleans the integration worktree
+to the main branch head and asserts clean status — no residue can contaminate
+the next candidate's T2 attribution.
 Flow per candidate: `git merge --no-ff` onto an integration worktree of
 `mainBranch` -> run T2 -> pass: fast-forward `mainBranch`, emit
 `MERGE_RESULT {outcome:'merged'}` -> fail: abort merge, emit
@@ -491,8 +510,9 @@ evidenceRef; timing/host excluded) — currently a private function in
 list for this and for the queue path). Sampling independence: the OOB stream
 salts the fold (`hash(runId+taskId+'oob')`) so it does NOT retrace the in-band
 sampled set — the 75% that auto-merged unaudited gets real coverage; targets
-already carrying an `AUDIT_RESULT {sampled:true}` are excluded via
-`alreadyAudited`. Repo contention: the auditor NEVER opens worktrees in the
+already carrying an `AUDIT_RESULT {sampled:true}` OR any prior
+`OOB_AUDIT_RESULT` are excluded via `alreadyAudited` (AZ-9: the deterministic
+salt would otherwise reselect the same targets every cycle forever). Repo contention: the auditor NEVER opens worktrees in the
 live `repoDir` — it makes a fresh local `git clone` per target into its own
 temp dir, checks out `mergeCommit` there, and re-runs gates in the clone
 (clone reads refs concurrently-safe; a transient lock retries once, then the
@@ -515,6 +535,14 @@ export function discoverRuns(runsRoot: string): LoopRunRef[];   // scan */human-
 export function loopFetch(ref: LoopRunRef, req: { method: string; path: string;
   body?: unknown }): Promise<{ status: number; body: unknown }>; // injects Bearer token server-side
 ```
+
+Run-end contract (AZ-4): `runSupervisedLoop`'s existing `finally` block also
+removes (or tombstones) its `human-plane.json` — "ended" is defined as
+discovery-file-absent-or-tombstoned (list as ended, mutations 409);
+present-but-unreachable is the 502 path, never conflated. Audit principal
+(AZ-10): when no auth provider is active, every loop/sched audit entry
+records `principal: 'local-operator', method: 'none'` — the §13.3 audit
+clause stays testable in both auth states.
 
 **`app.ts` (MOD)** — new routes (all behind the auth middleware when remote):
 
@@ -610,8 +638,13 @@ the gate today (loopback bind => gate OFF) and 403 the proxied Host header —
 so `platform console` gains `--behind-proxy <public-url>`: it (a) forces the
 auth gate ON even on a loopback bind (fail-closed direction — a proxy flag
 never weakens), (b) adds the public URL's host to the host-header/CORS
-allowlist, (c) marks cookies `Secure`, and (d) derives the OIDC
-`redirectUri`. Basic auth needs none of this (tailnet already encrypts
+allowlist, (c) marks cookies `Secure`, (d) derives the OIDC
+`redirectUri`, and (e — AZ-1) treats EVERY request as remote regardless of
+socket address: F-Term routes and WS ticket issuance are refused and the MCP
+Authenticate action is disabled, because TLS-proxying onto a loopback bind
+makes remote browsers socket-indistinguishable from local ones. "Remote" has
+ONE definition set-wide (REQ-20.8): behind-proxy set OR non-loopback peer —
+18.3/19.9/19.10 all anchor on it. Basic auth needs none of this (tailnet already encrypts
 transport) — OIDC stays the LAST auth task (user decision #2) and if
 Tailscale cert/Serve is unavailable in the live environment, Basic alone
 already satisfies the DoD (recorded fallback).
@@ -655,7 +688,7 @@ stay interpretable.
 | File | Change |
 |---|---|
 | `.ai/policies/fusion-profiles.json` | NEW — profiles per artifact (§7.5 + budget caps; ~3 live activations enforced procedurally in the LIVE task, cap per activation enforced here) |
-| `.ai/policies/routing.json` | NEW — `{ maxSusceptibility, maxParallel, tokenBuckets: { <adapterId>: {capacity, refillPerSec} } }` |
+| `.ai/policies/routing.json` | NEW — `{ maxSusceptibility, maxParallel, tokenBuckets: { <adapterId>: {capacity, refillPerSec} }, sched: { scriptAllowlist: string[] } }` — the sched allowlist lives HERE so it is POLICY_FILES-hashed: growing it is a governance event, and no Console route can modify it (AZ-12) |
 | `core/src/governance/policy.ts` `POLICY_FILES` | MOD — append both new names; first run after the change refuses `policy_unapproved` until the operator approves (intentional: new policy surface = governance event) |
 | `.ai/policies/gate-ladder.json` | MOD (T2 real commands) — same governance cycle |
 | `.ai/schemas/deliberation-analysis.schema.json` | NEW — `{consensus[], contradictions[], partialAgreements[], uniqueContributions[], blindSpots[]}`, additionalProperties:false |
