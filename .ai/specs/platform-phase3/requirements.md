@@ -1,6 +1,6 @@
 # Requirements: platform-phase3 — Multi-model + Fusion + Merge Queue/T2 + Auditor + F-Loop/F-Sched + Remote Auth
 
-> Status: draft
+> Status: approved 2026-07-08 (post /spec-analyze AZ-1..AZ-12)
 > Derived from design.md (approved 2026-07-08) — design is upstream; each REQ cites its design section.
 > Upstream: unified-platform-spec.md v1.2 §14 Phase 3 + invariants §2. User decisions binding: clarifications.md.
 > SPIKE-6 caveats are binding adapter-design inputs.
