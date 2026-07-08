@@ -148,6 +148,30 @@ test('non-zero exit with a generic stderr but a quota-shaped --json error event 
   } finally { h.cleanup(); }
 });
 
+test('non-zero exit with a GENERIC --json error event but a quota/auth-shaped stderr -> classifies quota_limited/auth_unavailable, not transport (Codex review, PR #48)', async () => {
+  const quota = harness(fakeExec({
+    exitCode: 1,
+    stderr: 'error: 429 rate limit exceeded', // the ONLY place the real signal lives
+    events: [
+      { type: 'thread.started' },
+      { type: 'turn.started' },
+      { type: 'error', message: 'internal error' }, // present, but says nothing quota/auth-shaped
+    ],
+  }));
+  try {
+    await assert.rejects(quota.adapter.send(req()), (e: unknown) => e instanceof AdapterError && (e as AdapterError).kind === 'quota_limited');
+  } finally { quota.cleanup(); }
+
+  const auth = harness(fakeExec({
+    exitCode: 1,
+    stderr: 'not logged in: run codex login',
+    events: [{ type: 'error', message: 'internal error' }],
+  }));
+  try {
+    await assert.rejects(auth.adapter.send(req()), (e: unknown) => e instanceof AdapterError && (e as AdapterError).kind === 'auth_unavailable');
+  } finally { auth.cleanup(); }
+});
+
 test('non-zero exit with auth stderr -> auth_unavailable; unmatched stderr -> transport (REQ-2.7/1.5)', async () => {
   const auth = harness(fakeExec({ exitCode: 1, stderr: 'not logged in: run codex login' }));
   try {
