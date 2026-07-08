@@ -1,0 +1,5 @@
+{
+  "id": "task-06",
+  "answerKey": "token-06",
+  "golden": { "expected": "token-06\n", "sha256": "111b3063124188517cd72e9bc197caf69c1d6a7bf5d33822c8f89d8c54ea35e7" }
+}

@@ -36,6 +36,7 @@ import {
   type RiskClass,
   type TaskContract,
   type TaskState,
+  type ToolHandler,
 } from 'core';
 import {
   createAALProposalSource,
@@ -145,6 +146,14 @@ export async function runSupervisedLoop(opts: {
    * event log. Absent → no mirror (the core event log remains authoritative).
    */
   auditSink?: (entry: Record<string, unknown>) => void;
+  /**
+   * Composition-root REQUEST_TOOL handlers (fusion.deliberate, REQ-10.9). The live
+   * path builds these with `console/backend/src/fusion.ts` (createFusionToolHandler +
+   * createCandidateEvidenceRunner + runFusion) behind the `fusionActive` gate so
+   * fusion never activates under CI (REQ-10.10). Absent → the executor keeps its
+   * propose-only REQUEST_TOOL rejection, so the CI/stub path is byte-identical.
+   */
+  toolHandlers?: Record<string, ToolHandler>;
 }): Promise<LoopRunResult> {
   const fx = makeFixtureRepo();
   const clock = opts.clock;
@@ -278,6 +287,7 @@ export async function runSupervisedLoop(opts: {
           policy: createDefaultPathPolicy(),
           sandbox: denyNetworkSandbox(process.platform),
           clock,
+          ...(opts.toolHandlers !== undefined ? { toolHandlers: opts.toolHandlers } : {}),
         }),
         gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: 'RUN-LIVE', taskId: 'T-1', log, evidence, clock }),
         log,

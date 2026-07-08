@@ -34,7 +34,11 @@ export interface ActionRejection {
     | 'unsupported_action_phase0'
     // A governed network grant (package_install) that failed the security-plane
     // policy: pattern near-miss or missing lockfile (REQ-11.2, append-only).
-    | 'network_policy_denied';
+    | 'network_policy_denied'
+    // A fusion.deliberate REQUEST_TOOL arriving after the task already consumed its
+    // single fusion activation (REQ-10.9, append-only) — structured feedback, mirrors
+    // the out-of-authority rejection pattern; never a crash.
+    | 'depth_exceeded';
   detail: string;
 }
 
@@ -152,7 +156,15 @@ export type EventType =
   | 'DATA_POLICY_VIOLATION'
   | 'AUTOMATION_DEFERRED'
   | 'AUTOMATION_OVERRIDE'
-  | 'GOVERNANCE_PROPOSED';
+  | 'GOVERNANCE_PROPOSED'
+  // Phase 3 fusion additions (append-only, INV-10). Emitted by aal/fusion; core
+  // only owns the type union (Ring 0 executes nothing for fusion — the evidence
+  // port keeps core the sole measurer). FUSION_DISSENT captures a finding not
+  // raised by every panel candidate (REQ-10.6).
+  | 'FUSION_PANEL'
+  | 'FUSION_CANDIDATE'
+  | 'FUSION_RESOLVED'
+  | 'FUSION_DISSENT';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

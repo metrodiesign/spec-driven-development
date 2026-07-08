@@ -27,6 +27,7 @@ export {
   type Executor,
   type Failpoints,
   type RecoveryReport,
+  type ToolHandler,
 } from './executor/executor.ts';
 export { createGateRunner, type GateRunner } from './gates/runner.ts';
 export { computeGoldenManifest, verifyGoldenManifest, type GoldenVerdict } from './gates/golden.ts';
@@ -100,9 +101,18 @@ export {
 } from './human/api.ts';
 export {
   computeCalibration,
+  computeFusionCalibration,
   type CalibrationInput,
   type CalibrationResult,
+  type FusionCalibrationInput,
+  type FusionCalibrationResult,
 } from './calibration/calibration.ts';
+export {
+  loadCalibrationCorpus,
+  CORPUS_MIN_TASKS,
+  type CalibrationCorpus,
+  type CorpusTask,
+} from './calibration/corpus.ts';
 export {
   decideAutoApprove,
   matchesDepManifest,

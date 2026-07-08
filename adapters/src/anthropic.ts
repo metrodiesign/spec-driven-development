@@ -149,6 +149,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
         contextWindowTokens: 200_000,
         executionBackend: false,
         determinism: 'none', // no seed; reproducibility = frozen artifact at verification (§16)
+        lineage: 'anthropic', // vendor family for cross-lineage fusion routing (§7.4, REQ-4.1) — legal in Ring 2 only
       };
     },
 
