@@ -136,6 +136,32 @@ test('adding a not-yet-present policy file is itself a gated change (absent coun
   }
 });
 
+test('routing.json / fusion-profiles.json joining POLICY_FILES makes creating them a governance event (REQ-8.3)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    // Approve the initial snapshot (routing.json + fusion-profiles.json ABSENT).
+    const refused = ensureGovernanceApproved({ policyDir: dir, logPath, clock });
+    if (refused.ok) throw new Error('unreachable');
+    approveProposal({ logPath, id: refused.proposal.id, clock, decidedBy: 'human' });
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, true);
+
+    // Creating routing.json flips it from ABSENT -> hashed => refuse until re-approved.
+    writeFileSync(join(dir, 'routing.json'), JSON.stringify({ maxSusceptibility: 0.5 }));
+    const afterRouting = ensureGovernanceApproved({ policyDir: dir, logPath, clock });
+    assert.equal(afterRouting.ok, false, 'new routing.json is a governance event by construction');
+    if (afterRouting.ok) throw new Error('unreachable');
+
+    // Approve, then adding fusion-profiles.json refuses again (enabling fusion is gated).
+    approveProposal({ logPath, id: afterRouting.proposal.id, clock, decidedBy: 'human' });
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, true);
+    writeFileSync(join(dir, 'fusion-profiles.json'), JSON.stringify([]));
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, false);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('flakySuspect -> flaky_quarantine proposal, never auto; approval is required for quarantine (REQ-9.5)', () => {
   const dir = policyDir();
   const logPath = logPathIn(dir);

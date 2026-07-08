@@ -37,6 +37,8 @@ export interface FakeAdapterOptions {
   behavior?: FakeBehavior;
   fault?: FakeFault;
   contextWindowTokens?: number;
+  /** Vendor family surfaced through the manifest (REQ-4.4); absent → registry defaults 'unknown'. */
+  lineage?: string;
   /**
    * Optional evidence writer. A real adapter maps the model's inline content to a
    * core evidence ref; when provided, the fake's WRITE_FILE carries a resolvable
@@ -84,6 +86,7 @@ export class FakeAdapter implements AdapterInterface {
   private readonly contextWindowTokens: number;
   private readonly putContent: ((content: string) => string) | undefined;
   private readonly writeContent: string;
+  private readonly lineage: string | undefined;
   /** requestId -> response (durable-within-instance replay; P8). */
   private readonly replay = new Map<string, AgentResponse>();
   /** send attempts (drives schema_fail_first regardless of requestId). */
@@ -101,6 +104,7 @@ export class FakeAdapter implements AdapterInterface {
     this.contextWindowTokens = opts.contextWindowTokens ?? 200_000;
     this.putContent = opts.putContent;
     this.writeContent = opts.writeContent ?? 'correct\n';
+    this.lineage = opts.lineage;
     this.healthProbe =
       opts.fault === 'health_unhealthy'
         ? () =>
@@ -120,6 +124,7 @@ export class FakeAdapter implements AdapterInterface {
       contextWindowTokens: this.contextWindowTokens,
       executionBackend: false,
       determinism: 'seed',
+      ...(this.lineage !== undefined ? { lineage: this.lineage } : {}),
     };
   }
 

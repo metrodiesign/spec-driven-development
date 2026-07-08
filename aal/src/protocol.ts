@@ -67,6 +67,12 @@ export interface CapabilityManifest {
   /** ALWAYS false — core executes every action (§7.2 row 4). */
   executionBackend: false;
   determinism: 'none' | 'seed';
+  /**
+   * Opaque vendor-family tag for cross-lineage routing (§7.4). The VALUE is set by
+   * the Ring-2 adapter (where vendor names are legal, INV-8); Ring 1 treats it as an
+   * opaque string. Absent → the registry defaults it to 'unknown' at register (REQ-4.1).
+   */
+  lineage?: string;
 }
 
 export type AdapterErrorKind =

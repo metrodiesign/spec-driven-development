@@ -26,7 +26,21 @@ export {
   type HealthChange,
   type AdapterHealth,
 } from './registry.ts';
-export { createRouter, NoCapacityError, type Router } from './router.ts';
+export { createRouter, NoCapacityError, type Router, type RouteHints } from './router.ts';
+export { createTokenBucket, type TokenBucket, type TokenBucketOptions } from './ratelimit.ts';
+export {
+  createDispatcher,
+  type DispatcherOptions,
+  type DispatchItem,
+  type DispatchResult,
+} from './dispatch.ts';
+export {
+  loadRoutingConfig,
+  parseRoutingConfig,
+  DEFAULT_ROUTING_CONFIG,
+  type RoutingConfig,
+  type RoutingBucketConfig,
+} from './routing-config.ts';
 export { createAALProposalSource, type AALSourceDeps } from './source.ts';
 export {
   runProbe,

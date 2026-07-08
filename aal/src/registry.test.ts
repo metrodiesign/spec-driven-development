@@ -94,3 +94,30 @@ test('diagnostician role is eligible (reasoning-only capability) (REQ-4.2)', () 
   reg.register(new FakeAdapter({ id: 'ok' }), record('ok', true));
   assert.equal(reg.eligible('diagnostician').length, 1);
 });
+
+test('reviewer role is eligible (reasoning-only, fusion blind judge) (REQ-4.2)', () => {
+  const reg = createRegistry();
+  reg.register(new FakeAdapter({ id: 'ok' }), record('ok', true));
+  assert.equal(reg.eligible('reviewer').length, 1);
+});
+
+test('lineage from the manifest is carried onto the RegisteredAdapter; absent -> unknown (REQ-4.1/4.4)', () => {
+  const reg = createRegistry();
+  reg.register(new FakeAdapter({ id: 'adapterB', lineage: 'familyB' }), record('adapterB', true));
+  reg.register(new FakeAdapter({ id: 'plain' }), record('plain', true)); // no lineage option
+  assert.equal(reg.get('adapterB')?.lineage, 'familyB', 'FakeAdapter lineage surfaced through manifest (REQ-4.4)');
+  assert.equal(reg.get('adapterB')?.adapter.manifest().lineage, 'familyB');
+  assert.equal(reg.get('plain')?.lineage, 'unknown', 'absent manifest lineage defaults to unknown (REQ-4.1)');
+});
+
+test('all() enumerates every adapter including stale ones; eligible() hides stale (REQ-4.3)', () => {
+  const reg = createRegistry();
+  reg.register(new FakeAdapter({ id: 'live' }), record('live', true));
+  reg.register(new FakeAdapter({ id: 'drifted' }), record('drifted', true));
+  reg.recordConformance('drifted', record('drifted', false)); // regress -> stale
+  assert.equal(reg.eligible('implementer').length, 1, 'stale one hidden from eligible()');
+  const all = reg.all();
+  assert.equal(all.length, 2, 'all() sees both');
+  assert.equal(all.find((r) => r.record.adapterId === 'drifted')?.stale, true);
+  assert.equal(all.find((r) => r.record.adapterId === 'drifted')?.lineage, 'unknown', 'lineage preserved across recordConformance');
+});

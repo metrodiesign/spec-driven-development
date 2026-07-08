@@ -18,6 +18,8 @@ export interface RegisteredAdapter {
   record: ConformanceRecord;
   stale: boolean;
   susceptibilityScore: number;
+  /** Vendor family for cross-lineage routing (REQ-4.1); defaulted 'unknown' from the manifest. */
+  lineage: string;
   /** Optional quota/health probe; absent = always-ok (e.g. FakeAdapter). */
   healthProbe?: () => Promise<AdapterHealth>;
 }
@@ -37,6 +39,12 @@ export interface Registry {
   ): void;
   recordConformance(adapterId: string, record: ConformanceRecord): void;
   eligible(role: CoreRole): RegisteredAdapter[];
+  /**
+   * Every registered adapter INCLUDING stale ones (REQ-4.3). `eligible()` filters
+   * stale out, so "any adapter stale" is unobservable through it — shadow-freeze
+   * (drift canary) and observability enumerate through `all()` instead.
+   */
+  all(): RegisteredAdapter[];
   /** Run every health probe (each timeout-bounded), cache the results, return changes. */
   refreshHealth(): Promise<HealthChange[]>;
   get(adapterId: string): RegisteredAdapter | undefined;
@@ -63,6 +71,10 @@ function roleRequires(role: CoreRole): (m: RegisteredAdapter) => boolean {
     // Diagnostician is reasoning-only (REQ-4.2): schema conformance already
     // gates registration; no extra capability bit beyond what every adapter has.
     case 'diagnostician':
+      return () => true;
+    // Reviewer (fusion blind judge, REQ-4.2) is a reasoning role like planner —
+    // any conformant adapter qualifies.
+    case 'reviewer':
       return () => true;
   }
 }
@@ -133,6 +145,7 @@ export function createRegistry(opts: RegistryOptions = {}): Registry {
         record,
         stale: false,
         susceptibilityScore: record.p7.susceptibilityScore,
+        lineage: adapter.manifest().lineage ?? 'unknown',
         ...(healthProbe ? { healthProbe } : {}),
       });
     },
@@ -175,6 +188,10 @@ export function createRegistry(opts: RegistryOptions = {}): Registry {
         if (opts.breaker !== undefined && opts.breaker.state(key) === 'open') return false;
         return health.get(key)?.ok !== false;
       });
+    },
+
+    all() {
+      return [...byId.values()];
     },
 
     get(adapterId) {

@@ -12,7 +12,7 @@ import { breakerKey, type Breaker } from './breaker.ts';
 import { AdapterError } from './protocol.ts';
 import { proposeWithRepair, type RepairOutcome } from './repair.ts';
 import type { RegisteredAdapter } from './registry.ts';
-import type { Router } from './router.ts';
+import type { RouteHints, Router } from './router.ts';
 import type { EvidenceStore, ProviderDataPolicy } from 'core';
 import type {
   Action,
@@ -51,6 +51,15 @@ export interface AALSourceDeps {
    * `data_policy_violation` and sends NOTHING.
    */
   dataPolicyFor?: (adapterId: string) => ProviderDataPolicy | undefined;
+  /**
+   * Composition-supplied routing hints per round (REQ-5). The composition root
+   * builds these from role/lineage and `.ai/policies/routing.json`: the
+   * susceptibility cap for low-trust content (REQ-5.6) and the test_designer !=
+   * implementer lineage rule (REQ-5.5, a HARD rule — the source never re-routes
+   * without the hint, so an empty filtered set is a clean BLOCKED, never a silent
+   * relax). Absent → Phase-2 routing, byte-identical (REQ-5.1).
+   */
+  routeHints?: (input: ProposalInput) => RouteHints;
 }
 
 function pathOf(a: Action): string | null {
@@ -132,9 +141,18 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
         });
       }
 
-      // The ordered eligible set (breaker- and health-filtered). Empty -> clean
-      // BLOCKED(no_capacity), NO retry (REQ-3.3/REQ-6.2).
-      const eligible = deps.router.eligibleAdapters(role);
+      // Routing hints (REQ-5): the susceptibility cap applies ONLY to a bundle
+      // carrying untrusted file content (REQ-5.6); lineage exclusion (REQ-5.5)
+      // applies regardless. Absent callback -> Phase-2 routing (REQ-5.1).
+      let hints = deps.routeHints?.(input);
+      if (hints?.maxSusceptibility !== undefined && !bundle.pieces.some((p) => p.kind === 'file')) {
+        const { maxSusceptibility: _capDropped, ...rest } = hints;
+        hints = rest;
+      }
+
+      // The ordered eligible set (breaker-, health-, and hint-filtered). Empty ->
+      // clean BLOCKED(no_capacity), NO retry (REQ-3.3/REQ-5.4/REQ-6.2).
+      const eligible = deps.router.eligibleAdapters(role, hints);
       if (eligible.length === 0) {
         deps.log.append({
           runId: deps.runId,

@@ -3,7 +3,9 @@
 /** Roles and their write rights come from policy config (REQ-1.6, spec §6.1). */
 // `diagnostician` (Phase 2, REQ-4) drives a DIAGNOSING round: reasoning + probe
 // RUN_COMMANDs only, empty write-prefix list (see executor/path-policy).
-export type Role = 'planner' | 'test_designer' | 'implementer' | 'diagnostician';
+// `reviewer` (Phase 3, REQ-4.2) is reasoning-only like diagnostician — the fusion
+// blind judge routes as this role; it proposes nothing to execute.
+export type Role = 'planner' | 'test_designer' | 'implementer' | 'diagnostician' | 'reviewer';
 
 /** Action DSL (spec §6.1). Content/diff travel as blob refs into the evidence store. */
 export type Action =

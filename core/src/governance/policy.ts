@@ -24,6 +24,12 @@ export const POLICY_FILES = [
   'security-plane.json',
   'automation.json',
   'provider-data-policy.json',
+  // Phase 3 (REQ-8.3): routing + fusion knobs join the governance snapshot, so
+  // enabling fusion or growing sched.scriptAllowlist is a human-approved event by
+  // construction. Both hash as the ABSENT sentinel until the file is created —
+  // creating one is itself a gated change (REQ-9.6).
+  'routing.json',
+  'fusion-profiles.json',
 ] as const;
 
 /** sha256 hex is 64 chars, so this 6-char sentinel can never collide with a real file hash. */

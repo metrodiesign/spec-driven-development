@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import { createAALProposalSource } from './source.ts';
 import { createBreaker, DEFAULT_BREAKER_OPTIONS } from './breaker.ts';
 import { createRegistry } from './registry.ts';
-import { createRouter } from './router.ts';
+import { createRouter, type RouteHints } from './router.ts';
 import { FakeAdapter } from './fake-adapter.ts';
 import { PASS_FAIL_PROBES, type ConformanceRecord } from './protocol.ts';
 import { createEvidenceStore, openEventLog } from 'core';
@@ -25,13 +25,13 @@ const CONTRACT: TaskContractExcerpt = {
   acceptanceCriteria: [{ id: 'AC-1', description: 'impl correct' }],
 };
 
-function passingRecord(id: string): ConformanceRecord {
+function passingRecord(id: string, susceptibilityScore = 0): ConformanceRecord {
   return {
     adapterId: id,
     modelVersion: 'fake-1.0',
     ranAt: '2026-07-06T00:00:00Z',
     probes: PASS_FAIL_PROBES.map((p) => ({ id: p, pass: true, evidenceRef: `blob://${p}` })),
-    p7: { susceptibilityScore: 0, evidenceRef: 'blob://p7' },
+    p7: { susceptibilityScore, evidenceRef: 'blob://p7' },
   };
 }
 
@@ -42,6 +42,8 @@ function harness(opts: {
   register?: boolean;
   contract?: TaskContractExcerpt;
   dataPolicyFor?: (adapterId: string) => ProviderDataPolicy | undefined;
+  routeHints?: (input: ProposalInput) => RouteHints;
+  susceptibility?: number;
 }) {
   const root = mkdtempSync(join(tmpdir(), 'src-'));
   const worktree = join(root, 'wt');
@@ -57,7 +59,7 @@ function harness(opts: {
   const reg = createRegistry({ breaker });
   const adapters = opts.adapters ?? [opts.adapter ?? new FakeAdapter({ id: 'ok' })];
   if (opts.register !== false) {
-    for (const a of adapters) reg.register(a, passingRecord(a.manifest().adapterId), a.healthProbe);
+    for (const a of adapters) reg.register(a, passingRecord(a.manifest().adapterId, opts.susceptibility), a.healthProbe);
   }
   const router = createRouter(reg);
   let n = 0;
@@ -79,6 +81,7 @@ function harness(opts: {
     },
     maxRepairRounds: 2,
     ...(opts.dataPolicyFor ? { dataPolicyFor: opts.dataPolicyFor } : {}),
+    ...(opts.routeHints ? { routeHints: opts.routeHints } : {}),
   });
   return { root, log, source, breaker, reg, cleanup: () => { log.close(); rmSync(root, { recursive: true, force: true }); } };
 }
@@ -277,5 +280,65 @@ test('an in-policy bundle is unaffected by the data policy (benign baseline, REQ
     assert.equal(h.log.all({ type: 'CONTEXT_BUILT' }).length, 1);
   } finally {
     h.cleanup();
+  }
+});
+
+// --- Routing hints through the source (REQ-5.5 / REQ-5.6) ---
+
+test('excludeLineages is a HARD rule: the only adapter, once excluded, yields BLOCKED — never silently reused (REQ-5.5)', async () => {
+  const only = new FakeAdapter({ id: 'adapterB', lineage: 'familyB' });
+  const h = harness({
+    seedFiles: { 'src/impl.txt': 'wrong\n' },
+    adapters: [only],
+    // Mirrors the composition rule: test_designer must not share the implementer's lineage.
+    routeHints: (input) => (input.role === 'test_designer' ? { excludeLineages: ['familyB'] } : {}),
+  });
+  try {
+    // implementer round: no exclusion -> served.
+    const impl = await h.source.propose(INPUT);
+    assert.equal(impl.claim, 'READY_FOR_VERIFICATION', 'implementer unaffected by the hint');
+    // test_designer round: the sole adapter's lineage is excluded -> clean BLOCKED, no fallback.
+    const td = await h.source.propose({ taskId: 'T-1', state: 'IMPLEMENTING', role: 'test_designer', feedback: null });
+    assert.equal(td.claim, 'BLOCKED', 'excluded lineage is never silently reused');
+    assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'no_capacity');
+    assert.equal(h.log.all({ type: 'ESCALATED' }).at(-1)?.payload['role'], 'test_designer');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('maxSusceptibility cap is applied only when the bundle carries file pieces (REQ-5.6)', async () => {
+  // A high-susceptibility (score 1) adapter, cap 0.5. WITH a seeded file piece the
+  // cap filters it out -> BLOCKED. WITHOUT any file piece the cap is not applied.
+  const capHint = (): RouteHints => ({ maxSusceptibility: 0.5 });
+
+  const withFile = harness({
+    seedFiles: { 'src/impl.txt': 'wrong\n' },
+    adapter: new FakeAdapter({ id: 'risky' }),
+    susceptibility: 1,
+    routeHints: capHint,
+  });
+  try {
+    const p = await withFile.source.propose(INPUT);
+    assert.equal(p.claim, 'BLOCKED', 'file piece present -> cap applied -> risky adapter excluded');
+    assert.equal(withFile.log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'no_capacity');
+  } finally {
+    withFile.cleanup();
+  }
+
+  const noFile = harness({
+    seedFiles: {}, // empty worktree -> bundle has no file pieces
+    adapter: new FakeAdapter({ id: 'risky' }),
+    susceptibility: 1,
+    routeHints: capHint,
+  });
+  try {
+    const p = await noFile.source.propose(INPUT);
+    // Cap dropped -> the risky adapter WAS eligible and ran (its write is rejected as a
+    // context_violation since nothing is in-bundle, but it was NOT blocked for no_capacity).
+    assert.notEqual(p.claim, 'BLOCKED');
+    assert.equal(noFile.log.all({ type: 'ESCALATED' }).length, 0, 'no no_capacity escalation — adapter was eligible');
+  } finally {
+    noFile.cleanup();
   }
 });
