@@ -79,13 +79,16 @@ export function hostHeaderAllowed(
   proxyHost?: string,
 ): boolean {
   if (hostHeader === undefined) return false;
-  const bare = hostHeader.startsWith('[')
-    ? hostHeader.replace(/^\[([^\]]+)\](:\d+)?$/, '$1')
-    : hostHeader.replace(/:\d+$/, '');
+  const stripPort = (h: string): string =>
+    h.startsWith('[') ? h.replace(/^\[([^\]]+)\](:\d+)?$/, '$1') : h.replace(/:\d+$/, '');
+  const bare = stripPort(hostHeader);
   // REQ-20.2: the --behind-proxy public host is allowlisted at ANY port — TLS
   // terminates upstream (Tailscale Serve forwards to a different internal
-  // port), so port-pinning against the listen port doesn't apply to it.
-  if (proxyHost !== undefined && bare === proxyHost) return true;
+  // port), so port-pinning against the listen port doesn't apply to it. Strip
+  // proxyHost's OWN port too (parseBehindProxy's `host` keeps one when the
+  // configured URL names a non-default port) — else a same-port match still
+  // failed the raw string compare (Codex review finding on PR #47).
+  if (proxyHost !== undefined && bare === stripPort(proxyHost)) return true;
   const allowed = new Set(['127.0.0.1', '::1', 'localhost', bindHost]);
   if (!allowed.has(bare)) return false;
   // No explicit port = port 80 (the console never terminates TLS itself). It

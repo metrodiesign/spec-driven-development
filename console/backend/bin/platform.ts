@@ -269,7 +269,13 @@ async function runConformance(rest: string[]): Promise<void> {
       lineage: { type: 'string', default: 'claude' },
     },
   });
-  const lineage = values.lineage === 'codex' ? 'codex' : 'claude';
+  if (values.lineage !== 'claude' && values.lineage !== 'codex') {
+    // A typo must refuse before any live spend, never silently fall back to
+    // claude (Codex review finding on PR #47).
+    process.stderr.write(`platform conformance: --lineage must be "claude" or "codex", got ${JSON.stringify(values.lineage)}\n`);
+    process.exit(1);
+  }
+  const lineage = values.lineage;
   const decision = decideLiveRun({
     live: values.live as boolean,
     ciEnv: process.env['CI'] !== undefined && process.env['CI'] !== '',
