@@ -253,8 +253,46 @@
          end-to-end Google login + a genuine second-machine/tailnet click-through — this task's browser
          verification intentionally stops at "redirects correctly to the real Google endpoint," matching
          task 13's own description of owning "real login ... (Basic; OIDC if Tailscale Serve available)".
-- [ ] 12. Symbol-level COMPRESS — `compressToSymbols` heuristic in context builder (imports/exports/declaration headers kept, bodies dropped, trailer), <2-declaration fallback to truncation, GOVERN scans full pre-compression content (secret-in-dropped-body test), per-piece reason for waste metrics.
+- [x] 12. Symbol-level COMPRESS — `compressToSymbols` heuristic in context builder (imports/exports/declaration headers kept, bodies dropped, trailer), <2-declaration fallback to truncation, GOVERN scans full pre-compression content (secret-in-dropped-body test), per-piece reason for waste metrics.
      Satisfies: REQ-22. Verify: `pnpm -C core test`.
+     Evidence:
+       - test: `pnpm -C core test` -> 177 passed / 0 failed (was 174; +3: `compressToSymbols` REQ-22.1/22.4
+         symbol reduction on an oversized TS fixture (import + function + class headers kept, indented bodies
+         dropped, `[compressed:symbols]` trailer, `reason==='compressed:symbols'`), REQ-22.2/22.4 fallback on
+         an oversized prose file (<2 declarations -> byte truncation, `reason==='truncated'`), REQ-22.3 GOVERN
+         still throws `SecretInContextError` for a secret planted inside an indented (would-be-dropped) body
+         line of an otherwise-compressible file) · `pnpm -r test` -> 565 passed / 0 failed across all 6
+         packages (core 177, aal 99, adapters 37, console/backend 216, console/web 36 — all unaffected,
+         confirming no cross-package regression)
+       - typecheck/lint: `pnpm -r typecheck` -> 6/6 projects clean · `pnpm lint` -> 0 issues · `pnpm vendor-check`
+         -> OK (core+aal vendor-name-free, INV-7)
+       - spec-trace: `bash scripts/spec-trace.sh platform-phase3` -> OK, 142/142 EARS criteria covered
+       - viewports: n/a — logic-only
+       - deviations: (1) `ContextPiece.reason` is a bare `string` reused for two distinct axes (inclusion-rule
+         id vs COMPRESS-path taken); design.md:682-684 names the field but doesn't say what happens to the
+         PRE-EXISTING `'seed'`/`'expand:depth-N'` value once a piece is big enough to enter the COMPRESS
+         decision. Read literally against REQ-22.4 ("record per piece whether symbols or truncation ran"): a
+         piece's `reason` is overwritten to `'compressed:symbols'`/`'truncated'` ONLY when it actually exceeds
+         `maxFileBytes` (i.e. only when the COMPRESS decision is meaningful for it); a piece that fits under the
+         cap never enters that decision, so its original inclusion-reason passes through untouched — no new
+         field was added, matching the design's explicit field choice. (2) `compressToSymbols`'s declaration
+         keyword set is exactly `function|class|interface|type|const` (with `export`/`default`/`declare`/
+         `async`/`abstract` modifier prefixes) — matches design.md:677's literal enumeration; `enum`/`let`/`var`
+         are deliberately NOT recognized as declarations (a stray top-level `enum Foo {` line is dropped, not
+         kept), since the design names five keywords, not more. (3) `compressToSymbols`/`compressOrTruncate`
+         stay module-private (not exported), matching the pre-existing convention for this same file's
+         `truncate`/`localImports` helpers — exercised only indirectly through `buildContext`, same test style as
+         every other case in `builder.test.ts`. (4) The heuristic is line-based with no brace/indent-depth
+         parser: a multi-line declaration signature formatted Prettier-style (params indented, closing `): T {`
+         back at column 0) keeps only the opening header line, not the full signature — an accepted heuristic
+         gap explicitly sanctioned by design.md:738's own error-handling row ("Symbol compression yields garbage
+         -> Fallback to byte truncation, total function"); the <2-declaration safety net exists for exactly this
+         class of degradation and no fixture in design's testing table (`design.md:772`) asks for signature
+         reconstruction. (5) A top-level `/** ... */` JSDoc block is kept verbatim via a small open/close state
+         flag (so its indented `*` continuation lines survive despite the general indented-line-drop rule) —
+         an addition beyond the design's one-line description but directly implied by "comment headers" being
+         listed as a keep-category, since JSDoc is the dominant top-level comment shape in this codebase's own
+         source (e.g. this same file's header comment).
 - [ ] 13. LIVE pass (manual — never CI; Phase-1 task-11 analog) — live Codex conformance P1-P8 (expect INV-16 wire-vocabulary class: fix Ring 2 prompt/classification, never verdicts; discrimination self-test stays green), §5.3 non-interactive-usage policy review recorded BEFORE first fusion activation, <=3 live fusion activations under profile caps -> uplift interval into `docs/calibration/`, real login + F-Loop approve from a second machine over tailnet (Basic; OIDC if Tailscale Serve available, else recorded fallback), one-time governance approval of the new policy snapshot, auditor real sample, real-repo auto-merge stretch (not DoD), replay/cache per-run and never committed. Done = §14 Phase 3 DoD evidence complete.
      Satisfies: REQ-2, REQ-3, REQ-11, REQ-19, REQ-20 (live re-verification — CI coverage lives in tasks 1-12). Depends on: 1-12. Verify: `docs/calibration/` evidence + `bash scripts/spec-trace.sh platform-phase3`.
 

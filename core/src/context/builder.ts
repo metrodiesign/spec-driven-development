@@ -1,6 +1,7 @@
 // Deterministic Context Builder v1 (spec §9.4, REQ-7). Six stages:
-// SEED -> EXPAND -> COMPRESS(v1 whole-file + rule truncation) -> GOVERN(secret
-// block) -> MARK(untrusted-data markers + injection canary) -> MANIFEST. Pure
+// SEED -> EXPAND -> COMPRESS(symbol-heuristic reduction, byte-truncation
+// fallback; REQ-22) -> GOVERN(secret block) -> MARK(untrusted-data markers +
+// injection canary) -> MANIFEST. Pure
 // function of (contract, worktree files, seedPaths, canaryToken): identical
 // inputs => byte-identical manifest.
 //
@@ -65,6 +66,58 @@ function truncate(content: string, maxBytes: number): string {
   return content.slice(0, maxBytes) + '\n…[truncated]';
 }
 
+const DECLARATION_HEADER_RE =
+  /^(export\s+)?(default\s+)?(declare\s+)?(async\s+)?(abstract\s+)?(function\*?|class|interface|type|const)\b/;
+const IMPORT_EXPORT_RE = /^(import|export)\b/;
+const COMMENT_RE = /^(\/\/|\/\*)/;
+
+/**
+ * REQ-22: dependency-free, language-heuristic COMPRESS reducer. Keeps
+ * import/export lines, top-level declaration header lines (function/class/
+ * interface/type/const), and top-level comment blocks; drops indented body
+ * lines. No parser dependency — core stays zero-dep (Ring 0); a garbage
+ * result (< 2 declarations) is the caller's cue to fall back to truncation.
+ */
+function compressToSymbols(content: string): { content: string; declarationCount: number } {
+  const kept: string[] = [];
+  let declarationCount = 0;
+  let inTopLevelComment = false;
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (inTopLevelComment) {
+      kept.push(line);
+      if (trimmed.endsWith('*/')) inTopLevelComment = false;
+      continue;
+    }
+    if (trimmed === '') continue;
+    if (/^[ \t]/.test(line)) continue; // indented: body line, drop
+    if (COMMENT_RE.test(trimmed)) {
+      kept.push(line);
+      if (trimmed.startsWith('/*') && !trimmed.endsWith('*/')) inTopLevelComment = true;
+    } else if (DECLARATION_HEADER_RE.test(trimmed)) {
+      kept.push(line);
+      declarationCount++;
+    } else if (IMPORT_EXPORT_RE.test(trimmed)) {
+      kept.push(line);
+    }
+    // else: top-level line that is none of the above (e.g. a stray closing brace) — drop.
+  }
+  kept.push('[compressed:symbols]');
+  return { content: kept.join('\n'), declarationCount };
+}
+
+/** COMPRESS: symbol-reduce an oversized file, falling back to byte truncation when the heuristic yields garbage. */
+function compressOrTruncate(
+  full: string,
+  maxFileBytes: number,
+  inclusionReason: string,
+): { content: string; reason: string } {
+  if (full.length <= maxFileBytes) return { content: full, reason: inclusionReason };
+  const symbols = compressToSymbols(full);
+  if (symbols.declarationCount >= 2) return { content: symbols.content, reason: 'compressed:symbols' };
+  return { content: truncate(full, maxFileBytes), reason: 'truncated' };
+}
+
 export function buildContext(input: ContextBuildInput): ContextBuildResult {
   const maxFileBytes = input.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   const depthBudget = input.depthBudget ?? 1;
@@ -99,11 +152,12 @@ export function buildContext(input: ContextBuildInput): ContextBuildResult {
   const rules: { pieceId: string; reason: string }[] = [];
   paths.forEach((relPath, i) => {
     const full = readFileSync(join(input.worktreeDir, relPath), 'utf8');
-    const hit = scanForSecret(full); // GOVERN scans the FULL file, pre-truncation
+    const hit = scanForSecret(full); // GOVERN scans the FULL file, pre-compression/pre-truncation
     if (hit.hit) throw new SecretInContextError(relPath, hit.kind ?? 'unknown');
-    const reason = collected.get(relPath) ?? 'seed';
+    const inclusionReason = collected.get(relPath) ?? 'seed';
+    const { content, reason } = compressOrTruncate(full, maxFileBytes, inclusionReason);
     const id = `p-${i}`;
-    pieces.push({ id, kind: 'file', path: relPath, content: truncate(full, maxFileBytes), reason });
+    pieces.push({ id, kind: 'file', path: relPath, content, reason });
     rules.push({ pieceId: id, reason });
   });
 
