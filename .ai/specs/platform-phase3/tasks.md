@@ -1,6 +1,6 @@
 # Implementation Tasks: platform-phase3 — Multi-model + Fusion + Merge Queue/T2 + Auditor + F-Loop/F-Sched + Remote Auth
 
-> Status: draft
+> Status: approved 2026-07-08 (13 tasks — spec-trace 142/142 green)
 
 > Each task is a cohesive, independently verifiable slice. Implement a whole task
 > in one pass (it may touch many files). Decompose into sub-steps yourself at
