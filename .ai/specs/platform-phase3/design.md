@@ -1,7 +1,7 @@
 # Design: platform-phase3 — Multi-model + Fusion + Merge Queue/T2 + Auditor + F-Loop/F-Sched + Remote Auth
 
-> Status: approved 2026-07-08
-> Mode: design-first (no requirements.md yet — REQ IDs backfilled by /spec-requirements).
+> Status: approved 2026-07-08, amended 2026-07-08 (traceability backfilled from derived requirements.md)
+> Mode: design-first (requirements.md derived FROM this design; REQ IDs backfilled below).
 > Upstream: unified-platform-spec.md v1.2 §5.3-5.4, §6.4-6.6, §7, §8 (F-Loop/F-Sched rows),
 > §10.2-10.4, §11.3, §12, §13, §14 Phase 3 + invariants §2. User decisions binding:
 > clarifications.md (Tailscale-only, Basic->Google-OIDC, ~3 fusion activations, all four
@@ -706,9 +706,17 @@ stay interpretable.
 
 ## Testing Strategy
 
-Design-first mode: tests map to design sections (REQ IDs backfilled by
-/spec-requirements). All CI tests run on fakes — zero quota (FakeAdapter +
-fake `ExecFn`); live items are explicitly listed last.
+Tests map to design sections and to the derived requirements (REQ IDs
+backfilled): A wire.ts = REQ-1 · A codex = REQ-2 · A conformance/template =
+REQ-3 · B lineage/reviewer/registry = REQ-4 · B routing = REQ-5 · B
+ratelimit/dispatch = REQ-6 · B shadow = REQ-7 · C profiles/policies = REQ-8 ·
+C fusion run = REQ-9 · C fusion resolve = REQ-10 · C fusion calibration =
+REQ-11 · D T2 runner = REQ-12 · D merge queue = REQ-13 · D OOB auditor =
+REQ-14 · E F-Loop routes = REQ-15 · E F-Sched = REQ-16 · E
+inject-without-pause = REQ-17 · E F-MCP OAuth = REQ-18 · F auth/Basic =
+REQ-19 · F OIDC = REQ-20 · F hardening sweep = REQ-21 · G COMPRESS = REQ-22.
+All CI tests run on fakes — zero quota (FakeAdapter + fake `ExecFn`); live
+items are explicitly listed last.
 
 | Design area | Tests (co-located `*.test.ts` unless noted) |
 |---|---|
@@ -768,6 +776,36 @@ real-repo auto-merge stretch; replay/cache stays per-run and uncommitted.
 - **Honest claims (§16):** decorrelation is measured, never claimed as
   independence; uplift reported as an interval (small n); consensus never
   crosses a gate; quota numbers stay labeled estimates.
+
+## Requirement Traceability
+
+Whole-REQ references cover every criterion of that REQ (requirements.md is
+derived one-to-one from these design elements).
+
+| Design element | Satisfies |
+|---|---|
+| A `adapters/src/wire.ts` shared helpers | REQ-1 |
+| A `adapters/src/codex.ts` + `codex-live.ts` | REQ-2 |
+| A `adapters/src/_template.ts` + codex conformance | REQ-3 |
+| B `protocol.ts`/`registry.ts`/`core/types.ts` (lineage, `reviewer`, `all()`, FakeAdapter lineage) | REQ-4 |
+| B `router.ts` RouteHints + `source.ts` routeHints | REQ-5 |
+| B `ratelimit.ts` + `dispatch.ts` | REQ-6 |
+| B `shadow.ts` | REQ-7 |
+| C `fusion/profiles.ts` + `.ai/policies/fusion-profiles.json` + `routing.json` + POLICY_FILES | REQ-8 |
+| C `fusion/run.ts` + `panel.ts` + `analyze.ts` + deliberation schema | REQ-9 |
+| C `fusion/resolve.ts` + entry points + budget/depth guards | REQ-10 |
+| C `core/calibration` fusion metrics | REQ-11 |
+| D `gates/runner.ts` T2 tier | REQ-12 |
+| D `merge/queue.ts` + `auto-merge.ts` queue path | REQ-13 |
+| D `audit/oob.ts` + `platform auditor run` | REQ-14 |
+| E `loop-proxy.ts` + loop routes + web `Loop.tsx`/`logic/loop.ts` | REQ-15 |
+| E `sched.ts` + sched routes + web `Sched.tsx`/`logic/sched.ts` | REQ-16 |
+| E `core/human/api.ts` inject-without-pause | REQ-17 |
+| E F-MCP OAuth via CLI deep link | REQ-18 |
+| F `auth/provider.ts` + `basic.ts` + gate wiring | REQ-19 |
+| F `auth/oidc.ts` + `--behind-proxy` | REQ-20 |
+| F §13.3 hardening sweep as tests | REQ-21 |
+| G `context/builder.ts` symbol-level COMPRESS | REQ-22 |
 
 ## Architect Review Findings (fresh-context spec-architect, applied)
 
