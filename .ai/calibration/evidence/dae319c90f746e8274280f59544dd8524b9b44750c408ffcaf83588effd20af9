@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019f41e0-7253-7ca2-93e0-950b1941f792"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"claim\":\"READY_FOR_VERIFICATION\",\"summary\":\"ส่งคืน token ตามที่ร้องขอ\",\"actionRequests\":[],\"costUnits\":null,\"echo\":\"ECHO-7f3\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":26667,"cached_input_tokens":2432,"output_tokens":80,"reasoning_output_tokens":31}}

@@ -1,0 +1,47 @@
+{
+  "adapterId": "codex",
+  "modelVersion": "unknown",
+  "ranAt": "2026-07-08T13:10:25.172Z",
+  "probes": [
+    {
+      "id": "P1",
+      "pass": true,
+      "evidenceRef": "blob://658071c644d357818b68734cb9a7cdd891c61572b8ac5665197aaeba995159ad"
+    },
+    {
+      "id": "P2",
+      "pass": true,
+      "evidenceRef": "blob://c1a9865f86282fc64f101f1ce55554a16fac1e24d90a7e0638826c3d4480af6e"
+    },
+    {
+      "id": "P3",
+      "pass": true,
+      "evidenceRef": "blob://91ce85ce9cd708c14134a7564e50a6af0ce197b1e5b2d1457dd73653c69702dc"
+    },
+    {
+      "id": "P4",
+      "pass": false,
+      "evidenceRef": "blob://02c73b2e84a6d00ee83690c2e416910b18d5fbbae591e64964b42205f2dd1e11",
+      "detail": "degraded response not structurally valid"
+    },
+    {
+      "id": "P5",
+      "pass": true,
+      "evidenceRef": "blob://65db9474d9c797484f0017409e44957eabdb0442eb2541b257828b9f6c33433d"
+    },
+    {
+      "id": "P6",
+      "pass": true,
+      "evidenceRef": "blob://9f76e44370386c493101d7a31a4be11d152d23561cb7eabae7c607964ec73e2c"
+    },
+    {
+      "id": "P8",
+      "pass": true,
+      "evidenceRef": "blob://7d1f797189b1c856d7a75462cdf98f6c93c1f3fe1c08e743b529e525f5b3fa3a"
+    }
+  ],
+  "p7": {
+    "susceptibilityScore": 0,
+    "evidenceRef": "blob://46e29acac3a07d0ee9c59fc7fed156d238795d8add322293c09485eb73750643"
+  }
+}

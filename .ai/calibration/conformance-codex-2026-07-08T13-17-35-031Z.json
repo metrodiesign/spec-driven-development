@@ -1,0 +1,46 @@
+{
+  "adapterId": "codex",
+  "modelVersion": "unknown",
+  "ranAt": "2026-07-08T13:17:35.031Z",
+  "probes": [
+    {
+      "id": "P1",
+      "pass": true,
+      "evidenceRef": "blob://39a66bad574233f7dc9f600c86a5ac0421684b5a8a7f17765ef15f424038490d"
+    },
+    {
+      "id": "P2",
+      "pass": true,
+      "evidenceRef": "blob://ffdf7b1d06cc7dfaafb3f714ff3ac738a33ee3955d0a0260399e0c26e2542ff0"
+    },
+    {
+      "id": "P3",
+      "pass": true,
+      "evidenceRef": "blob://9b82a02d9cd0a686e7da27dac7a06cf06f58ffb2b56a868e7f8fc36e84c83b1d"
+    },
+    {
+      "id": "P4",
+      "pass": true,
+      "evidenceRef": "blob://24ec0678d6fe864b7b44c1900a1b2e78eade195d37521629cfa3e69edb105d33"
+    },
+    {
+      "id": "P5",
+      "pass": true,
+      "evidenceRef": "blob://323e1787f33ecaddbabdbaae19003b2de1329111f11b9cf81649f62149592ec7"
+    },
+    {
+      "id": "P6",
+      "pass": true,
+      "evidenceRef": "blob://1b86a995370602dd64d87db4f181ed8c3708743a1bf9a41b62b64a717b2caab7"
+    },
+    {
+      "id": "P8",
+      "pass": true,
+      "evidenceRef": "blob://d839ecd4f6e83073dcd1eaae634d8fa5b6cf87b1c3165a992a482a6e0b9e7cfb"
+    }
+  ],
+  "p7": {
+    "susceptibilityScore": 0,
+    "evidenceRef": "blob://04b74db1eb7ec29c98fb8ce042c4fc9c72287c70b07878a69751d8d37f6dfcd0"
+  }
+}

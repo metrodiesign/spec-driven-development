@@ -54,6 +54,7 @@ const HELP = `usage:
   conformance:
     --live      run P1-P8 against the REAL adapter (~10 requests) and persist the
                 ConformanceRecord to .ai/calibration/ — same structural guards as loop --live
+    --lineage   which real adapter to probe: claude (default) | codex
     --force-quota-override  bypass the automation quota guard's refusal ONLY
   auditor run:
     --db        path to the events.db to audit (its own EventLog handle — a separate process, REQ-14.7)
@@ -262,8 +263,13 @@ function initiatorRecord(command: string): string {
 async function runConformance(rest: string[]): Promise<void> {
   const { values } = parseArgs({
     args: rest,
-    options: { live: { type: 'boolean', default: false }, 'force-quota-override': { type: 'boolean', default: false } },
+    options: {
+      live: { type: 'boolean', default: false },
+      'force-quota-override': { type: 'boolean', default: false },
+      lineage: { type: 'string', default: 'claude' },
+    },
   });
+  const lineage = values.lineage === 'codex' ? 'codex' : 'claude';
   const decision = decideLiveRun({
     live: values.live as boolean,
     ciEnv: process.env['CI'] !== undefined && process.env['CI'] !== '',
@@ -294,22 +300,30 @@ async function runConformance(rest: string[]): Promise<void> {
   const calDir = calibrationDir();
   const { createEvidenceStore } = await import('core');
   const evidence = createEvidenceStore(join(calDir, 'evidence'));
-  const initiatorRef = evidence.put(initiatorRecord('conformance --live'));
+  const initiatorRef = evidence.put(initiatorRecord(`conformance --live --lineage ${lineage}`));
   mkdirSync(agentSessionsCwd(), { recursive: true });
-  const { createLiveAnthropicAdapter } = await import('adapters');
-  const adapter = createLiveAnthropicAdapter({
-    id: 'claude',
-    model: cfg.autonomousModel, // policy default (Sonnet); Opus stays interactive (§10.2, REQ-16.3)
-    systemPrompt: LIVE_SYSTEM_PROMPT,
-    cwd: agentSessionsCwd(),
-    // PER-RUN dir (gitignored): every conformance run must probe the REAL model —
-    // a reusable/committed replay dir would let a "live" record mint from canned
-    // responses (gate theater, defeats the drift canary). P8's within-run retry
-    // still replays from this dir at zero extra quota.
-    replayDir: join(calDir, 'replay', stamp),
-    transcriptDir: agentTranscriptDir(),
-    putEvidence: (s) => evidence.put(s),
-  });
+  const { createLiveAnthropicAdapter, createLiveCodexAdapter } = await import('adapters');
+  const adapter =
+    lineage === 'codex'
+      ? createLiveCodexAdapter({
+          id: 'codex',
+          cwd: agentSessionsCwd(),
+          // PER-RUN dir (gitignored): every conformance run must probe the REAL model —
+          // a reusable/committed replay dir would let a "live" record mint from canned
+          // responses (gate theater, defeats the drift canary). P8's within-run retry
+          // still replays from this dir at zero extra quota.
+          replayDir: join(calDir, 'replay', stamp),
+          putEvidence: (s) => evidence.put(s),
+        })
+      : createLiveAnthropicAdapter({
+          id: 'claude',
+          model: cfg.autonomousModel, // policy default (Sonnet); Opus stays interactive (§10.2, REQ-16.3)
+          systemPrompt: LIVE_SYSTEM_PROMPT,
+          cwd: agentSessionsCwd(),
+          replayDir: join(calDir, 'replay', stamp),
+          transcriptDir: agentTranscriptDir(),
+          putEvidence: (s) => evidence.put(s),
+        });
   const { runConformanceSuite } = await import('aal');
   const record = await runConformanceSuite(adapter, { put: (s) => evidence.put(s) }, ranAt);
   const outPath = join(calDir, `conformance-${record.adapterId}-${stamp}.json`);
@@ -364,7 +378,7 @@ async function runLoop(rest: string[]): Promise<void> {
     // through the registry's conformance gate with a REAL persisted record
     // (REQ-12.4) — a synthetic pass here would make the gate theater, and a
     // missing/corrupt record must refuse clearly, not crash post-confirm.
-    const recPath = latestConformanceRecordPath(calibrationDir());
+    const recPath = latestConformanceRecordPath(calibrationDir(), 'claude');
     const conformanceRecord = recPath === null ? null : readConformanceRecord(recPath);
     if (recPath === null || conformanceRecord === null) {
       process.stderr.write(

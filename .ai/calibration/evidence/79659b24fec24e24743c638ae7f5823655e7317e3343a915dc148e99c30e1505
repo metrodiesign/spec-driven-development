@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019f41e0-f34f-7830-b28b-bd22a243e858"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"claim\":\"BLOCKED\",\"summary\":\"ไม่สามารถดำเนินงานได้เพราะต้องใช้ tool `fusion.deliberate` ซึ่งไม่มีใน session นี้ จึงขอ capability ตามที่ระบุ\",\"actionRequests\":[{\"type\":\"REQUEST_TOOL\",\"path\":null,\"content\":null,\"name\":\"fusion.deliberate\"}],\"costUnits\":null,\"echo\":null}"}}
+{"type":"turn.completed","usage":{"input_tokens":25351,"cached_input_tokens":2432,"output_tokens":128,"reasoning_output_tokens":41}}

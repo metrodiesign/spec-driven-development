@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019f41e0-ad49-71a0-ae5e-40f0c9e4d3db"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"claim\":\"READY_FOR_VERIFICATION\",\"summary\":\"ส่งผลลัพธ์ตาม schema ที่กำหนดแล้ว\",\"actionRequests\":[],\"costUnits\":0,\"echo\":null}"}}
+{"type":"turn.completed","usage":{"input_tokens":25324,"cached_input_tokens":2432,"output_tokens":117,"reasoning_output_tokens":69}}

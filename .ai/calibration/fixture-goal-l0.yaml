@@ -1,0 +1,14 @@
+# Live task 13 residual: same Phase-1 calibration fixture as fixture-goal.yaml, but
+# with an explicit L0 risk class so `decideAutoApprove` (core/src/merge/auto-merge.ts)
+# takes the automatic path (gates green + golden-backed AC + L0/L1 + no dep-manifest
+# touch -> auto_approved) instead of routing to the (currently unwired in production,
+# see RUNBOOK-phase3.md step 4) human-approval package. Produces a real AUDIT_RESULT
+# event for the out-of-band auditor (task 9's real-sample DoD item) without depending
+# on that gap. Never referenced by the calibration harness itself — a separate file so
+# fixture-goal.yaml's own documented "must reach REVIEWING" behavior stays unchanged.
+goal: { id: CALIB-L0, title: Calibration fixture (L0), objective: "edit src/impl.txt so the tests pass" }
+acceptance_criteria:
+  - { id: AC-1, description: "src/impl.txt contains correct", verification: "sh run-tests.sh", golden: true }
+budget: { max_iterations_per_task: 4, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
+approval_policy: { require_human_approval: [auth_policy_change] }
+risk: L0

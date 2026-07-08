@@ -134,12 +134,14 @@ export function createCodexAdapter(opts: CodexAdapterOptions): AdapterInterface 
       }
 
       // Non-zero exit OR a rate-limit/auth stderr → typed AdapterError (REQ-2.7). A bare
-      // non-zero exit with unmatched stderr classifies as transport (REQ-1.5).
+      // non-zero exit with unmatched stderr classifies as transport (REQ-1.5). The `--json`
+      // stream often carries the actually-useful detail (e.g. an API-side schema rejection)
+      // on an `error` event over stdout while stderr just shows codex's generic startup
+      // chatter — prefer that event's message when present (live task 13 residual).
       if (result.exitCode !== 0) {
-        throw new AdapterError(
-          classifyAdapterError(result.stderr),
-          `codex exec exited ${result.exitCode}: ${result.stderr}`,
-        );
+        const apiError = result.events.find((e) => e.type === 'error')?.['message'];
+        const detail = typeof apiError === 'string' ? apiError : result.stderr;
+        throw new AdapterError(classifyAdapterError(result.stderr), `codex exec exited ${result.exitCode}: ${detail}`);
       }
 
       let structuredResult: unknown;

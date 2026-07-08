@@ -1,5 +1,5 @@
 {
-  "$comment": "Fusion profiles per artifact (platform-phase3, unified-platform-spec.md §7.5 + §11.1). The raw bytes of this file are hashed under POLICY_FILES (REQ-8.3) — creating or changing it is a human-approved governance event by construction, and the FIRST run after it joins the snapshot refuses policy_unapproved until the operator approves. Each profile's `resolve` rule is load-validated against the fixed §7.5 artifact->rule mapping (REQ-8.1/8.4); `estimateCostUnitsPerCandidate` is REQUIRED (REQ-8.5, AZ-3) and gates the pre-panel budget check (REQ-10.7). Panel size >= 2 (a single-candidate panel makes uplift meaningless, AZ-8). Lineage strings are legal here (policy, not Ring 0/1 source).",
+  "$comment": "Fusion profiles per artifact (platform-phase3, unified-platform-spec.md §7.5 + §11.1). The raw bytes of this file are hashed under POLICY_FILES (REQ-8.3) — creating or changing it is a human-approved governance event by construction, and the FIRST run after it joins the snapshot refuses policy_unapproved until the operator approves. Each profile's `resolve` rule is load-validated against the fixed §7.5 artifact->rule mapping (REQ-8.1/8.4); `estimateCostUnitsPerCandidate` is REQUIRED (REQ-8.5, AZ-3) and gates the pre-panel budget check (REQ-10.7). Panel size >= 2 (a single-candidate panel makes uplift meaningless, AZ-8). Lineage strings are legal here (policy, not Ring 0/1 source). `hypotheses` uses self-diversity (seed-only, one lineage) so the LIVE task's decision-#3 'self-panel proves the pipeline first' step has a real profile to activate; the other four stay cross_lineage for the cross-vendor activations that follow.",
   "profiles": [
     {
       "artifact": "plan",
@@ -24,7 +24,7 @@
     },
     {
       "artifact": "hypotheses",
-      "panel": { "size": 2, "diversity": { "kind": "cross_lineage", "lineages": ["anthropic", "openai"] } },
+      "panel": { "size": 2, "diversity": { "kind": "self", "seeds": [7, 13] } },
       "resolve": "union_rank_probe_cost",
       "budgetCapCostUnits": 30,
       "estimateCostUnitsPerCandidate": 6

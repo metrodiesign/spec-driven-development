@@ -47,6 +47,44 @@ export function buildCodexArgv(prompt: string, opts: { model?: string; schemaPat
   return argv;
 }
 
+// OpenAI Structured Outputs "strict" mode (what `codex exec --output-schema` validates
+// against) requires, at EVERY object node: additionalProperties:false and required
+// listing EVERY property key — there is no "optional property" in strict mode, only a
+// nullable one. Anthropic has no such requirement, so the shared outputSchema (used by
+// both lineages, aal/src/conformance/harness.ts) stays plain JSON Schema; this
+// normalization is purely a Codex/OpenAI wire quirk and stays local to the live spawn.
+// Empirically confirmed against codex-cli 0.139.0 (docs/spikes/SPIKE-6.md's residual —
+// live task 13): missing additionalProperties, missing array items, and incomplete
+// required each fail closed with a distinct `invalid_json_schema` error.
+function strictifyForCodex(node: unknown): unknown {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return node;
+  const schema = { ...(node as Record<string, unknown>) };
+  if (schema['type'] === 'object') {
+    const props = (schema['properties'] ?? {}) as Record<string, unknown>;
+    const requiredBefore = new Set(Array.isArray(schema['required']) ? (schema['required'] as unknown[]) : []);
+    const nextProps: Record<string, unknown> = {};
+    for (const [key, propSchema] of Object.entries(props)) {
+      const strict = strictifyForCodex(propSchema) as Record<string, unknown>;
+      if (!requiredBefore.has(key)) {
+        const t = strict['type'];
+        const types = Array.isArray(t) ? t : [t];
+        // Already nullable (the shared schema may declare `['string','null']` itself,
+        // e.g. for a field a repair-check also validates) — don't double up ['x','null','null'],
+        // which codex-cli 0.139.0 rejects outright (invalid_json_schema).
+        strict['type'] = types.includes('null') ? types : [...types, 'null'];
+      }
+      nextProps[key] = strict;
+    }
+    schema['properties'] = nextProps;
+    schema['required'] = Object.keys(nextProps);
+    schema['additionalProperties'] = false;
+  }
+  if (schema['type'] === 'array' && schema['items'] !== undefined) {
+    schema['items'] = strictifyForCodex(schema['items']);
+  }
+  return schema;
+}
+
 export function createLiveCodexAdapter(opts: Omit<CodexAdapterOptions, 'exec'>): AdapterInterface {
   const killTimeoutMs = opts.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS;
 
@@ -55,7 +93,7 @@ export function createLiveCodexAdapter(opts: Omit<CodexAdapterOptions, 'exec'>):
       const tmp = mkdtempSync(join(tmpdir(), 'codex-'));
       const schemaPath = join(tmp, 'schema.json');
       const outPath = join(tmp, 'last.json');
-      writeFileSync(schemaPath, JSON.stringify(schema));
+      writeFileSync(schemaPath, JSON.stringify(strictifyForCodex(schema)));
       const argv = buildCodexArgv(prompt, { schemaPath, outPath, ...(model !== undefined ? { model } : {}) });
 
       const child = spawn('codex', argv, { cwd, stdio: [...CODEX_STDIO] });

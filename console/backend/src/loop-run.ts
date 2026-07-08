@@ -448,6 +448,19 @@ export async function runSupervisedLoop(opts: {
     } catch {
       // best-effort, see above
     }
+    // The fixture repo (fx.root/fx.wt) is ALWAYS ephemeral, live run or not (comment
+    // above stateDir's assignment) — but a persisted run with nothing to point
+    // `platform auditor run --repo` at defeats REQ-14.7's real-sample DoD item (live
+    // task 13 residual). A real `git clone` (not a raw file copy — fx.wt is a linked
+    // worktree, whose .git depends on fx.root's metadata) leaves a fully independent,
+    // cloneable repo behind, post-merge, best-effort so it never masks the real result.
+    if (opts.persistDir !== undefined) {
+      try {
+        git(process.cwd(), 'clone', '-q', fx.wt, join(stateDir, 'repo'));
+      } catch {
+        // best-effort — an already-failed/aborted run's worktree may be gone or dirty
+      }
+    }
     fx.cleanup();
   }
 }
