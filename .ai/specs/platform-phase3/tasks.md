@@ -159,8 +159,50 @@
          simplification), so the status badge visibly lagged one poll behind the "stopped" note during the
          manual session; the underlying "exit flips status, no auto-respawn" behavior is what
          `sched.test.ts`/`app-sched.test.ts` prove with a real synthetic exit code.
-- [ ] 10. Remote auth gate + Basic provider — `auth/provider.ts` (mintSession/verifySession HMAC + expiry + tamper, loadAuthConfig 0600), `auth/basic.ts` (scrypt constant-time, IP lockout), platform.ts wiring (hasAuthProvider real -> unchanged decideStartup), app.ts onRequest auth hook (generic 401, /auth/* + login assets exempt), cookie flags, login rate limit, F-Term loopback-hard regardless of auth, web `Login.tsx`.
+- [x] 10. Remote auth gate + Basic provider — `auth/provider.ts` (mintSession/verifySession HMAC + expiry + tamper, loadAuthConfig 0600), `auth/basic.ts` (scrypt constant-time, IP lockout), platform.ts wiring (hasAuthProvider real -> unchanged decideStartup), app.ts onRequest auth hook (generic 401, /auth/* + login assets exempt), cookie flags, login rate limit, F-Term loopback-hard regardless of auth, web `Login.tsx`.
      Satisfies: REQ-19. Verify: `pnpm -C console/backend test && pnpm -C console/web test`.
+     Evidence:
+       - test: `pnpm -C console/backend test` -> 194 passed / 0 failed (was 167; +27: 10 auth/provider.test.ts
+         REQ-19.4/19.5 mintSession/verifySession round-trip+expiry+tamper+wrong-secret, loadAuthConfig
+         valid/corrupt/incomplete, cookie serialize/parse; 10 auth/basic.test.ts REQ-19.6/19.7/19.8 scrypt
+         determinism, login limiter lock/cooldown/per-IP, POST /auth/login success+wrong-password+lockout,
+         POST /auth/logout; 6 app-auth.test.ts REQ-19.3/19.9 gate 401/200, /auth/* + static exemptions,
+         uniform-gate no-enumeration, F-Term-stays-403-even-authenticated regression; 1 security.test.ts
+         REQ-19.1 the newly-reachable `hasAuthProvider:true` branch) · `pnpm -C console/web test` -> 35 passed
+         / 0 failed (was 32; +3 logic/auth.test.ts REQ-19.3/19.6 interpretAuthProbe + interpretLoginResponse)
+       - typecheck/lint: `pnpm -r typecheck` -> 6/6 projects clean · `pnpm lint` -> 0 issues
+       - spec-trace: `bash scripts/spec-trace.sh platform-phase3` -> OK, 142/142 EARS criteria covered
+       - viewports: 375 OK (clientWidth 375, mobile-emulate 375x812x2) | 768 OK (clientWidth 768) | 1440 OK
+         (clientWidth 1440) — all three `scrollWidth === clientWidth` (no h-overflow); served the vite prod
+         build through the REAL `platform console` binary (not just `buildApp` in-process) on 127.0.0.1:9877
+         against a fake HOME with a real scrypt-hashed Basic config; chrome-devtools MCP. Interactive proof at
+         1440: typed the wrong password -> clicked Sign in -> generic "unauthorized" alert rendered
+         (REQ-19.6) -> typed the correct password -> clicked Sign in -> reload -> full dashboard rendered
+         under the new session (gate flipped to authed) -> confirmed `document.cookie` is empty (HttpOnly
+         hides `platform_session` from JS) while the dashboard's own API calls still succeeded (browser sent
+         the cookie automatically).
+       - deviations: (1) `decideStartup` itself stays byte-unchanged (task wording) — REQ-19.2's "pointer to
+         the config path" on refusal is appended by `bin/platform.ts`'s own refuse handler, not inside
+         `decideStartup`'s message; `security.ts` is untouched, `security.test.ts` gets one ADDITIVE test for
+         the newly-reachable branch. (2) `AuthConfig`'s `oidc` variant is typed in `provider.ts` (one
+         discriminated union, since `loadAuthConfig` parses a single file that could hold either shape) but
+         not constructible yet — `bin/platform.ts` explicitly refuses startup with a clear message if
+         `console-auth.json` names `provider:'oidc'`, since `oidc.ts` is task 11. (3) no CLI/setup command
+         generates `console-auth.json` — no REQ or task bullet asked for one; `scryptHash`/`generateSalt` are
+         exported from `basic.ts` as the building blocks an operator (or a future setup command) uses; the
+         file stays hand-authored, matching design's "0600 outside the repo" framing. (4) no logout button in
+         the UI — `/auth/logout` exists (part of the `AuthProvider.routes()` contract, tested directly) but
+         task 10 only asked for `Login.tsx`; sessions simply expire via the 12h TTL. (5) REQ-15.10's
+         `local-operator` audit principal on loop/sched routes is UNCHANGED — that EARS line is scoped to
+         "WHERE no auth provider is active"; no REQ in this task asks the audit principal to switch to the
+         real identity once auth IS active. (6) EARS 19.6's "unknown subject" half is unreachable via Basic
+         (single password, no username, INV-15) — only the "wrong password" / "missing password" generic-401
+         analog is tested here; full coverage arrives with OIDC's sub-mismatch case in task 11 (design.md
+         documents this exact split). (7) session TTL (12h) and login-lockout thresholds (5 attempts /
+         5-minute cooldown) are not spec'd numbers — chosen as reasonable constants. (8) REQ-19.10 (insecure
+         mode + loud warning + F-Term still unreachable) is satisfied by the PRE-EXISTING `decideStartup`/
+         F-Term tests, unmodified by this task — `insecure` short-circuits before `hasAuthProvider` is even
+         read, so making that value real doesn't change the branch; no new test was added specifically for it.
 - [ ] 11. Google OIDC + behind-proxy + §13.3 hardening sweep — `auth/oidc.ts` (discovery, PKCE S256, state/nonce, iss/aud/sub pins, clientSecret from 0600 config, logout), `--behind-proxy` (gate forced ON, proxy host allowlisted, Secure cookies, redirectUri derivation, EVERYTHING remote: F-Term/WS-tickets refused + Authenticate disabled, single remote definition anchoring 18.3/19.9/19.10), §13.3 checklist lines as named tests (single-operator, redaction on new routes, spawn rate limits + tokens).
      Satisfies: REQ-20, REQ-21. Depends on: 10. Verify: `pnpm -C console/backend test`.
 - [ ] 12. Symbol-level COMPRESS — `compressToSymbols` heuristic in context builder (imports/exports/declaration headers kept, bodies dropped, trailer), <2-declaration fallback to truncation, GOVERN scans full pre-compression content (secret-in-dropped-body test), per-piece reason for waste metrics.

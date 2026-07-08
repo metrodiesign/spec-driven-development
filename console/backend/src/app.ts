@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
+import type { AuthProvider } from './auth/provider.ts';
 import { allTimestamps, readProjects, readSessions } from './claude-data.ts';
 import { buildEstimate, MONEY_DISCLAIMER, type UsageConfig } from './usage.ts';
 import { corsOriginAllowed, hostHeaderAllowed, isLoopback, redactText } from './security.ts';
@@ -54,6 +55,12 @@ export interface AppDeps {
   doctorCapture?(): Promise<string>;
   /** Built SPA directory; when present the app serves it at / (REQ-12.7 UI). */
   webDistDir?: string;
+  /**
+   * Remote auth gate (REQ-19). When present, every route requires a valid
+   * session except this provider's own `/auth/*` routes and the static SPA
+   * shell. Absent = no gate (loopback dev default, mirrors termManager).
+   */
+  auth?: AuthProvider;
   /** F-Term manager (Phase 1). When present, term routes register (loopback-only hard). */
   termManager?: TermManager;
   /** Per-source spawn rate limiter for F-Term (REQ-13.5); default allows all. */
@@ -134,6 +141,24 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (typeof payload === 'string') return redactText(payload, deps.homeDir);
     return payload;
   });
+
+  // --- Remote auth gate (REQ-19, INV-15): every route requires a valid session
+  // except this provider's own /auth/* routes and the static SPA shell — an
+  // unauthenticated browser still needs to load index.html/assets to render the
+  // Login view. Absent = no gate (loopback dev default, mirrors termManager). ---
+  const auth = deps.auth;
+  if (auth !== undefined) {
+    auth.routes(app);
+    app.addHook('onRequest', async (req, reply) => {
+      const path = req.url.split('?')[0] ?? '';
+      if (path.startsWith('/auth/') || path === '/' || path.startsWith('/assets/')) return;
+      if (auth.verify(req.headers.cookie) === null) {
+        await reply.code(401).send({ error: 'unauthorized' });
+        return reply;
+      }
+      return;
+    });
+  }
 
   // F-Status (REQ-13.1/13.2)
   app.get('/api/status', async () => {

@@ -15,6 +15,12 @@ test('startup gate: loopback starts, non-loopback refuses without provider (REQ-
   if (refused.action === 'refuse') assert.match(refused.message, /fail-closed/);
 });
 
+test('startup gate: a real auth provider allows a non-loopback bind (REQ-19.1)', () => {
+  assert.deepEqual(decideStartup({ host: '0.0.0.0', insecure: false, hasAuthProvider: true }), {
+    action: 'start',
+  });
+});
+
 test('startup gate: --insecure starts non-loopback WITH a loud warning (REQ-12.3)', () => {
   const d = decideStartup({ host: '0.0.0.0', insecure: true, hasAuthProvider: false });
   assert.equal(d.action, 'start_with_warning');

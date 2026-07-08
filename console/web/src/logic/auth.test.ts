@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { interpretAuthProbe, interpretLoginResponse } from './auth.ts';
+
+test('interpretAuthProbe: 401 is unauthed, everything else is authed (REQ-19.3)', () => {
+  assert.equal(interpretAuthProbe(401), 'unauthed');
+  assert.equal(interpretAuthProbe(200), 'authed');
+  assert.equal(interpretAuthProbe(500), 'authed');
+});
+
+test('interpretLoginResponse: 200 is ok; failure carries the generic error message (REQ-19.6)', () => {
+  assert.deepEqual(interpretLoginResponse(200, {}), { ok: true });
+  assert.deepEqual(interpretLoginResponse(401, { error: 'unauthorized' }), { ok: false, error: 'unauthorized' });
+  assert.deepEqual(interpretLoginResponse(429, { error: 'too many attempts; try again later' }), {
+    ok: false,
+    error: 'too many attempts; try again later',
+  });
+});
+
+test('interpretLoginResponse: missing error body still yields a display string', () => {
+  const outcome = interpretLoginResponse(500, {});
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.match(outcome.error, /500/);
+});
