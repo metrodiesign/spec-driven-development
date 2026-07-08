@@ -8,6 +8,7 @@ import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo
 import { TerminalPanel } from './TerminalPanel.tsx';
 import { Surfaces } from './Surfaces.tsx';
 import { Loop } from './Loop.tsx';
+import { Sched } from './Sched.tsx';
 
 interface Status {
   disclaimer: string;
@@ -163,7 +164,9 @@ export function App() {
 
       <Loop />
 
-      <Surfaces project={selected} />
+      <Sched />
+
+      <Surfaces project={selected} remote={auth?.remote ?? true} />
 
       {selected !== null && <TerminalPanel project={selected} />}
 

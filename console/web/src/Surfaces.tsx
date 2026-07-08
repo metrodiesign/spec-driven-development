@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { statsRows, listOrEmpty, type SysStats } from './logic/surfaces.ts';
+import { statsRows, listOrEmpty, mcpAuthenticateState, type SysStats } from './logic/surfaces.ts';
 
 function useFetch<T>(url: string | null): T | null {
   const [data, setData] = useState<T | null>(null);
@@ -32,7 +32,7 @@ const box: React.CSSProperties = {
 };
 const pre: React.CSSProperties = { overflowX: 'auto', maxWidth: '100%', background: '#8881', padding: '0.5rem', borderRadius: 4 };
 
-export function Surfaces({ project }: { project: string | null }): React.JSX.Element {
+export function Surfaces({ project, remote }: { project: string | null; remote: boolean }): React.JSX.Element {
   const stats = useFetch<SysStats>('/api/system/stats');
   const doctor = useFetch<{ available: boolean; degraded?: boolean; output?: string; hint?: string }>('/api/system/doctor');
   const subs = useFetch<{ subagents: string[] }>('/api/subagents?scope=user');
@@ -41,6 +41,7 @@ export function Surfaces({ project }: { project: string | null }): React.JSX.Ele
   const mcp = useFetch<{ content: string; hash: string | null }>(
     project !== null ? `/api/mcp/project?project=${encodeURIComponent(project)}` : null,
   );
+  const mcpAuth = mcpAuthenticateState(remote);
 
   return (
     <section aria-label="Governance surfaces">
@@ -64,6 +65,25 @@ export function Surfaces({ project }: { project: string | null }): React.JSX.Ele
           <p>loading…</p>
         ) : (
           <pre style={pre}>{mcp.content === '' ? 'no .mcp.json yet' : mcp.content}</pre>
+        )}
+        {project !== null && (
+          <p>
+            <button
+              type="button"
+              disabled={!mcpAuth.enabled}
+              onClick={() => {
+                window.location.search = `?project=${encodeURIComponent(project)}&cmd=mcp`;
+              }}
+            >
+              Authenticate
+            </button>
+            {mcpAuth.hint !== null && (
+              <>
+                {' '}
+                <small>{mcpAuth.hint}</small>
+              </>
+            )}
+          </p>
         )}
       </div>
 

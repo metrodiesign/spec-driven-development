@@ -9,12 +9,13 @@ test('auth banner: red with variable names when shadowing (REQ-14.1 display)', (
     shadowingVars: ['ANTHROPIC_API_KEY'],
     severity: 'red',
     guidance: 'unset ANTHROPIC_API_KEY ...',
+    remote: false,
   });
   assert.equal(red.tone, 'red');
   assert.match(red.text, /ANTHROPIC_API_KEY/);
   assert.match(red.text, /bills API rates/);
 
-  const ok = authBanner({ shadowing: false, shadowingVars: [], severity: 'ok', guidance: null });
+  const ok = authBanner({ shadowing: false, shadowingVars: [], severity: 'ok', guidance: null, remote: false });
   assert.equal(ok.tone, 'ok');
 });
 

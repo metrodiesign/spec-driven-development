@@ -11,11 +11,16 @@ import type { TermManager } from './term.ts';
 const NOW = Date.parse('2026-01-05T12:00:00Z');
 const GOOD_HOST = { host: '127.0.0.1:9119' };
 
-function stubTerm(): TermManager {
+function stubTerm(): TermManager & { lastCreate?: { project: string; mode: 'claude-only' | 'full-shell'; mcp?: boolean } } {
   const sessions = new Map<string, { project: string; mode: 'claude-only' | 'full-shell' }>();
   let n = 0;
-  return {
-    create: (input) => { const id = `pty-${++n}`; sessions.set(id, { project: input.project, mode: input.mode }); return { ptyId: id, ticket: 'tk-1' }; },
+  const mgr: TermManager & { lastCreate?: { project: string; mode: 'claude-only' | 'full-shell'; mcp?: boolean } } = {
+    create: (input) => {
+      const id = `pty-${++n}`;
+      sessions.set(id, { project: input.project, mode: input.mode });
+      mgr.lastCreate = { project: input.project, mode: input.mode, ...(input.mcp === true ? { mcp: true } : {}) };
+      return { ptyId: id, ticket: 'tk-1' };
+    },
     attach: (id) => (sessions.has(id) ? { ticket: 'tk-2', buffer: 'replayed' } : null),
     redeemTicket: () => true,
     onData: () => () => {},
@@ -25,6 +30,7 @@ function stubTerm(): TermManager {
     list: () => [...sessions.entries()].map(([ptyId, s]) => ({ ptyId, project: s.project, mode: s.mode, alive: true })),
     kill: (id) => sessions.delete(id),
   };
+  return mgr;
 }
 
 function deps(bindHost: string): AppDeps {
@@ -68,6 +74,23 @@ test('missing project -> 400', async () => {
   try {
     const r = await app.inject({ method: 'POST', url: '/api/term/sessions', headers: GOOD_HOST, payload: {} });
     assert.equal(r.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
+
+test('F-MCP Authenticate deep link: mcp:true threads through to term.create (REQ-18.1)', async () => {
+  const d = deps('127.0.0.1');
+  const term = stubTerm();
+  d.termManager = term;
+  const app = buildApp(d);
+  try {
+    const r = await app.inject({
+      method: 'POST', url: '/api/term/sessions', headers: GOOD_HOST,
+      payload: { project: 'demo', mode: 'claude-only', mcp: true },
+    });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(term.lastCreate, { project: 'demo', mode: 'claude-only', mcp: true });
   } finally {
     await app.close();
   }

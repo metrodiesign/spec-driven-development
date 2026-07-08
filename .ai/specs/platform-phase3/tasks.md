@@ -104,8 +104,61 @@
          wires `deps.audit: auditAppend` for the first time (design.md: "today the console path leaves it
          unwired") — this retroactively activates the pre-existing F-Hook/F-Sys audit call sites in `app.ts`,
          in scope per workstream E's own description, not overreach.
-- [ ] 9. F-Sched + F-MCP Authenticate — `sched.ts` (decideSchedStart, exact-match allowlist from governed routing.json, no modify route), sched routes (start two-step confirm + per-source rate limit, stop SIGTERM, status exit codes, audit entries), web `Sched.tsx` + `logic/sched.ts`; F-MCP Authenticate deep link to claude-only F-Term `claude mcp` (no token endpoints; disabled+hint when request is remote).
+- [x] 9. F-Sched + F-MCP Authenticate — `sched.ts` (decideSchedStart, exact-match allowlist from governed routing.json, no modify route), sched routes (start two-step confirm + per-source rate limit, stop SIGTERM, status exit codes, audit entries), web `Sched.tsx` + `logic/sched.ts`; F-MCP Authenticate deep link to claude-only F-Term `claude mcp` (no token endpoints; disabled+hint when request is remote).
      Satisfies: REQ-16, REQ-18. Depends on: 8. Verify: `pnpm -C console/backend test && pnpm -C console/web test`.
+     Evidence:
+       - test: `pnpm -r test` -> 509 passed / 0 failed (core 174, aal 99, adapters 37, console/backend 167
+         [+25: 11 sched.test.ts — decideSchedStart running/quota_threshold/estimate_unavailable matrix
+         REQ-16.1/16.2/16.3, scriptAllowed exact-match+traversal REQ-16.7/16.9, createSchedRuntime
+         start/stop/status/exit REQ-16.5/16.6; 12 app-sched.test.ts route-level (428 needs_confirmation ->
+         confirmed override, 409 already_running, 429 rate limit on both /start and /script, script
+         allowlist reject/accept, stop+audit, status incl. exit code, no write route for the allowlist);
+         1 app.test.ts REQ-18.3 remote flag (loopback vs remoteAddress); 1 app-term.test.ts REQ-18.1 mcp:true
+         passthrough to term.create], console/web 32 [+5: 4 logic/sched.test.ts (status label, automationHint
+         quota_threshold/estimate_unavailable copy, interpretStartResponse), 1 logic/surfaces.test.ts
+         mcpAuthenticateState REQ-18.3])
+       - typecheck/lint: `pnpm -r typecheck` -> 6/6 projects clean · `pnpm lint` -> 0 issues ·
+         `pnpm vendor-check` -> OK (core+aal vendor-name-free, INV-7)
+       - spec-trace: `bash scripts/spec-trace.sh platform-phase3` -> OK, 142/142 EARS criteria covered
+       - viewports: 375 OK (clientWidth 375, mobile-emulate 375x812x2) | 768 OK (clientWidth 768) | 1440 OK
+         (clientWidth 1440) — all three `scrollWidth === clientWidth` (no h-overflow); served the vite prod
+         build via a throwaway `buildApp` instance on 127.0.0.1:9191 (real `createSchedRuntime`, fake
+         spawn/termManager) with a seeded project; chrome-devtools MCP. Interactive proof at 1440: filled
+         the goal path -> clicked Start -> 428 confirm dialog rendered the exact automationHint copy
+         ("no quota estimate is available... --force-quota-override") -> clicked "Confirm and start" ->
+         status flipped to "running (pid 4242)", spawn args recorded (`loop run --goal ...`),
+         `sched_start` audited -> clicked Stop -> `sched_stop` audited, `{stopped:true}` -> clicked the MCP
+         "Authenticate" button -> navigated to `?cmd=mcp` -> auto-created a claude-only term session with
+         `{mcp:true}` (server log confirmed the exact body).
+       - deviations: (1) `decideSchedStart`'s three refuse reasons resolve an underspecified design branch:
+         a KNOWN over-threshold estimate (`quota_threshold`) never yields to confirm (overriding a MEASURED
+         limit from a web click would silently loosen it); an UNAVAILABLE estimate (`estimate_unavailable`
+         — today's only reachable case, since F-Sched passes `estimate: null` exactly like the CLI's own
+         `automationGuard`, INV-13 honest posture) is the one the two-step confirm token DOES override — the
+         web analog of `--force-quota-override`. `quota_threshold` is unreached in production today (no real
+         fiveHour/weekly formula exists yet) but is exercised directly in `sched.test.ts` via a synthetic
+         `AutomationDecision`. (2) both `/api/sched/start` and `/api/sched/script` share one rate limiter —
+         the design's route table annotates the rule only on `/start`, but `/script` spawns a process too
+         (same §13.3 spawn-endpoint rule), so both are gated. (3) unlike `termRateOk` (ships permanently
+         unwired in production, an accepted Phase-1 precedent), F-Sched's `rateOk` IS wired in
+         `bin/platform.ts` to a real global sliding-window counter (10/min) — architect finding #14 asked
+         this gap be closed for sched specifically, so this task diverges from the F-Term precedent it
+         otherwise mirrors. (4) F-MCP Authenticate adds no new spawn variant beyond the existing `resume`
+         pattern: `CreateSessionInput` gains `mcp?: boolean`, consumed by `term-runtime.ts`'s `buildCommand`
+         (`claude mcp` instead of a bare REPL); `term-runtime.ts` itself stays untested in CI per its own
+         documented convention ("verified live... not in CI") — the route's `body.mcp -> input.mcp`
+         threading is what's unit-tested. (5) REQ-18.3's "remote" ships today as the peer-address half only
+         (`!isLoopback(req.ip)` on `GET /api/auth`) — the single remote definition's other half
+         (`--behind-proxy` forcing remote regardless of socket) is task 11's REQ-20.8; the field is shaped
+         so task 11 can OR in that condition without a response-shape change. (6) `/api/sched/start`'s body
+         mirrors the CLI's own `--goal/--task/--live` flags directly (no new argument surface invented); a
+         `--live` request spawned this way structurally refuses inside the child via the EXISTING
+         `decideLiveRun` TTY guard (a spawned, non-TTY child can never type the confirmation phrase) —
+         surfaced at `GET /api/sched/status` as a non-zero exit (REQ-16.5), not a new mechanism. (7) the
+         browser-verify fixture's fake child never fires its exit callback on `kill()` (a throwaway
+         simplification), so the status badge visibly lagged one poll behind the "stopped" note during the
+         manual session; the underlying "exit flips status, no auto-respawn" behavior is what
+         `sched.test.ts`/`app-sched.test.ts` prove with a real synthetic exit code.
 - [ ] 10. Remote auth gate + Basic provider — `auth/provider.ts` (mintSession/verifySession HMAC + expiry + tamper, loadAuthConfig 0600), `auth/basic.ts` (scrypt constant-time, IP lockout), platform.ts wiring (hasAuthProvider real -> unchanged decideStartup), app.ts onRequest auth hook (generic 401, /auth/* + login assets exempt), cookie flags, login rate limit, F-Term loopback-hard regardless of auth, web `Login.tsx`.
      Satisfies: REQ-19. Verify: `pnpm -C console/backend test && pnpm -C console/web test`.
 - [ ] 11. Google OIDC + behind-proxy + §13.3 hardening sweep — `auth/oidc.ts` (discovery, PKCE S256, state/nonce, iss/aud/sub pins, clientSecret from 0600 config, logout), `--behind-proxy` (gate forced ON, proxy host allowlisted, Secure cookies, redirectUri derivation, EVERYTHING remote: F-Term/WS-tickets refused + Authenticate disabled, single remote definition anchoring 18.3/19.9/19.10), §13.3 checklist lines as named tests (single-operator, redaction on new routes, spawn rate limits + tokens).

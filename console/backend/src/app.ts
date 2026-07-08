@@ -13,9 +13,12 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 
 import { allTimestamps, readProjects, readSessions } from './claude-data.ts';
 import { buildEstimate, MONEY_DISCLAIMER, type UsageConfig } from './usage.ts';
-import { corsOriginAllowed, hostHeaderAllowed, redactText } from './security.ts';
+import { corsOriginAllowed, hostHeaderAllowed, isLoopback, redactText } from './security.ts';
 import { termAccessAllowed, type CreateSessionInput, type TermManager } from './term.ts';
 import { discoverRuns, findRun, loopFetch } from './loop-proxy.ts';
+import { decideAutomationStart, loadAutomationConfig } from './guards.ts';
+import { decideSchedStart, scriptAllowed, type SchedRuntime } from './sched.ts';
+import { loadRoutingConfig } from 'aal';
 import {
   installGuardRules,
   permissionDecision,
@@ -57,6 +60,21 @@ export interface AppDeps {
   termRateOk?(): boolean;
   /** F-Loop (REQ-15): root dir whose subdirectories hold each run's human-plane.json. Absent = routes do not register (mirrors termManager). */
   loopRunsRoot?: string;
+  /**
+   * F-Sched (REQ-16): the thin runtime for the one registered child + where its
+   * governed inputs live. Absent = routes do not register (mirrors termManager).
+   */
+  sched?: {
+    runtime: SchedRuntime;
+    /** Dir holding automation.json + routing.json (REQ-16.2/16.9). */
+    policiesDir: string;
+    /** This same `platform` binary, spawned again for `loop run` (REQ-16.1). */
+    platformBinPath: string;
+    /** Dir allowlisted script names resolve against (REQ-16.1/16.7). */
+    scriptsDir: string;
+    /** Per-source spawn rate limiter (REQ-16.4); default allows all (mirrors termRateOk). */
+    rateOk?(): boolean;
+  };
   /** Per-install token for the activity ingest endpoint (REQ-19.2). */
   activityToken?: string;
   /**
@@ -151,7 +169,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // F-Auth (REQ-14) — names only; never values (INV-12).
-  app.get('/api/auth', async () => {
+  app.get('/api/auth', async (req) => {
     const shadowingVars = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].filter(
       (name) => (deps.env[name] ?? '').length > 0,
     );
@@ -166,6 +184,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
             'the platform never unsets environment variables for you'
           : null,
       activeMethodHeuristic: credentialFileExists ? 'subscription_login' : 'unknown',
+      // REQ-18.3: the peer half of the single remote definition (REQ-20.8) — a
+      // non-loopback bind's own startup gate gets the OTHER half; --behind-proxy
+      // (task 11) ORs in the forced-remote case on top of this same check.
+      remote: !isLoopback(req.ip),
     };
   });
 
@@ -227,6 +249,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const mode = body.mode === 'full-shell' ? 'full-shell' : 'claude-only';
       const input: CreateSessionInput = { project: body.project, mode };
       if (typeof body.resume === 'string') input.resume = body.resume;
+      else if (body.mcp === true) input.mcp = true; // F-MCP Authenticate deep link (REQ-18.1)
       try {
         return term.create(input);
       } catch (err) {
@@ -746,6 +769,78 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const res = await loopFetch(ref, { method: 'POST', path: '/kill' });
       if (res.status === 200) audit({ event: 'loop_kill', run: req.params.run, ...localOperator });
       return reply.code(res.status).send(res.body);
+    });
+  }
+
+  // --- F-Sched (REQ-16): start/stop the platform loop process or an
+  // allowlisted opaque script under the SAME quota guard `platform loop run
+  // --live` already uses (decideAutomationStart, unchanged). Exactly one
+  // registered child; no task scheduling, no lease (REQ-16.1).
+  const sched = deps.sched;
+  if (sched !== undefined) {
+    const localOperator = { principal: 'local-operator', method: 'none' };
+
+    const freshAutomation = () => {
+      const cfg = loadAutomationConfig(join(sched.policiesDir, 'automation.json'));
+      // F-Sched has no more of a real fiveHour/weekly formula than the CLI's
+      // own automation guard does (INV-13 honest posture) — estimate stays
+      // null, exactly like `platform loop run --live`'s automationGuard.
+      return decideAutomationStart({ estimate: null, thresholdPercent: cfg.thresholdPercent, override: false });
+    };
+
+    app.get('/api/sched/status', async () => sched.runtime.status());
+
+    app.post<{ Body: { goal?: string; task?: string; live?: boolean; confirmToken?: string } }>(
+      '/api/sched/start',
+      async (req, reply) => {
+        if (sched.rateOk !== undefined && !sched.rateOk()) {
+          return reply.code(429).send({ error: 'too many sched start attempts; slow down' });
+        }
+        const body = req.body ?? {};
+        if (typeof body.goal !== 'string' || body.goal.length === 0) {
+          return reply.code(400).send({ error: 'goal is required' });
+        }
+        const running = sched.runtime.status().running;
+        const automation = freshAutomation();
+        const token = confirmToken(null, JSON.stringify(automation));
+        const decision = decideSchedStart({ running, automation, confirmed: body.confirmToken === token });
+        if ('refuse' in decision) {
+          const status = decision.reason === 'needs_confirmation' ? 428 : 409;
+          return reply.code(status).send({ error: decision.reason, automation, confirmToken: token });
+        }
+        const args = ['loop', 'run', '--goal', body.goal];
+        if (typeof body.task === 'string') args.push('--task', body.task);
+        if (body.live === true) args.push('--live');
+        const { pid } = sched.runtime.start(sched.platformBinPath, args, { cwd: process.cwd(), env: deps.env });
+        audit({ event: 'sched_start', args, ...localOperator });
+        return { pid, args };
+      },
+    );
+
+    app.post('/api/sched/stop', async () => {
+      const stopped = sched.runtime.stop();
+      if (stopped) audit({ event: 'sched_stop', ...localOperator });
+      return { stopped };
+    });
+
+    app.post<{ Body: { name?: string } }>('/api/sched/script', async (req, reply) => {
+      if (sched.rateOk !== undefined && !sched.rateOk()) {
+        return reply.code(429).send({ error: 'too many sched start attempts; slow down' });
+      }
+      const name = req.body?.name;
+      if (typeof name !== 'string' || name.length === 0) {
+        return reply.code(400).send({ error: 'name is required' });
+      }
+      const routing = loadRoutingConfig(join(sched.policiesDir, 'routing.json'));
+      if (!scriptAllowed(name, routing.sched.scriptAllowlist)) {
+        return reply.code(400).send({ error: 'script_not_allowlisted' });
+      }
+      if (sched.runtime.status().running) {
+        return reply.code(409).send({ error: 'already_running' });
+      }
+      const { pid } = sched.runtime.start('sh', [join(sched.scriptsDir, name)], { cwd: process.cwd(), env: deps.env });
+      audit({ event: 'sched_script', name, ...localOperator });
+      return { pid, name };
     });
   }
 

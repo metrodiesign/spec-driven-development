@@ -24,6 +24,7 @@ import {
 import { createTermRuntime } from '../src/term-runtime.ts';
 import { runGovernanceCommand } from '../src/governance-cli.ts';
 import { runAuditorCommand } from '../src/auditor-cli.ts';
+import { createSchedRuntime, type ChildLike, type SpawnChild } from '../src/sched.ts';
 
 const HELP = `usage:
   platform console [--port <n>] [--host <h>] [--no-open] [--insecure]
@@ -72,6 +73,49 @@ function calibrationDir(): string {
 /** Repo-anchored `.ai/` — governance log + policies live under here, committed to the repo (REQ-9.1). */
 function aiDir(): string {
   return join(import.meta.dirname, '..', '..', '..', '.ai');
+}
+
+/** Repo-anchored `scripts/` — F-Sched's opaque-script allowlist resolves names against here (REQ-16.1/16.7). */
+function scriptsDir(): string {
+  return join(import.meta.dirname, '..', '..', '..', 'scripts');
+}
+
+/**
+ * `node:child_process` wrapped as `SpawnChild` (REQ-16). An 'error' (e.g. the
+ * file is not executable/found) surfaces through the SAME onExit callback as a
+ * synthetic non-zero exit — either way there is no auto-respawn (REQ-16.5).
+ */
+const nodeSpawnChild: SpawnChild = (file, args, opts) => {
+  const cp = spawn(file, args, { cwd: opts.cwd, env: opts.env });
+  const child: ChildLike = {
+    pid: cp.pid ?? -1,
+    onExit: (cb) => {
+      cp.once('exit', (code) => cb(code));
+      cp.once('error', () => cb(-1));
+    },
+    kill: (signal) => {
+      cp.kill(signal as NodeJS.Signals | undefined);
+    },
+  };
+  return child;
+};
+
+/**
+ * ponytail: a single in-process counter, not an actual per-IP tracker — the
+ * console is single-operator (INV-15), so one shared counter across whatever
+ * browser tabs the SAME operator has open already IS the "per-source" limit
+ * (mirrors termRateOk's identical no-argument shape). Raise the cap if a real
+ * multi-operator deployment ever needs one counter per peer.
+ */
+function createSpawnRateLimiter(maxPerMinute: number): () => boolean {
+  const hits: number[] = [];
+  return () => {
+    const now = Date.now();
+    while (hits.length > 0 && (hits[0] as number) <= now - 60_000) hits.shift();
+    if (hits.length >= maxPerMinute) return false;
+    hits.push(now);
+    return true;
+  };
 }
 
 /** `platform governance list|approve <id>` — appends to the durable log, no server needed (REQ-9.3). */
@@ -474,6 +518,15 @@ async function main(): Promise<void> {
     loopRunsRoot: join(homedir(), '.ai', 'runs'),
     audit: auditAppend,
     ...(termRuntime ? { termManager: termRuntime.manager } : {}),
+    // F-Sched (REQ-16): starts/stops via THIS SAME binary spawned again — no
+    // separate scheduler process, no lease.
+    sched: {
+      runtime: createSchedRuntime({ spawn: nodeSpawnChild, now: () => Date.now() }),
+      policiesDir: join(aiDir(), 'policies'),
+      platformBinPath: join(import.meta.dirname, 'platform.ts'),
+      scriptsDir: scriptsDir(),
+      rateOk: createSpawnRateLimiter(10),
+    },
   });
 
   await app.listen({ host, port });

@@ -105,6 +105,21 @@ test('F-Auth: red shadowing warning names variables, never values (REQ-14)', asy
   }
 });
 
+test('F-Auth: remote is the peer half of the single remote definition (REQ-18.3/20.8)', async () => {
+  const fix = makeHome();
+  const app = buildApp(depsFor(fix));
+  try {
+    const local = await app.inject({ method: 'GET', url: '/api/auth', headers: GOOD_HOST });
+    assert.equal((local.json() as { remote: boolean }).remote, false);
+
+    const remote = await app.inject({ method: 'GET', url: '/api/auth', headers: GOOD_HOST, remoteAddress: '100.64.0.5' });
+    assert.equal((remote.json() as { remote: boolean }).remote, true);
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
 test('F-Proj/F-Sess wired over live files; home paths render in ~ form (REQ-13.3/13.4, REQ-12.5)', async () => {
   const fix = makeHome();
   addSession(fix, '-my-app', 's1', [
