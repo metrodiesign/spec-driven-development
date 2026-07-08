@@ -6,6 +6,8 @@ export interface AuthInfo {
   shadowingVars: string[];
   severity: 'red' | 'ok';
   guidance: string | null;
+  /** REQ-18.3: the peer half of the single remote definition (REQ-20.8). */
+  remote: boolean;
 }
 
 export function authBanner(auth: AuthInfo): { tone: 'red' | 'ok'; text: string } {

@@ -1,6 +1,8 @@
 // Gate ladder (spec §6.4, REQ-8/9). Core runs every command itself and captures
 // output straight from the child process into the evidence store — reports are
-// core-produced, never agent-reported. T2/T3 report not_enabled explicitly.
+// core-produced, never agent-reported. T3 always reports not_enabled; T2 does
+// too UNTIL the ladder file carries a real config (REQ-12.1/12.2) — enabling it
+// is a governance-approved event by construction (the file hash changes).
 // Flaky handling (REQ-8.5): one retry; fail-then-pass = flaky_suspect, flagged
 // for a human, NOT passed and NOT auto-quarantined (INV-16).
 
@@ -32,7 +34,7 @@ export interface GateRunnerOptions {
 interface LadderConfig {
   t0?: { lint?: string; typecheck?: string; targetedTests?: string };
   t1?: { fullTests?: string; convention?: string; golden?: string };
-  t2?: { status?: string };
+  t2?: { status?: string } | { build?: string; scopedE2e?: string; secretScan?: string; fullGolden?: 'builtin' };
   t3?: { status?: string };
 }
 
@@ -136,9 +138,43 @@ export function createGateRunner(opts: GateRunnerOptions): GateRunner {
     );
     const base = { tier, gateConfigHash, commitHash, worktreeHash, envHash, scopeNote: SCOPE_NOTE };
 
-    if (tier === 'T2' || tier === 'T3') {
+    if (tier === 'T3') {
       // Explicit stub — never a silent pass (REQ-8.4).
       return { ...base, pass: 'not_enabled', checks: [] };
+    }
+
+    if (tier === 'T2') {
+      const t2 = config.t2;
+      // {status} (or absent) stays the explicit stub (REQ-12.1); only the real
+      // shape (build/scopedE2e/secretScan/fullGolden) turns T2 on (REQ-12.2).
+      if (t2 === undefined || 'status' in t2) {
+        return { ...base, pass: 'not_enabled', checks: [] };
+      }
+      // Both union members are all-optional, so `in` alone can't narrow the
+      // type (an empty object satisfies either) — the runtime check above is
+      // exact; this just names the shape TS can't infer from it.
+      const real = t2 as { build?: string; scopedE2e?: string; secretScan?: string; fullGolden?: 'builtin' };
+      const checks: GateCheck[] = [];
+      if (real.build !== undefined) checks.push(runCommandCheck('build', real.build));
+      if (real.scopedE2e !== undefined) checks.push(runCommandCheck('scopedE2e', real.scopedE2e));
+      if (real.secretScan !== undefined) checks.push(runCommandCheck('secretScan', real.secretScan));
+      if (real.fullGolden === 'builtin') {
+        const verdict = verifyGoldenManifest(opts.worktreeDir);
+        checks.push({
+          name: 'fullGolden',
+          pass: verdict.ok,
+          evidenceRef: opts.evidence.put(JSON.stringify(verdict)),
+          ...(verdict.ok ? {} : { detail: `${verdict.reason}: ${verdict.detail}` }),
+        });
+      }
+      const t2Report: GateReport = { ...base, pass: checks.every((c) => c.pass), checks };
+      opts.log.append({
+        runId: opts.runId,
+        taskId: opts.taskId,
+        type: 'GATE_RESULT',
+        payload: { ...t2Report } as unknown as Record<string, unknown>,
+      });
+      return t2Report;
     }
 
     const checks: GateCheck[] = [];

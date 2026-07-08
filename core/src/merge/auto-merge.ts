@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 
 import { transition, type Trigger } from '../orchestrator/machine.ts';
 import { createGateRunner } from '../gates/runner.ts';
+import type { MergeQueue } from './queue.ts';
 import type { EventLog } from '../state/event-log.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import type { RiskClass } from '../human/approval.ts';
@@ -125,6 +126,8 @@ export interface RunAutoMergeOptions {
   log: EventLog;
   evidence: EvidenceStore;
   clock: Clock;
+  /** When supplied, route the merge through the T2-gated queue (REQ-13.6) instead of a direct merge; the in-band sampling audit and revert below stay unchanged either way. */
+  queue?: MergeQueue;
 }
 
 export interface AutoMergeOutcome {
@@ -158,7 +161,7 @@ function gitOut(cwd: string, ...args: string[]): string {
  * ts) are excluded — they vary by construction between the original run and a
  * clean-checkout re-run.
  */
-function reproduces(original: GateReport, audit: GateReport): boolean {
+export function reproduces(original: GateReport, audit: GateReport): boolean {
   const norm = (r: GateReport): string =>
     JSON.stringify(r.checks.map((c) => ({ name: c.name, pass: c.pass, evidenceRef: c.evidenceRef })));
   return norm(original) === norm(audit);
@@ -238,22 +241,57 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
   });
   move('merge_queued');
 
-  // Merge task/<taskId> -> main, --no-ff (single merge commit = single revert target).
-  git(opts.repoDir, 'checkout', '-q', opts.mainBranch);
-  const merge = git(opts.repoDir, 'merge', '--no-ff', '--no-edit', opts.taskBranch);
-  if (merge.code !== 0) {
-    git(opts.repoDir, 'merge', '--abort'); // no automatic resolution (REQ-7.5)
-    escalate('merge_conflict', { taskBranch: opts.taskBranch });
-    return {
-      decision: 'auto_approve',
-      reason: decision.reason,
-      finalState: state,
-      mergeCommit: null,
-      sampled: false,
-      reproduced: null,
-    };
+  let mergeCommit: string;
+  if (opts.queue) {
+    // T2-gated path (REQ-13.6) — the queue owns the merge + T2 run; the
+    // sampled-audit flow below is unchanged either way.
+    const result = await opts.queue.process({
+      taskId: opts.taskId,
+      taskBranch: opts.taskBranch,
+      approvalBasis: 'auto_approved',
+      originalReport: opts.originalReport,
+    });
+    if (result.outcome === 'merge_conflict') {
+      escalate('merge_conflict', { taskBranch: opts.taskBranch });
+      return {
+        decision: 'auto_approve',
+        reason: decision.reason,
+        finalState: state,
+        mergeCommit: null,
+        sampled: false,
+        reproduced: null,
+      };
+    }
+    if (result.outcome === 'rejected_t2') {
+      escalate('t2_failed', { taskBranch: opts.taskBranch, attribution: result.attribution });
+      return {
+        decision: 'auto_approve',
+        reason: decision.reason,
+        finalState: state,
+        mergeCommit: null,
+        sampled: false,
+        reproduced: null,
+      };
+    }
+    mergeCommit = result.mergeCommit as string;
+  } else {
+    // Merge task/<taskId> -> main, --no-ff (single merge commit = single revert target).
+    git(opts.repoDir, 'checkout', '-q', opts.mainBranch);
+    const merge = git(opts.repoDir, 'merge', '--no-ff', '--no-edit', opts.taskBranch);
+    if (merge.code !== 0) {
+      git(opts.repoDir, 'merge', '--abort'); // no automatic resolution (REQ-7.5)
+      escalate('merge_conflict', { taskBranch: opts.taskBranch });
+      return {
+        decision: 'auto_approve',
+        reason: decision.reason,
+        finalState: state,
+        mergeCommit: null,
+        sampled: false,
+        reproduced: null,
+      };
+    }
+    mergeCommit = gitOut(opts.repoDir, 'rev-parse', 'HEAD');
   }
-  const mergeCommit = gitOut(opts.repoDir, 'rev-parse', 'HEAD');
 
   // Deterministic sampling (REQ-8.1).
   const sampled = auditSampleValue(opts.runId, opts.taskId) < opts.auditSampleRate;

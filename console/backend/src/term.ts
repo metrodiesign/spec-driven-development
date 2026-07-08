@@ -35,6 +35,8 @@ export interface CreateSessionInput {
   mode: TermMode;
   /** `claude --resume <id>` when set. */
   resume?: string;
+  /** F-MCP Authenticate deep link (REQ-18.1): claude-only PTY runs `claude mcp` instead of a bare REPL. Ignored with `resume`. */
+  mcp?: boolean;
 }
 
 const RING_BYTES = 64 * 1024;

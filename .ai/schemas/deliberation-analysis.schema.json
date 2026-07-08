@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "deliberation-analysis.schema.json",
+  "$comment": "Blind-judge output for a fusion ANALYZE round (unified-platform-spec.md §7.5, REQ-9.3/9.4). The judge routes as role `reviewer` over ANONYMIZED candidates (no adapter identity, no persuasion text) and returns ONLY this analysis — never a ranking that could overrule gate evidence (REQ-10.1) and never a synthesized artifact. A response that fails this schema gets one bounded repair round (REQ-9.4), then falls back per artifact (REQ-9.5). The embedded copy in aal/src/fusion/schema.ts MUST stay byte-equivalent to this governance artifact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["consensus", "contradictions", "partialAgreements", "uniqueContributions", "blindSpots"],
+  "properties": {
+    "consensus": { "type": "array", "items": { "type": "string" } },
+    "contradictions": { "type": "array", "items": { "type": "string" } },
+    "partialAgreements": { "type": "array", "items": { "type": "string" } },
+    "uniqueContributions": { "type": "array", "items": { "type": "string" } },
+    "blindSpots": { "type": "array", "items": { "type": "string" } }
+  }
+}

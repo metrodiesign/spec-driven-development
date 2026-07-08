@@ -18,7 +18,7 @@ import { createTermManager, DEFAULT_PTY_DIMS, type CreateSessionInput, type PtyL
  *  directly (no arbitrary shell); full-shell is an explicit opt-in (§4.1). */
 function buildCommand(input: CreateSessionInput): { file: string; args: string[] } {
   if (input.mode === 'full-shell') return { file: process.env['SHELL'] ?? '/bin/sh', args: [] };
-  const args = input.resume !== undefined ? ['--resume', input.resume] : [];
+  const args = input.resume !== undefined ? ['--resume', input.resume] : input.mcp === true ? ['mcp'] : [];
   return { file: 'claude', args };
 }
 

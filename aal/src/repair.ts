@@ -37,16 +37,19 @@ export function validateAgainstSchema(
   schema: Record<string, unknown>,
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  const expectType = schema['type'] as JsonType | undefined;
-  if (expectType !== undefined && typeOf(value) !== expectType) {
-    errors.push(`expected type ${expectType}, got ${typeOf(value)}`);
+  // `type` may be a single JSON-Schema type or a union array (e.g. `['string','null']`
+  // for an optional field a strict-mode lineage must still declare — REQ-2 residual).
+  const rawType = schema['type'];
+  const allowedTypes = Array.isArray(rawType) ? (rawType as string[]) : rawType !== undefined ? [rawType as string] : undefined;
+  if (allowedTypes !== undefined && !allowedTypes.includes(typeOf(value))) {
+    errors.push(`expected type ${allowedTypes.join(' | ')}, got ${typeOf(value)}`);
     return { valid: false, errors };
   }
   const enumVals = schema['enum'] as unknown[] | undefined;
   if (enumVals !== undefined && !enumVals.includes(value)) {
     errors.push(`value not in enum ${JSON.stringify(enumVals)}`);
   }
-  if (expectType === 'object' && typeOf(value) === 'object') {
+  if (allowedTypes?.includes('object') === true && typeOf(value) === 'object') {
     const obj = value as Record<string, unknown>;
     const required = (schema['required'] as string[] | undefined) ?? [];
     for (const key of required) {

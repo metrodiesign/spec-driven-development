@@ -23,6 +23,8 @@ const WRITE_PREFIXES: Record<Role, string[]> = {
   implementer: [`src${sep}`, `test${sep}ai-generated${sep}`],
   // Diagnostician reads + runs probe RUN_COMMANDs; it never writes (REQ-4.3).
   diagnostician: [],
+  // Reviewer (fusion blind judge, REQ-4.2) is reasoning-only; it never writes.
+  reviewer: [],
 };
 
 /** Normalize to a worktree-relative path, or null when it escapes the worktree. */

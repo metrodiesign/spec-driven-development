@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019f41da-82bc-7a61-8a79-f7a346a09502"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"claim\":\"BLOCKED\",\"summary\":\"ต้องใช้เครื่องมือ `fusion.deliberate` แต่เครื่องมือนี้ไม่พร้อมใช้งานในบริบทปัจจุบัน จึงขอ capability เพิ่มตามที่กำหนด\",\"actionRequests\":[{\"type\":\"REQUEST_TOOL\",\"path\":null,\"content\":null,\"name\":\"fusion.deliberate\"}],\"costUnits\":0,\"echo\":null}"}}
+{"type":"turn.completed","usage":{"input_tokens":25344,"cached_input_tokens":2432,"output_tokens":162,"reasoning_output_tokens":69}}

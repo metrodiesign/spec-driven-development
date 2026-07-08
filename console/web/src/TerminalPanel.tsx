@@ -62,9 +62,10 @@ export function TerminalPanel({ project }: { project: string }) {
     setNote(null);
   }
 
-  async function create(): Promise<void> {
-    const body: Record<string, string> = { project, mode: 'claude-only' };
-    if (resume.trim().length > 0) body['resume'] = resume.trim();
+  async function create(opts?: { mcp?: boolean }): Promise<void> {
+    const body: Record<string, string | boolean> = { project, mode: 'claude-only' };
+    if (opts?.mcp === true) body['mcp'] = true;
+    else if (resume.trim().length > 0) body['resume'] = resume.trim();
     const r = await fetch('/api/term/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -79,6 +80,14 @@ export function TerminalPanel({ project }: { project: string }) {
     openWs(id, ticket);
     refreshSessions();
   }
+
+  // F-MCP Authenticate deep link (REQ-18.1): `/terminal?cmd=mcp` auto-opens a
+  // claude-only session running `claude mcp` instead of requiring a manual click.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('cmd') === 'mcp') {
+      void create({ mcp: true });
+    }
+  }, []);
 
   async function reattach(id: string): Promise<void> {
     wsRef.current?.close();

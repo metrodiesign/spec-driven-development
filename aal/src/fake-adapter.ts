@@ -37,6 +37,8 @@ export interface FakeAdapterOptions {
   behavior?: FakeBehavior;
   fault?: FakeFault;
   contextWindowTokens?: number;
+  /** Vendor family surfaced through the manifest (REQ-4.4); absent → registry defaults 'unknown'. */
+  lineage?: string;
   /**
    * Optional evidence writer. A real adapter maps the model's inline content to a
    * core evidence ref; when provided, the fake's WRITE_FILE carries a resolvable
@@ -84,6 +86,7 @@ export class FakeAdapter implements AdapterInterface {
   private readonly contextWindowTokens: number;
   private readonly putContent: ((content: string) => string) | undefined;
   private readonly writeContent: string;
+  private readonly lineage: string | undefined;
   /** requestId -> response (durable-within-instance replay; P8). */
   private readonly replay = new Map<string, AgentResponse>();
   /** send attempts (drives schema_fail_first regardless of requestId). */
@@ -101,6 +104,7 @@ export class FakeAdapter implements AdapterInterface {
     this.contextWindowTokens = opts.contextWindowTokens ?? 200_000;
     this.putContent = opts.putContent;
     this.writeContent = opts.writeContent ?? 'correct\n';
+    this.lineage = opts.lineage;
     this.healthProbe =
       opts.fault === 'health_unhealthy'
         ? () =>
@@ -120,6 +124,7 @@ export class FakeAdapter implements AdapterInterface {
       contextWindowTokens: this.contextWindowTokens,
       executionBackend: false,
       determinism: 'seed',
+      ...(this.lineage !== undefined ? { lineage: this.lineage } : {}),
     };
   }
 
@@ -148,6 +153,10 @@ export class FakeAdapter implements AdapterInterface {
     // A DIAGNOSING round (REQ-5.1): return testable hypotheses as data — NOT a task
     // result. Core validates the shape, caps probes, and runs each probe itself.
     if (req.agentRole === 'diagnostician') return this.diagnose(attempt);
+    // A fusion blind-judge round (REQ-9.3): return a deliberation-analysis, never a
+    // task result or a ranking. `prose_only`/`ignore_schema` sabotage it to drive the
+    // judge_invalid fallback (REQ-9.5); every other behavior returns a valid analysis.
+    if (req.agentRole === 'reviewer') return this.review(attempt);
 
     const d = parseDirective(req.taskContract.objective);
     const budgetLow = req.budget.costUnits <= 1;
@@ -230,6 +239,33 @@ export class FakeAdapter implements AdapterInterface {
         interactive: false,
         toolUseCount,
       },
+    };
+  }
+
+  /**
+   * A blind-judge round's response (REQ-9.3): a deliberation-analysis over the
+   * anonymized candidates in the context bundle. The compliant fake reports a
+   * consensus + one blind spot; `prose_only`/`ignore_schema` return a non-conforming
+   * shape so the pipeline's judge_invalid fallback can be exercised. The judge NEVER
+   * ranks candidates or emits an artifact — only analysis (REQ-10.1).
+   */
+  private review(attempt: number): AgentResponse {
+    const sabotaged = this.behavior === 'prose_only' || this.behavior === 'ignore_schema';
+    const structuredResult = sabotaged
+      ? { prose: 'the candidates look broadly similar to me' } // missing required arrays -> judge_invalid
+      : {
+          consensus: ['candidates agree on the overall approach'],
+          contradictions: [],
+          partialAgreements: [],
+          uniqueContributions: [],
+          blindSpots: ['none of the candidates addressed the empty-input case'],
+        };
+    return {
+      structuredResult,
+      actionRequests: [],
+      usage: { costUnits: 2, raw: { attempt, role: 'reviewer' } },
+      rawTranscriptRef: null,
+      adapterMeta: { adapterId: this.id, modelVersion: this.modelVersion, interactive: false, toolUseCount: 0 },
     };
   }
 

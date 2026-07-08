@@ -11,10 +11,15 @@ import { promisify } from 'node:util';
 
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
+import type { AuthProvider } from './auth/provider.ts';
 import { allTimestamps, readProjects, readSessions } from './claude-data.ts';
 import { buildEstimate, MONEY_DISCLAIMER, type UsageConfig } from './usage.ts';
-import { corsOriginAllowed, hostHeaderAllowed, redactText } from './security.ts';
+import { corsOriginAllowed, hostHeaderAllowed, isLoopback, redactText } from './security.ts';
 import { termAccessAllowed, type CreateSessionInput, type TermManager } from './term.ts';
+import { discoverRuns, findRun, loopFetch } from './loop-proxy.ts';
+import { decideAutomationStart, loadAutomationConfig } from './guards.ts';
+import { decideSchedStart, scriptAllowed, type SchedRuntime } from './sched.ts';
+import { loadRoutingConfig } from 'aal';
 import {
   installGuardRules,
   permissionDecision,
@@ -50,10 +55,39 @@ export interface AppDeps {
   doctorCapture?(): Promise<string>;
   /** Built SPA directory; when present the app serves it at / (REQ-12.7 UI). */
   webDistDir?: string;
+  /**
+   * Remote auth gate (REQ-19). When present, every route requires a valid
+   * session except this provider's own `/auth/*` routes and the static SPA
+   * shell. Absent = no gate (loopback dev default, mirrors termManager).
+   */
+  auth?: AuthProvider;
+  /**
+   * REQ-20.2/20.8: the --behind-proxy public host (hostname[:port] form), when
+   * set. Threaded into the host-header/CORS allowlist and ORed into the single
+   * remote definition (REQ-20.8) alongside the per-request peer-loopback check.
+   */
+  behindProxyHost?: string;
   /** F-Term manager (Phase 1). When present, term routes register (loopback-only hard). */
   termManager?: TermManager;
   /** Per-source spawn rate limiter for F-Term (REQ-13.5); default allows all. */
   termRateOk?(): boolean;
+  /** F-Loop (REQ-15): root dir whose subdirectories hold each run's human-plane.json. Absent = routes do not register (mirrors termManager). */
+  loopRunsRoot?: string;
+  /**
+   * F-Sched (REQ-16): the thin runtime for the one registered child + where its
+   * governed inputs live. Absent = routes do not register (mirrors termManager).
+   */
+  sched?: {
+    runtime: SchedRuntime;
+    /** Dir holding automation.json + routing.json (REQ-16.2/16.9). */
+    policiesDir: string;
+    /** This same `platform` binary, spawned again for `loop run` (REQ-16.1). */
+    platformBinPath: string;
+    /** Dir allowlisted script names resolve against (REQ-16.1/16.7). */
+    scriptsDir: string;
+    /** Per-source spawn rate limiter (REQ-16.4); default allows all (mirrors termRateOk). */
+    rateOk?(): boolean;
+  };
   /** Per-install token for the activity ingest endpoint (REQ-19.2). */
   activityToken?: string;
   /**
@@ -92,13 +126,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // --- §13.3 Phase-0 subset: host-header + CORS allowlists (REQ-12.4) ---
   app.addHook('onRequest', async (req, reply) => {
-    if (!hostHeaderAllowed(req.headers.host, deps.bindHost, deps.port)) {
+    if (!hostHeaderAllowed(req.headers.host, deps.bindHost, deps.port, deps.behindProxyHost)) {
       await reply.code(403).send({ error: 'host header not allowed' });
       return reply;
     }
     const origin = req.headers.origin;
     if (typeof origin === 'string') {
-      if (!corsOriginAllowed(origin, deps.bindHost, deps.port)) {
+      if (!corsOriginAllowed(origin, deps.bindHost, deps.port, deps.behindProxyHost)) {
         await reply.code(403).send({ error: 'origin not allowed' });
         return reply;
       }
@@ -113,6 +147,28 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (typeof payload === 'string') return redactText(payload, deps.homeDir);
     return payload;
   });
+
+  // --- Remote auth gate (REQ-19, INV-15): every route requires a valid session
+  // except this provider's own /auth/* routes and the static SPA shell — an
+  // unauthenticated browser still needs to load index.html/assets to render the
+  // Login view. Absent = no gate (loopback dev default, mirrors termManager). ---
+  const auth = deps.auth;
+  if (auth !== undefined) {
+    auth.routes(app);
+    // REQ-20: lets the unauthenticated Login view (which cannot call the
+    // gated /api/auth) discover which form to render — password vs. the OIDC
+    // redirect link — before any session exists. Exempt via the /auth/ prefix below.
+    app.get('/auth/provider', async () => ({ kind: auth.kind }));
+    app.addHook('onRequest', async (req, reply) => {
+      const path = req.url.split('?')[0] ?? '';
+      if (path.startsWith('/auth/') || path === '/' || path.startsWith('/assets/')) return;
+      if (auth.verify(req.headers.cookie) === null) {
+        await reply.code(401).send({ error: 'unauthorized' });
+        return reply;
+      }
+      return;
+    });
+  }
 
   // F-Status (REQ-13.1/13.2)
   app.get('/api/status', async () => {
@@ -148,7 +204,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // F-Auth (REQ-14) — names only; never values (INV-12).
-  app.get('/api/auth', async () => {
+  app.get('/api/auth', async (req) => {
     const shadowingVars = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].filter(
       (name) => (deps.env[name] ?? '').length > 0,
     );
@@ -163,6 +219,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
             'the platform never unsets environment variables for you'
           : null,
       activeMethodHeuristic: credentialFileExists ? 'subscription_login' : 'unknown',
+      // REQ-18.3/20.8/20.9: the single remote definition — behind-proxy set
+      // (every request is remote regardless of socket address, since Tailscale
+      // Serve TLS-proxies onto the loopback bind) OR a non-loopback peer.
+      remote: deps.behindProxyHost !== undefined || !isLoopback(req.ip),
     };
   });
 
@@ -224,6 +284,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const mode = body.mode === 'full-shell' ? 'full-shell' : 'claude-only';
       const input: CreateSessionInput = { project: body.project, mode };
       if (typeof body.resume === 'string') input.resume = body.resume;
+      else if (body.mcp === true) input.mcp = true; // F-MCP Authenticate deep link (REQ-18.1)
       try {
         return term.create(input);
       } catch (err) {
@@ -660,6 +721,163 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     audit({ event: 'retention_prune', count: candidates.length, cleanupPeriodDays: days });
     return { pruned: candidates.length, files: candidates };
   });
+
+  // --- F-Loop (REQ-15): Human Plane discovery + proxy. Console = client, owns no
+  // state (INV-11) — the Bearer token read from a run's discovery file is injected
+  // server-side per request and never appears in a response (REQ-15.2/15.3).
+  const loopRunsRoot = deps.loopRunsRoot;
+  if (loopRunsRoot !== undefined) {
+    // REQ-15.10: no auth provider ships yet (Task 10) — every loop audit entry
+    // records the fixed local-operator principal until then.
+    const localOperator = { principal: 'local-operator', method: 'none' };
+    const resolveRun = async (runId: string, reply: FastifyReply): Promise<ReturnType<typeof findRun>> => {
+      const ref = findRun(loopRunsRoot, runId);
+      if (ref === null) {
+        await reply.code(404).send({ error: 'no_such_run' });
+        return null;
+      }
+      return ref;
+    };
+
+    app.get('/api/loop/runs', async () => {
+      return { runs: discoverRuns(loopRunsRoot).map((r) => ({ runId: r.runId, ended: r.ended })) };
+    });
+
+    app.get<{ Params: { run: string } }>('/api/loop/:run/approvals', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'GET', path: '/approvals' });
+      return reply.code(res.status).send(res.body);
+    });
+
+    app.post<{ Params: { run: string; id: string }; Body: unknown }>(
+      '/api/loop/:run/approvals/:id',
+      async (req, reply) => {
+        const ref = await resolveRun(req.params.run, reply);
+        if (ref === null) return reply;
+        if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+        const res = await loopFetch(ref, { method: 'POST', path: `/approvals/${req.params.id}`, body: req.body });
+        if (res.status === 200) {
+          audit({ event: 'loop_approval', run: req.params.run, approvalId: req.params.id, ...localOperator });
+        }
+        return reply.code(res.status).send(res.body);
+      },
+    );
+
+    // REQ-15.8: since-based pagination over the existing /events route (no new WS
+    // surface) — the upstream route has no since support of its own, so the proxy
+    // fetches the full (already-redacted) log and slices by PlatformEvent.seq here.
+    app.get<{ Params: { run: string }; Querystring: { since?: string } }>('/api/loop/:run/events', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'GET', path: '/events' });
+      if (res.status !== 200) return reply.code(res.status).send(res.body);
+      const sinceRaw = Number(req.query.since ?? '0');
+      const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
+      const all = Array.isArray(res.body) ? (res.body as { seq?: number }[]) : [];
+      return all.filter((e) => (e.seq ?? 0) > since);
+    });
+
+    app.post<{ Params: { run: string; action: string }; Body: unknown }>(
+      '/api/loop/:run/steering/:action',
+      async (req, reply) => {
+        const ref = await resolveRun(req.params.run, reply);
+        if (ref === null) return reply;
+        if (!['pause', 'inject', 'resume'].includes(req.params.action)) {
+          return reply.code(404).send({ error: 'not_found' });
+        }
+        if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+        const res = await loopFetch(ref, { method: 'POST', path: `/steering/${req.params.action}`, body: req.body });
+        if (res.status === 202) {
+          audit({ event: `loop_steer_${req.params.action}`, run: req.params.run, ...localOperator });
+        }
+        return reply.code(res.status).send(res.body);
+      },
+    );
+
+    app.post<{ Params: { run: string } }>('/api/loop/:run/kill', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'POST', path: '/kill' });
+      if (res.status === 200) audit({ event: 'loop_kill', run: req.params.run, ...localOperator });
+      return reply.code(res.status).send(res.body);
+    });
+  }
+
+  // --- F-Sched (REQ-16): start/stop the platform loop process or an
+  // allowlisted opaque script under the SAME quota guard `platform loop run
+  // --live` already uses (decideAutomationStart, unchanged). Exactly one
+  // registered child; no task scheduling, no lease (REQ-16.1).
+  const sched = deps.sched;
+  if (sched !== undefined) {
+    const localOperator = { principal: 'local-operator', method: 'none' };
+
+    const freshAutomation = () => {
+      const cfg = loadAutomationConfig(join(sched.policiesDir, 'automation.json'));
+      // F-Sched has no more of a real fiveHour/weekly formula than the CLI's
+      // own automation guard does (INV-13 honest posture) — estimate stays
+      // null, exactly like `platform loop run --live`'s automationGuard.
+      return decideAutomationStart({ estimate: null, thresholdPercent: cfg.thresholdPercent, override: false });
+    };
+
+    app.get('/api/sched/status', async () => sched.runtime.status());
+
+    app.post<{ Body: { goal?: string; task?: string; live?: boolean; confirmToken?: string } }>(
+      '/api/sched/start',
+      async (req, reply) => {
+        if (sched.rateOk !== undefined && !sched.rateOk()) {
+          return reply.code(429).send({ error: 'too many sched start attempts; slow down' });
+        }
+        const body = req.body ?? {};
+        if (typeof body.goal !== 'string' || body.goal.length === 0) {
+          return reply.code(400).send({ error: 'goal is required' });
+        }
+        const running = sched.runtime.status().running;
+        const automation = freshAutomation();
+        const token = confirmToken(null, JSON.stringify(automation));
+        const decision = decideSchedStart({ running, automation, confirmed: body.confirmToken === token });
+        if ('refuse' in decision) {
+          const status = decision.reason === 'needs_confirmation' ? 428 : 409;
+          return reply.code(status).send({ error: decision.reason, automation, confirmToken: token });
+        }
+        const args = ['loop', 'run', '--goal', body.goal];
+        if (typeof body.task === 'string') args.push('--task', body.task);
+        if (body.live === true) args.push('--live');
+        const { pid } = sched.runtime.start(sched.platformBinPath, args, { cwd: process.cwd(), env: deps.env });
+        audit({ event: 'sched_start', args, ...localOperator });
+        return { pid, args };
+      },
+    );
+
+    app.post('/api/sched/stop', async () => {
+      const stopped = sched.runtime.stop();
+      if (stopped) audit({ event: 'sched_stop', ...localOperator });
+      return { stopped };
+    });
+
+    app.post<{ Body: { name?: string } }>('/api/sched/script', async (req, reply) => {
+      if (sched.rateOk !== undefined && !sched.rateOk()) {
+        return reply.code(429).send({ error: 'too many sched start attempts; slow down' });
+      }
+      const name = req.body?.name;
+      if (typeof name !== 'string' || name.length === 0) {
+        return reply.code(400).send({ error: 'name is required' });
+      }
+      const routing = loadRoutingConfig(join(sched.policiesDir, 'routing.json'));
+      if (!scriptAllowed(name, routing.sched.scriptAllowlist)) {
+        return reply.code(400).send({ error: 'script_not_allowlisted' });
+      }
+      if (sched.runtime.status().running) {
+        return reply.code(409).send({ error: 'already_running' });
+      }
+      const { pid } = sched.runtime.start('sh', [join(sched.scriptsDir, name)], { cwd: process.cwd(), env: deps.env });
+      audit({ event: 'sched_script', name, ...localOperator });
+      return { pid, name };
+    });
+  }
 
   // --- Static SPA (built console/web) — path-contained, no directory listing ---
   const dist = deps.webDistDir;

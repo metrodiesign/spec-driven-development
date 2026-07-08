@@ -1,0 +1,10 @@
+{
+  "$comment": "Fusion calibration corpus manifest (platform-phase3, unified-platform-spec.md §12, REQ-11). The corpus is the 10-task-minimum fixture the fusion uplift/decorrelation numbers are measured over. LAYOUT: tasks/ holds the MODEL-VISIBLE task spec (objective + budget only); answers/ holds the HELD-OUT answer-key + hidden golden that scores single-vs-fused pass — answers/ is NEVER placed in a model's context bundle. numbersAreFixture stays true until the LIVE task (task 13) runs <=3 real fusion activations and records the real uplift interval into docs/calibration/. The CI harness runs this corpus with the FakeAdapter for ZERO quota and proves only the MATH + structure, never a §12 metric.",
+  "numbersAreFixture": true,
+  "tasksDir": "tasks",
+  "answersDir": "answers",
+  "taskIds": [
+    "task-01", "task-02", "task-03", "task-04", "task-05",
+    "task-06", "task-07", "task-08", "task-09", "task-10"
+  ]
+}

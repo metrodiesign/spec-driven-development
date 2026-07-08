@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { diffLines, listOrEmpty, statsRows } from './surfaces.ts';
+import { diffLines, listOrEmpty, mcpAuthenticateState, statsRows } from './surfaces.ts';
 
 test('statsRows renders host/memory/load/uptime lines', () => {
   const rows = statsRows({
@@ -21,4 +21,11 @@ test('diffLines prefixes removed with - and added with +', () => {
 test('listOrEmpty falls back to an empty-state line', () => {
   assert.equal(listOrEmpty([], 'subagents'), 'no subagents in this scope');
   assert.equal(listOrEmpty(['x', 'y'], 'skills'), 'x, y');
+});
+
+test('mcpAuthenticateState: disabled with a hint when remote, enabled locally (REQ-18.1/18.3)', () => {
+  assert.deepEqual(mcpAuthenticateState(false), { enabled: true, hint: null });
+  const remote = mcpAuthenticateState(true);
+  assert.equal(remote.enabled, false);
+  assert.match(remote.hint ?? '', /loopback-only/);
 });

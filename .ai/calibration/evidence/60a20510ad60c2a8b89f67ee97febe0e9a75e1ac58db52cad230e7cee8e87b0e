@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019f41d8-677d-71c2-9175-55e0a06612ac"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"claim\":\"READY_FOR_VERIFICATION\",\"summary\":\"ต้องใช้เครื่องมือ `fusion.deliberate` ซึ่งยังไม่มีใน session นี้ จึงขอ capability ตามที่ระบุ\",\"actionRequests\":[{\"type\":\"REQUEST_TOOL\",\"path\":null,\"content\":null,\"name\":\"fusion.deliberate\"}],\"costUnits\":0}"}}
+{"type":"turn.completed","usage":{"input_tokens":25328,"cached_input_tokens":2432,"output_tokens":169,"reasoning_output_tokens":91}}

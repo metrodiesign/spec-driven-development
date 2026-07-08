@@ -94,6 +94,78 @@ test('COMPRESS v1 truncates a large file to maxFileBytes', () => {
   }
 });
 
+test('COMPRESS (REQ-22.1): an oversized TS file is symbol-compressed — headers kept, bodies dropped, trailer emitted', () => {
+  const filler = 'x'.repeat(2000);
+  const source = [
+    `import { readFileSync } from 'node:fs';`,
+    ``,
+    `export function run(): string {`,
+    `  const pad = "${filler}";`,
+    `  return pad;`,
+    `}`,
+    ``,
+    `export class Runner {`,
+    `  execute(): void {`,
+    `    console.log("${filler}");`,
+    `  }`,
+    `}`,
+  ].join('\n');
+  const f = fixture({ 'src/big.ts': source });
+  try {
+    const r = buildContext(input(f, ['src/big.ts'], { maxFileBytes: 300 }));
+    const piece = r.bundle.pieces.find((p) => p.path === 'src/big.ts');
+    assert.ok(piece);
+    assert.equal(piece?.reason, 'compressed:symbols', 'REQ-22.4: reason records which COMPRESS path ran');
+    const content = piece?.content ?? '';
+    assert.match(content, /import \{ readFileSync \}/, 'import line kept');
+    assert.match(content, /export function run/, 'function declaration header kept');
+    assert.match(content, /export class Runner/, 'class declaration header kept');
+    assert.ok(!content.includes(filler), 'indented bodies dropped, not just appended to the header');
+    assert.match(content, /\[compressed:symbols\]/, 'trailer emitted');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('COMPRESS (REQ-22.2): a prose file with fewer than two declarations falls back to byte truncation', () => {
+  const prose = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. '.repeat(50);
+  const f = fixture({ 'docs/notes.txt': prose });
+  try {
+    const r = buildContext(input(f, ['docs/notes.txt'], { maxFileBytes: 200 }));
+    const piece = r.bundle.pieces.find((p) => p.path === 'docs/notes.txt');
+    assert.ok(piece);
+    assert.equal(piece?.reason, 'truncated', 'REQ-22.4: falls back and records truncation, not symbols');
+    assert.match(piece?.content ?? '', /\[truncated\]/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('GOVERN (REQ-22.3) still blocks a secret hidden inside a body that COMPRESS would drop', () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const filler = 'y'.repeat(2000);
+  const source = [
+    `export function run(): string {`,
+    `  const leaked = "${secret}";`,
+    `  const pad = "${filler}";`,
+    `  return leaked;`,
+    `}`,
+    ``,
+    `export class Runner {`,
+    `  execute(): void {}`,
+    `}`,
+  ].join('\n');
+  const f = fixture({ 'src/leaky-big.ts': source });
+  try {
+    assert.throws(
+      () => buildContext(input(f, ['src/leaky-big.ts'], { maxFileBytes: 200 })),
+      (err: unknown) => err instanceof SecretInContextError && err.file.includes('leaky-big.ts'),
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('machine config is excluded when the caller supplies an excludePath matcher (REQ-7.7)', () => {
   // Vendor config filenames are assembled at runtime so the INV-7 grep over core/
   // stays clean — the exclusion LIST is the caller's job, not core's.

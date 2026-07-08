@@ -5,8 +5,12 @@
 import { useEffect, useState } from 'react';
 
 import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo } from './logic/format.ts';
+import { interpretAuthProbe, type AuthGateState } from './logic/auth.ts';
 import { TerminalPanel } from './TerminalPanel.tsx';
 import { Surfaces } from './Surfaces.tsx';
+import { Loop } from './Loop.tsx';
+import { Sched } from './Sched.tsx';
+import { Login } from './Login.tsx';
 
 interface Status {
   disclaimer: string;
@@ -36,6 +40,27 @@ interface Usage {
     | { available: false; needed: string };
 }
 
+// Remote auth gate (REQ-19): probes the ALREADY-fetched /api/auth endpoint's
+// status code — a 401 means no valid session, so the dashboard's own fetches
+// stay unfired below (`ready ? url : null`) until a login flips the cookie.
+function useAuthGate(): AuthGateState {
+  const [state, setState] = useState<AuthGateState>('checking');
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/auth')
+      .then((r) => {
+        if (alive) setState(interpretAuthProbe(r.status));
+      })
+      .catch(() => {
+        if (alive) setState('authed'); // network hiccup: don't lock the shell out, let downstream fetches fail gracefully
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return state;
+}
+
 function useFetch<T>(url: string | null): T | null {
   const [data, setData] = useState<T | null>(null);
   useEffect(() => {
@@ -57,16 +82,22 @@ function useFetch<T>(url: string | null): T | null {
 }
 
 export function App() {
-  const status = useFetch<Status>('/api/status');
-  const auth = useFetch<AuthInfo>('/api/auth');
-  const projectsRes = useFetch<{ projects: Project[]; guidance: string | null }>('/api/projects');
-  const usage = useFetch<Usage>('/api/usage/estimate');
+  const gate = useAuthGate();
+  const ready = gate === 'authed';
+
+  const status = useFetch<Status>(ready ? '/api/status' : null);
+  const auth = useFetch<AuthInfo>(ready ? '/api/auth' : null);
+  const projectsRes = useFetch<{ projects: Project[]; guidance: string | null }>(ready ? '/api/projects' : null);
+  const usage = useFetch<Usage>(ready ? '/api/usage/estimate' : null);
 
   const params = new URLSearchParams(window.location.search);
   const selected = params.get('project');
   const sessionsRes = useFetch<{ sessions: Session[]; warnings: string[] }>(
-    selected !== null ? `/api/sessions?project=${encodeURIComponent(selected)}` : null,
+    ready && selected !== null ? `/api/sessions?project=${encodeURIComponent(selected)}` : null,
   );
+
+  if (gate === 'checking') return null;
+  if (gate === 'unauthed') return <Login />;
 
   const banner = auth !== null ? authBanner(auth) : null;
 
@@ -160,7 +191,11 @@ export function App() {
         )}
       </section>
 
-      <Surfaces project={selected} />
+      <Loop />
+
+      <Sched />
+
+      <Surfaces project={selected} remote={auth?.remote ?? true} />
 
       {selected !== null && <TerminalPanel project={selected} />}
 

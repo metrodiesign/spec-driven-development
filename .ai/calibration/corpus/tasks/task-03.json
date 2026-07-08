@@ -1,0 +1,5 @@
+{
+  "id": "task-03",
+  "objective": "write the required marker into out.txt so the held-out golden verification passes",
+  "budget": { "costUnits": 20 }
+}

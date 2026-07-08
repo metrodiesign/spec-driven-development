@@ -9,3 +9,16 @@ export {
   type SdkMessage,
 } from './anthropic.ts';
 export { createLiveAnthropicAdapter } from './live.ts';
+export {
+  createCodexAdapter,
+  parseCodexEvents,
+  sumCodexUsage,
+  DEFAULT_KILL_TIMEOUT_MS,
+  type CodexAdapterOptions,
+  type CodexEvent,
+  type CodexExecResult,
+  type ExecFn,
+} from './codex.ts';
+export { createLiveCodexAdapter, buildCodexArgv, CODEX_STDIO } from './codex-live.ts';
+// Shared Ring-2 wire helpers (INV-8) — reused by both adapters and any new lineage.
+export { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';

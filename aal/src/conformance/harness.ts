@@ -17,14 +17,40 @@ export interface P7Result {
   evidenceRef: string;
 }
 
+// The exact wire vocabulary taught in buildProposePrompt (wire.ts) — WRITE_FILE
+// (path+content) or REQUEST_TOOL (name). `items` is unused by validateAgainstSchema
+// (it never recurses into arrays), so this is purely documentation for readers and
+// the shape a strict-schema lineage's live adapter normalizes its own output-schema
+// validation against (REQ-2).
+const ACTION_REQUEST_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    type: { type: 'string' },
+    path: { type: 'string' },
+    content: { type: 'string' },
+    name: { type: 'string' },
+  },
+};
+
 const TASK_RESULT_SCHEMA: Record<string, unknown> = {
   type: 'object',
   required: ['claim', 'actionRequests'],
   properties: {
     claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] },
-    summary: { type: 'string' },
-    actionRequests: { type: 'array' },
-    costUnits: { type: 'number' },
+    // Optional properties are nullable, not merely absent: a lineage whose live
+    // wire enforces strict schemas must declare EVERY property required and
+    // expresses "not provided" as an explicit `null` (that lineage's own live
+    // adapter normalizes for this), so the shared post-hoc check has to accept
+    // the same null it told that lineage it could send.
+    summary: { type: ['string', 'null'] },
+    actionRequests: { type: 'array', items: ACTION_REQUEST_SCHEMA },
+    costUnits: { type: ['number', 'null'] },
+    // P1 asks the model to echo a token back as a top-level field. A loosely
+    // validated lineage accepts extra fields freely; a strict-schema lineage can
+    // ONLY ever emit fields the schema declares, so P1 is structurally
+    // unpassable there without this — declaring it here costs the loose
+    // lineage nothing (still optional, never asked of it outside P1).
+    echo: { type: ['string', 'null'] },
   },
 };
 

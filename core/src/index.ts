@@ -27,6 +27,7 @@ export {
   type Executor,
   type Failpoints,
   type RecoveryReport,
+  type ToolHandler,
 } from './executor/executor.ts';
 export { createGateRunner, type GateRunner } from './gates/runner.ts';
 export { computeGoldenManifest, verifyGoldenManifest, type GoldenVerdict } from './gates/golden.ts';
@@ -100,13 +101,23 @@ export {
 } from './human/api.ts';
 export {
   computeCalibration,
+  computeFusionCalibration,
   type CalibrationInput,
   type CalibrationResult,
+  type FusionCalibrationInput,
+  type FusionCalibrationResult,
 } from './calibration/calibration.ts';
+export {
+  loadCalibrationCorpus,
+  CORPUS_MIN_TASKS,
+  type CalibrationCorpus,
+  type CorpusTask,
+} from './calibration/corpus.ts';
 export {
   decideAutoApprove,
   matchesDepManifest,
   auditSampleValue,
+  reproduces,
   runAutoMerge,
   type AutoApproveInput,
   type AutoApproveDecision,
@@ -115,3 +126,16 @@ export {
   type MappedAc,
   type RunAutoMergeOptions,
 } from './merge/auto-merge.ts';
+export {
+  createMergeQueue,
+  type MergeCandidate,
+  type MergeQueue,
+  type MergeQueueOptions,
+  type MergeQueueResult,
+} from './merge/queue.ts';
+export {
+  runOobAudit,
+  selectAuditTargets,
+  type OobAuditorOptions,
+  type OobVerdict,
+} from './audit/oob.ts';

@@ -19,25 +19,53 @@ export class NoCapacityError extends Error {
   }
 }
 
+/**
+ * Injection- and lineage-aware routing filters (REQ-5), backward-compatible:
+ * absent hints => Phase-2 behavior byte-identical (REQ-5.1). Filters only ever
+ * REMOVE candidates from the eligible set — never add or reorder — so the route
+ * stays deterministic (registry order, filtered).
+ */
+export interface RouteHints {
+  /** Exclude adapters whose p7 susceptibilityScore exceeds this cap (REQ-5.2). */
+  maxSusceptibility?: number;
+  /** Exclude adapters whose lineage is listed (REQ-5.3; e.g. test_designer != implementer). */
+  excludeLineages?: string[];
+}
+
+/** Apply the hint filters to an already breaker/health-filtered eligible set. */
+function filterHints(list: RegisteredAdapter[], hints?: RouteHints): RegisteredAdapter[] {
+  if (hints === undefined) return list;
+  let out = list;
+  if (hints.maxSusceptibility !== undefined) {
+    const cap = hints.maxSusceptibility;
+    out = out.filter((r) => r.susceptibilityScore <= cap);
+  }
+  if (hints.excludeLineages !== undefined && hints.excludeLineages.length > 0) {
+    const excluded = new Set(hints.excludeLineages);
+    out = out.filter((r) => !excluded.has(r.lineage));
+  }
+  return out;
+}
+
 export interface Router {
   /** Returns the first eligible adapter, or throws NoCapacityError when none matches. */
-  route(role: Role): AdapterInterface;
-  /** The ordered eligible set (breaker- and health-filtered) for degraded re-routing. */
-  eligibleAdapters(role: Role): RegisteredAdapter[];
+  route(role: Role, hints?: RouteHints): AdapterInterface;
+  /** The ordered eligible set (breaker-, health-, and hint-filtered) for degraded re-routing. */
+  eligibleAdapters(role: Role, hints?: RouteHints): RegisteredAdapter[];
   /** Refresh cached health once per round before routing (REQ-2.2); returns changes to emit. */
   refreshHealth(): Promise<HealthChange[]>;
 }
 
 export function createRouter(registry: Registry): Router {
   return {
-    route(role) {
-      const eligible = registry.eligible(role);
+    route(role, hints) {
+      const eligible = filterHints(registry.eligible(role), hints);
       const first = eligible[0];
       if (first === undefined) throw new NoCapacityError(role);
       return first.adapter;
     },
-    eligibleAdapters(role) {
-      return registry.eligible(role);
+    eligibleAdapters(role, hints) {
+      return filterHints(registry.eligible(role), hints);
     },
     refreshHealth() {
       return registry.refreshHealth();

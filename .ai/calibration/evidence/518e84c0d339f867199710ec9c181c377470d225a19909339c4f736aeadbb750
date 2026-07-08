@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019f41da-4268-73b2-9d0f-41ec9f04b78e"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"claim\":\"READY_FOR_VERIFICATION\",\"summary\":\"ส่งผลลัพธ์ที่ conforming ตาม schema โดยแก้ echo ให้เป็น string แล้ว\",\"actionRequests\":[],\"costUnits\":0,\"echo\":\"\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":25343,"cached_input_tokens":2432,"output_tokens":52,"reasoning_output_tokens":0}}

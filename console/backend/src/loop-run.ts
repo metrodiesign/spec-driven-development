@@ -31,22 +31,32 @@ import {
   transition,
   type CalibrationResult,
   type Clock,
+  type EventLog,
   type HandlerDeps,
   type MappedAc,
+  type PlatformEvent,
   type RiskClass,
+  type Role,
   type TaskContract,
   type TaskState,
+  type ToolHandler,
 } from 'core';
 import {
+  breakerKey,
   createAALProposalSource,
   createBreaker,
   createRegistry,
   createRouter,
   DEFAULT_BREAKER_OPTIONS,
   PASS_FAIL_PROBES,
+  shadowFrozen,
+  shadowWouldChoose,
   type AdapterHealth,
   type AdapterInterface,
   type ConformanceRecord,
+  type Registry,
+  type RouteHints,
+  type Router,
 } from 'aal';
 
 function git(cwd: string, ...args: string[]): void {
@@ -59,6 +69,77 @@ function sha256(b: Uint8Array): string {
 /** Read the per-task risk class from the frozen contract; anything unrecognized → null (→ L2, REQ-7.6). */
 function parseRisk(v: unknown): RiskClass | null {
   return v === 'L0' || v === 'L1' || v === 'L2' || v === 'L3' || v === 'L4' ? v : null;
+}
+
+/**
+ * Per-adapter reviewing-reached stats (REQ-7.2), the cheapest outcome signal
+ * that exists today: replay every prior SHADOW_ROUTE this log has recorded and
+ * check whether ITS task ever reached REVIEWING. A task still in flight (the
+ * common case for its own most-recent round) simply contributes 0 so far —
+ * stats sharpen as a shared log accumulates across many tasks (e.g. the
+ * calibration corpus), never from this round's own not-yet-known outcome.
+ */
+function computeShadowOutcomeStats(events: PlatformEvent[]): Record<string, { attempts: number; reviewingReached: number }> {
+  const stats: Record<string, { attempts: number; reviewingReached: number }> = {};
+  for (const e of events) {
+    if (e.type !== 'SHADOW_ROUTE') continue;
+    const live = e.payload['live'] as string;
+    const s = (stats[live] ??= { attempts: 0, reviewingReached: 0 });
+    s.attempts += 1;
+    const reachedReviewing = events.some(
+      (e2) => e2.type === 'TASK_STATE' && e2.taskId === e.taskId && e2.payload['state'] === 'REVIEWING',
+    );
+    if (reachedReviewing) s.reviewingReached += 1;
+  }
+  return stats;
+}
+
+/**
+ * SHADOW_ROUTE recording from the composition root (REQ-7.1/7.3/7.4/7.5). Wraps
+ * only `eligibleAdapters` — the one router method the main proposal flow
+ * (`source.ts`) actually calls each round to pick its live choice (`eligible[0]`).
+ * The wrapper NEVER changes the returned list (REQ-7.4: route(x) identical with
+ * and without the recorder attached) — it only observes, then best-effort
+ * appends a SHADOW_ROUTE event as a side channel. Frozen (any registered adapter
+ * stale, REQ-7.3) skips recording entirely; a failed append never blocks the
+ * round — it logs ERROR and continues (REQ-7.5).
+ */
+export function wrapRouterForShadow(
+  router: Router,
+  deps: { registry: Registry; log: EventLog; runId: string; taskId: string },
+): Router {
+  return {
+    ...router,
+    eligibleAdapters(role: Role, hints?: RouteHints) {
+      const eligible = router.eligibleAdapters(role, hints);
+      const live = eligible[0];
+      if (live !== undefined && !shadowFrozen(deps.registry.all())) {
+        const liveKey = breakerKey(live.record.adapterId, live.record.modelVersion);
+        const { wouldChoose, basis } = shadowWouldChoose({
+          role,
+          liveChoice: liveKey,
+          eligible: eligible.map((r) => breakerKey(r.record.adapterId, r.record.modelVersion)),
+          outcomeStats: computeShadowOutcomeStats(deps.log.all()),
+        });
+        try {
+          deps.log.append({
+            runId: deps.runId,
+            taskId: deps.taskId,
+            type: 'SHADOW_ROUTE',
+            payload: { role, live: liveKey, wouldChoose, basis, frozen: false },
+          });
+        } catch (err) {
+          deps.log.append({
+            runId: deps.runId,
+            taskId: deps.taskId,
+            type: 'ERROR',
+            payload: { reason: 'shadow_append_failed', detail: (err as Error).message },
+          });
+        }
+      }
+      return eligible;
+    },
+  };
 }
 
 /** A synthetic target repo whose tests pass iff src/impl.txt contains `correct`. */
@@ -145,6 +226,14 @@ export async function runSupervisedLoop(opts: {
    * event log. Absent → no mirror (the core event log remains authoritative).
    */
   auditSink?: (entry: Record<string, unknown>) => void;
+  /**
+   * Composition-root REQUEST_TOOL handlers (fusion.deliberate, REQ-10.9). The live
+   * path builds these with `console/backend/src/fusion.ts` (createFusionToolHandler +
+   * createCandidateEvidenceRunner + runFusion) behind the `fusionActive` gate so
+   * fusion never activates under CI (REQ-10.10). Absent → the executor keeps its
+   * propose-only REQUEST_TOOL rejection, so the CI/stub path is byte-identical.
+   */
+  toolHandlers?: Record<string, ToolHandler>;
 }): Promise<LoopRunResult> {
   const fx = makeFixtureRepo();
   const clock = opts.clock;
@@ -181,7 +270,9 @@ export async function runSupervisedLoop(opts: {
     const source = createAALProposalSource({
       runId: 'RUN-LIVE',
       taskId: 'T-1',
-      router: createRouter(reg),
+      // Shadow routing (REQ-7): observes each round's live choice in shadow only,
+      // never influences it (REQ-7.4).
+      router: wrapRouterForShadow(createRouter(reg), { registry: reg, log, runId: 'RUN-LIVE', taskId: 'T-1' }),
       breaker,
       worktreeDir: fx.wt,
       taskContract: {
@@ -217,11 +308,16 @@ export async function runSupervisedLoop(opts: {
       audit({ event: 'approval', taskId, decision, state: tr.next });
       return { ok: true, state: tr.next };
     };
-    const onInject: HandlerDeps['onInject'] = (guidance) => {
+    const onInject: HandlerDeps['onInject'] = (guidance, opts) => {
+      // REQ-17.3: mode is purely an observability label — both paths feed the SAME
+      // guidanceQueue that runTaskLoop's takeGuidance() drains at its next boundary
+      // (REQ-17.2); PAUSED-immediate already sits at that boundary, so there is no
+      // separate delivery mechanism to build.
+      const mode = opts.atNextBoundary ? 'next_boundary' : 'immediate';
       const evidenceRef = evidence.put(guidance);
-      log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GUIDANCE_INJECTED', payload: { evidenceRef } });
+      log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GUIDANCE_INJECTED', payload: { evidenceRef, mode } });
       guidanceQueue.push(guidance);
-      audit({ event: 'steer_inject', taskId: TASK_ID, evidenceRef });
+      audit({ event: 'steer_inject', taskId: TASK_ID, evidenceRef, mode });
       return { ok: true, evidenceRef };
     };
     const govLog = opts.governanceLogPath;
@@ -278,6 +374,7 @@ export async function runSupervisedLoop(opts: {
           policy: createDefaultPathPolicy(),
           sandbox: denyNetworkSandbox(process.platform),
           clock,
+          ...(opts.toolHandlers !== undefined ? { toolHandlers: opts.toolHandlers } : {}),
         }),
         gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: 'RUN-LIVE', taskId: 'T-1', log, evidence, clock }),
         log,
@@ -342,6 +439,28 @@ export async function runSupervisedLoop(opts: {
     }
   } finally {
     log.close();
+    // AZ-4/REQ-15.9: F-Loop defines "ended" as discovery-file-absent-or-tombstoned
+    // (REQ-15.6) — never a stale {url,token} that LOOKS live after the server that
+    // owned it has already closed. Best-effort: an already-vanished stateDir (the
+    // ephemeral fixture-root case, cleaned up below) still reads as "ended" (absent).
+    try {
+      writeFileSync(join(stateDir, 'human-plane.json'), JSON.stringify({ tombstoned: true }), { mode: 0o600 });
+    } catch {
+      // best-effort, see above
+    }
+    // The fixture repo (fx.root/fx.wt) is ALWAYS ephemeral, live run or not (comment
+    // above stateDir's assignment) — but a persisted run with nothing to point
+    // `platform auditor run --repo` at defeats REQ-14.7's real-sample DoD item (live
+    // task 13 residual). A real `git clone` (not a raw file copy — fx.wt is a linked
+    // worktree, whose .git depends on fx.root's metadata) leaves a fully independent,
+    // cloneable repo behind, post-merge, best-effort so it never masks the real result.
+    if (opts.persistDir !== undefined) {
+      try {
+        git(process.cwd(), 'clone', '-q', fx.wt, join(stateDir, 'repo'));
+      } catch {
+        // best-effort — an already-failed/aborted run's worktree may be gone or dirty
+      }
+    }
     fx.cleanup();
   }
 }

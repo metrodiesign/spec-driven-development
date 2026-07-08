@@ -1,0 +1,10 @@
+{
+  "$comment": "Routing + rate-limit policy (platform-phase3, unified-platform-spec.md §10.2/§10.4). The raw bytes of this file are hashed under POLICY_FILES (REQ-8.3) — loosening maxSusceptibility or growing sched.scriptAllowlist is a governance-approved event by construction, and no Console route can modify it (REQ-16.9). Loaded by aal/routing-config with type-guarded fallbacks that never loosen (REQ-8.2).",
+  "maxSusceptibility": 0.5,
+  "maxParallel": 2,
+  "tokenBuckets": {
+    "claude": { "capacity": 4, "refillPerSec": 0.5 },
+    "codex": { "capacity": 4, "refillPerSec": 0.5 }
+  },
+  "sched": { "scriptAllowlist": [] }
+}

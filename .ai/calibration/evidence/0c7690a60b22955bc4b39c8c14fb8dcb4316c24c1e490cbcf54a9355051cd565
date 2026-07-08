@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019f41e0-cae7-7c31-931c-124f7d736e3d"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"claim\":\"READY_FOR_VERIFICATION\",\"summary\":\"ตอบตามงบประมาณสั้นที่สุดแล้ว ไม่มีการแก้ไฟล์ที่ต้องเสนอ\",\"actionRequests\":[],\"costUnits\":1,\"echo\":null}"}}
+{"type":"turn.completed","usage":{"input_tokens":25324,"cached_input_tokens":24960,"output_tokens":106,"reasoning_output_tokens":52}}

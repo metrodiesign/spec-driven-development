@@ -44,6 +44,19 @@ export interface Executor {
   execute(action: Action, role: Role): Promise<ExecuteOutcome>;
 }
 
+/**
+ * Composition-root handler for a named REQUEST_TOOL (§7.5 fusion entry point). Core
+ * cannot import aal/runFusion (INV-8 forbids the downward dep), so the fusion trigger
+ * + the per-task depth counter (REQ-10.9) live at the composition root and are
+ * injected here. The handler owns its own logging and returns a normal ExecuteOutcome
+ * (a `rejected` with reason `depth_exceeded` on a second activation). Absent map =
+ * every REQUEST_TOOL keeps the blanket propose-only rejection (existing behavior).
+ */
+export type ToolHandler = (
+  action: Extract<Action, { type: 'REQUEST_TOOL' }>,
+  role: Role,
+) => Promise<ExecuteOutcome>;
+
 export interface ExecutorOptions {
   worktreeDir: string;
   runId: string;
@@ -60,6 +73,12 @@ export interface ExecutorOptions {
    * composition root parses `.ai/policies/security-plane.json` and passes it.
    */
   depPolicy?: DepInstallPolicy;
+  /**
+   * Named REQUEST_TOOL handlers wired at the composition root (fusion.deliberate,
+   * REQ-10.9). A REQUEST_TOOL whose `name` has no handler keeps the existing
+   * propose-only rejection. Absent map = Phase-1/2 behavior byte-identical.
+   */
+  toolHandlers?: Record<string, ToolHandler>;
 }
 
 /**
@@ -266,6 +285,10 @@ async function executeOnce(
     );
   }
   if (action.type === 'REQUEST_TOOL') {
+    // A composition-root handler (fusion.deliberate, REQ-10.9) takes precedence; core
+    // executes nothing itself. Unhandled tool names keep the propose-only rejection.
+    const handler = opts.toolHandlers?.[action.name];
+    if (handler !== undefined) return handler(action, role);
     return reject(
       opts,
       action.actionId,

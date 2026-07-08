@@ -34,3 +34,20 @@ export function diffLines(diff: { removed: string[]; added: string[] }): string[
 export function listOrEmpty(items: string[], noun: string): string {
   return items.length === 0 ? `no ${noun} in this scope` : items.join(', ');
 }
+
+export interface McpAuthState {
+  enabled: boolean;
+  hint: string | null;
+}
+
+/**
+ * F-MCP Authenticate (REQ-18.1/18.3): the deep-linked claude-only F-Term stays
+ * loopback-hard (INV-17), so the action is disabled with an explanatory hint
+ * whenever the request is remote (the single remote definition, REQ-20.8).
+ */
+export function mcpAuthenticateState(remote: boolean): McpAuthState {
+  if (remote) {
+    return { enabled: false, hint: 'needs the local terminal — F-Term is loopback-only; run this at the host machine' };
+  }
+  return { enabled: true, hint: null };
+}
