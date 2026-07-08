@@ -1,6 +1,6 @@
 # Design: platform-phase3 — Multi-model + Fusion + Merge Queue/T2 + Auditor + F-Loop/F-Sched + Remote Auth
 
-> Status: draft
+> Status: approved 2026-07-08
 > Mode: design-first (no requirements.md yet — REQ IDs backfilled by /spec-requirements).
 > Upstream: unified-platform-spec.md v1.2 §5.3-5.4, §6.4-6.6, §7, §8 (F-Loop/F-Sched rows),
 > §10.2-10.4, §11.3, §12, §13, §14 Phase 3 + invariants §2. User decisions binding:
