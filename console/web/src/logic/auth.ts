@@ -15,3 +15,14 @@ export function interpretLoginResponse(status: number, body: { error?: string })
   if (status === 200) return { ok: true };
   return { ok: false, error: body.error ?? `login failed (http ${status})` };
 }
+
+export type ProviderKind = 'basic' | 'oidc';
+
+/**
+ * Interpret GET /auth/provider's status + body (REQ-20): which form Login
+ * should render. Defaults to 'basic' on any non-200/malformed response — a
+ * network hiccup should degrade to the password form, never a dead end.
+ */
+export function interpretProviderProbe(status: number, body: { kind?: string }): ProviderKind {
+  return status === 200 && body.kind === 'oidc' ? 'oidc' : 'basic';
+}

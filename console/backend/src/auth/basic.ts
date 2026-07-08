@@ -73,11 +73,14 @@ export interface BasicProviderOptions {
   now(): number;
   sessionTtlMs: number;
   limiter?: LoginLimiterOptions;
+  /** REQ-20.2: --behind-proxy TLS-terminates upstream, so `req.protocol` reads 'http' at this process even though the browser is on https — force Secure regardless. */
+  forceSecure?: boolean;
 }
 
 export function createBasicProvider(opts: BasicProviderOptions): AuthProvider {
   const limiter = createLoginLimiter(opts.limiter ?? DEFAULT_LIMITER, opts.now);
   const sessionOpts = { signingSecret: opts.config.signingSecret, ttlMs: opts.sessionTtlMs };
+  const secure = (req: { protocol: string }): boolean => opts.forceSecure === true || req.protocol === 'https';
 
   return {
     kind: 'basic',
@@ -95,11 +98,11 @@ export function createBasicProvider(opts: BasicProviderOptions): AuthProvider {
         }
         limiter.recordSuccess(ip);
         const token = mintSession({ sub: SUB, method: 'basic' }, sessionOpts, opts.now());
-        reply.header('set-cookie', serializeSessionCookie(token, opts.sessionTtlMs, req.protocol === 'https'));
+        reply.header('set-cookie', serializeSessionCookie(token, opts.sessionTtlMs, secure(req)));
         return { ok: true };
       });
       app.post('/auth/logout', async (req, reply) => {
-        reply.header('set-cookie', serializeClearCookie(req.protocol === 'https'));
+        reply.header('set-cookie', serializeClearCookie(secure(req)));
         return { ok: true };
       });
     },

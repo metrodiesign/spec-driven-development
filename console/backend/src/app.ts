@@ -61,6 +61,12 @@ export interface AppDeps {
    * shell. Absent = no gate (loopback dev default, mirrors termManager).
    */
   auth?: AuthProvider;
+  /**
+   * REQ-20.2/20.8: the --behind-proxy public host (hostname[:port] form), when
+   * set. Threaded into the host-header/CORS allowlist and ORed into the single
+   * remote definition (REQ-20.8) alongside the per-request peer-loopback check.
+   */
+  behindProxyHost?: string;
   /** F-Term manager (Phase 1). When present, term routes register (loopback-only hard). */
   termManager?: TermManager;
   /** Per-source spawn rate limiter for F-Term (REQ-13.5); default allows all. */
@@ -120,13 +126,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   // --- §13.3 Phase-0 subset: host-header + CORS allowlists (REQ-12.4) ---
   app.addHook('onRequest', async (req, reply) => {
-    if (!hostHeaderAllowed(req.headers.host, deps.bindHost, deps.port)) {
+    if (!hostHeaderAllowed(req.headers.host, deps.bindHost, deps.port, deps.behindProxyHost)) {
       await reply.code(403).send({ error: 'host header not allowed' });
       return reply;
     }
     const origin = req.headers.origin;
     if (typeof origin === 'string') {
-      if (!corsOriginAllowed(origin, deps.bindHost, deps.port)) {
+      if (!corsOriginAllowed(origin, deps.bindHost, deps.port, deps.behindProxyHost)) {
         await reply.code(403).send({ error: 'origin not allowed' });
         return reply;
       }
@@ -149,6 +155,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const auth = deps.auth;
   if (auth !== undefined) {
     auth.routes(app);
+    // REQ-20: lets the unauthenticated Login view (which cannot call the
+    // gated /api/auth) discover which form to render — password vs. the OIDC
+    // redirect link — before any session exists. Exempt via the /auth/ prefix below.
+    app.get('/auth/provider', async () => ({ kind: auth.kind }));
     app.addHook('onRequest', async (req, reply) => {
       const path = req.url.split('?')[0] ?? '';
       if (path.startsWith('/auth/') || path === '/' || path.startsWith('/assets/')) return;
@@ -209,10 +219,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
             'the platform never unsets environment variables for you'
           : null,
       activeMethodHeuristic: credentialFileExists ? 'subscription_login' : 'unknown',
-      // REQ-18.3: the peer half of the single remote definition (REQ-20.8) — a
-      // non-loopback bind's own startup gate gets the OTHER half; --behind-proxy
-      // (task 11) ORs in the forced-remote case on top of this same check.
-      remote: !isLoopback(req.ip),
+      // REQ-18.3/20.8/20.9: the single remote definition — behind-proxy set
+      // (every request is remote regardless of socket address, since Tailscale
+      // Serve TLS-proxies onto the loopback bind) OR a non-loopback peer.
+      remote: deps.behindProxyHost !== undefined || !isLoopback(req.ip),
     };
   });
 

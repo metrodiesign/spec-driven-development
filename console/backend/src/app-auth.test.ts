@@ -149,3 +149,44 @@ test('no auth provider configured: routes stay open (backward compatible, loopba
     fix.cleanup();
   }
 });
+
+test('GET /auth/provider reports the active provider kind, exempt from the gate (REQ-20)', async () => {
+  const fix = makeHome();
+  const app = buildApp(depsFor(fix, { auth: makeAuth() }));
+  try {
+    const res = await app.inject({ method: 'GET', url: '/auth/provider', headers: GOOD_HOST });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { kind: 'basic' });
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
+test('behindProxyHost: /api/auth reports remote=true even on a loopback bind/peer (REQ-20.8/20.9)', async () => {
+  const fix = makeHome();
+  const app = buildApp(depsFor(fix, { auth: makeAuth(), behindProxyHost: 'box.tailnet.ts.net' }));
+  try {
+    const cookie = await login(app, { host: 'box.tailnet.ts.net' });
+    const res = await app.inject({ method: 'GET', url: '/api/auth', headers: { host: 'box.tailnet.ts.net', cookie } });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().remote, true);
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
+test('behindProxyHost: the proxy host passes the host-header/CORS allowlist (REQ-20.2)', async () => {
+  const fix = makeHome();
+  const app = buildApp(depsFor(fix, { behindProxyHost: 'box.tailnet.ts.net' }));
+  try {
+    const res = await app.inject({ method: 'GET', url: '/api/status', headers: { host: 'box.tailnet.ts.net' } });
+    assert.equal(res.statusCode, 200);
+    const blocked = await app.inject({ method: 'GET', url: '/api/status', headers: { host: 'evil.example.com' } });
+    assert.equal(blocked.statusCode, 403);
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});

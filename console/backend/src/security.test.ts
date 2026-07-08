@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { corsOriginAllowed, decideStartup, hostHeaderAllowed, redactText } from './security.ts';
+import { corsOriginAllowed, decideStartup, hostHeaderAllowed, parseBehindProxy, redactText } from './security.ts';
 
 test('startup gate: loopback starts, non-loopback refuses without provider (REQ-12.2)', () => {
   assert.deepEqual(decideStartup({ host: '127.0.0.1', insecure: false, hasAuthProvider: false }), {
@@ -55,6 +55,60 @@ test('CORS/host port pinning: a portless origin is port 80, NOT the console orig
   assert.equal(hostHeaderAllowed('localhost', '127.0.0.1', 9119), false);
   assert.equal(hostHeaderAllowed('127.0.0.1', '127.0.0.1', 9119), false);
   assert.equal(hostHeaderAllowed('localhost', '127.0.0.1', 80), true);
+});
+
+test('startup gate: --behind-proxy forces the gate on over a loopback bind, ignoring --insecure (REQ-20.1)', () => {
+  const noProvider = decideStartup({
+    host: '127.0.0.1',
+    insecure: false,
+    hasAuthProvider: false,
+    behindProxy: 'https://box.tailnet.ts.net',
+  });
+  assert.equal(noProvider.action, 'refuse');
+  if (noProvider.action === 'refuse') assert.match(noProvider.message, /behind-proxy/);
+
+  // "a proxy flag never weakens" — --insecure has no effect once behind-proxy is set.
+  const insecureToo = decideStartup({
+    host: '127.0.0.1',
+    insecure: true,
+    hasAuthProvider: false,
+    behindProxy: 'https://box.tailnet.ts.net',
+  });
+  assert.equal(insecureToo.action, 'refuse', '--insecure must not bypass the forced gate');
+
+  const withProvider = decideStartup({
+    host: '127.0.0.1',
+    insecure: false,
+    hasAuthProvider: true,
+    behindProxy: 'https://box.tailnet.ts.net',
+  });
+  assert.deepEqual(withProvider, { action: 'start' });
+});
+
+test('host header allowlist: the --behind-proxy public host is allowed at any port (REQ-20.2)', () => {
+  assert.equal(hostHeaderAllowed('box.tailnet.ts.net', '127.0.0.1', 9119, 'box.tailnet.ts.net'), true);
+  assert.equal(hostHeaderAllowed('box.tailnet.ts.net:443', '127.0.0.1', 9119, 'box.tailnet.ts.net'), true);
+  assert.equal(hostHeaderAllowed('evil.example.com', '127.0.0.1', 9119, 'box.tailnet.ts.net'), false);
+  // Absent proxyHost: unchanged behavior (regression guard).
+  assert.equal(hostHeaderAllowed('box.tailnet.ts.net', '127.0.0.1', 9119), false);
+});
+
+test('CORS origin allowlist also honors the --behind-proxy host (REQ-20.2)', () => {
+  assert.equal(corsOriginAllowed('https://box.tailnet.ts.net', '127.0.0.1', 9119, 'box.tailnet.ts.net'), true);
+  assert.equal(corsOriginAllowed('https://evil.example.com', '127.0.0.1', 9119, 'box.tailnet.ts.net'), false);
+});
+
+test('parseBehindProxy: accepts https, normalizes to origin form, rejects non-https/malformed (REQ-20.2)', () => {
+  assert.deepEqual(parseBehindProxy('https://box.tailnet.ts.net'), {
+    origin: 'https://box.tailnet.ts.net',
+    host: 'box.tailnet.ts.net',
+  });
+  assert.deepEqual(parseBehindProxy('https://box.tailnet.ts.net/some/path?x=1'), {
+    origin: 'https://box.tailnet.ts.net',
+    host: 'box.tailnet.ts.net',
+  });
+  assert.equal(parseBehindProxy('http://box.tailnet.ts.net'), null, 'plain http rejected');
+  assert.equal(parseBehindProxy('not-a-url'), null);
 });
 
 test('redaction: tokens, credential paths, home prefix -> display form (REQ-12.5)', () => {

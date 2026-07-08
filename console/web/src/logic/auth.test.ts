@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { interpretAuthProbe, interpretLoginResponse } from './auth.ts';
+import { interpretAuthProbe, interpretLoginResponse, interpretProviderProbe } from './auth.ts';
 
 test('interpretAuthProbe: 401 is unauthed, everything else is authed (REQ-19.3)', () => {
   assert.equal(interpretAuthProbe(401), 'unauthed');
@@ -22,4 +22,11 @@ test('interpretLoginResponse: missing error body still yields a display string',
   const outcome = interpretLoginResponse(500, {});
   assert.equal(outcome.ok, false);
   if (!outcome.ok) assert.match(outcome.error, /500/);
+});
+
+test('interpretProviderProbe: oidc kind renders the Google link; anything else defaults to the password form (REQ-20)', () => {
+  assert.equal(interpretProviderProbe(200, { kind: 'oidc' }), 'oidc');
+  assert.equal(interpretProviderProbe(200, { kind: 'basic' }), 'basic');
+  assert.equal(interpretProviderProbe(200, {}), 'basic', 'malformed body degrades to basic, not a dead end');
+  assert.equal(interpretProviderProbe(500, { kind: 'oidc' }), 'basic', 'non-200 degrades to basic');
 });

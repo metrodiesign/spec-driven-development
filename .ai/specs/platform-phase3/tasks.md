@@ -203,8 +203,56 @@
          mode + loud warning + F-Term still unreachable) is satisfied by the PRE-EXISTING `decideStartup`/
          F-Term tests, unmodified by this task — `insecure` short-circuits before `hasAuthProvider` is even
          read, so making that value real doesn't change the branch; no new test was added specifically for it.
-- [ ] 11. Google OIDC + behind-proxy + §13.3 hardening sweep — `auth/oidc.ts` (discovery, PKCE S256, state/nonce, iss/aud/sub pins, clientSecret from 0600 config, logout), `--behind-proxy` (gate forced ON, proxy host allowlisted, Secure cookies, redirectUri derivation, EVERYTHING remote: F-Term/WS-tickets refused + Authenticate disabled, single remote definition anchoring 18.3/19.9/19.10), §13.3 checklist lines as named tests (single-operator, redaction on new routes, spawn rate limits + tokens).
+- [x] 11. Google OIDC + behind-proxy + §13.3 hardening sweep — `auth/oidc.ts` (discovery, PKCE S256, state/nonce, iss/aud/sub pins, clientSecret from 0600 config, logout), `--behind-proxy` (gate forced ON, proxy host allowlisted, Secure cookies, redirectUri derivation, EVERYTHING remote: F-Term/WS-tickets refused + Authenticate disabled, single remote definition anchoring 18.3/19.9/19.10), §13.3 checklist lines as named tests (single-operator, redaction on new routes, spawn rate limits + tokens).
      Satisfies: REQ-20, REQ-21. Depends on: 10. Verify: `pnpm -C console/backend test`.
+     Evidence:
+       - test: `pnpm -C console/backend test` -> 216 passed / 0 failed (was 194; +22: 4 security.test.ts
+         REQ-20.1/20.2 --behind-proxy forces the gate ignoring --insecure + refuse message, host/CORS
+         allowlist honors the proxy host at any port, `parseBehindProxy` https-only+origin-normalize; 11
+         new `auth/oidc.test.ts` — 6 `verifyIdToken` crypto-level (real RSA keypair via node:crypto,
+         RS256 sign/verify, no JWT library): valid token verifies, tampered payload fails signature,
+         wrong iss/aud/nonce/sub each fail closed, expired fails closed, non-RS256/unknown-kid fail
+         closed, malformed tokens never throw; 5 route-level against a fake injectable `fetchFn` (no
+         network): full start->callback round trip mints a REAL session (nonce/state/PKCE extracted from
+         the live redirect Location header, matching id_token minted and verified end-to-end), state
+         mismatch -> generic 401, missing pending cookie -> generic 401, forceSecure marks both cookies
+         Secure over plain-http inject, logout clears the cookie; 3 app-auth.test.ts — `/auth/provider`
+         exempt route reports the active kind, `behindProxyHost` ORs `/api/auth`'s `remote` to true
+         regardless of peer/bind, the proxy host passes the host-header/CORS hook; 4 new
+         `app-hardening.test.ts` (§13.3 sweep) — REQ-21.2 no route creates/registers a user (6 candidate
+         paths probed, all 404 with no auth gate registered to create 401-ambiguity), REQ-21.3 a
+         token-shaped value echoed through `/api/sched/start`'s args into `/api/sched/status` is redacted
+         (proves the global onSend hook still fires on the NEW F-Sched route), REQ-21.4 (x2)
+         `/api/sched/start` and `/api/sched/script` each enforce the rate limit BEFORE and their own
+         confirm-token/allowlist gate AFTER · `pnpm -C console/web test` -> 36 passed / 0 failed (was 35;
+         +1 `interpretProviderProbe` REQ-20 oidc/basic/malformed/non-200 branches)
+       - typecheck/lint: `pnpm -r typecheck` -> 6/6 projects clean · `pnpm lint` -> 0 issues
+       - spec-trace: `bash scripts/spec-trace.sh platform-phase3` -> OK, 142/142 EARS criteria covered
+       - viewports: n/a — no new layout/CSS; the only view change is `Login.tsx`'s existing single-column
+         centered form swapping its child (password form vs. a plain link), unchanged at 375/768/1440.
+         Verified instead by running the REAL `platform console` binary twice (Basic config, then an OIDC
+         config) via chrome-devtools MCP: Basic renders the unchanged password form (regression-safe);
+         OIDC renders "Sign in with Google" linking to `/auth/oidc/start`; clicking it in a live browser
+         redirected to the REAL `accounts.google.com` authorization endpoint with our params (state/nonce/
+         PKCE/redirect_uri) attached, which Google's real server rejected as `invalid_client` — the
+         correct/expected outcome for a fake `client_id` and the strongest available non-quota proof the
+         discovery+redirect wiring is genuinely correct against Google, not just internally self-consistent.
+       - deviations: (1) §13.3's literal WS close codes 4401/4403 aren't reproduced verbatim by the
+         Phase-1 term-runtime (it uses HTTP 403 pre-upgrade and `ws.close(4404)` post-upgrade) — spot-checked
+         while auditing checklist coverage; pre-existing from task 1, out of scope for REQ-20/21 here, not
+         changed. (2) REQ-21's sweep is scoped to the delta task 8-10 introduced (per this task's own
+         parenthetical) — the other ~12 §13.3 lines already have named tests from earlier phases (REQ-12/13/
+         14/15/16/18/19, confirmed by grep spot-check), not re-verified line-by-line here. (3) `--insecure`
+         has NO effect once `--behind-proxy` is set (decideStartup skips both the loopback AND insecure
+         shortcuts when `behindProxy` is present) — a deliberate reading of design's "a proxy flag never
+         weakens" (REQ-20.1), proven by an explicit test rather than left implicit. (4) the pending
+         OIDC handshake (state/nonce/PKCE verifier) travels in a short-lived (5 min) signed cookie, not
+         server memory — keeps `oidc.ts` stateless like `provider.ts`'s existing design note; a small
+         HMAC sign/verify pair is duplicated locally rather than widening `provider.ts`'s API for one
+         extra caller with a different payload shape. (5) task 13 (LIVE, manual) still owns the real
+         end-to-end Google login + a genuine second-machine/tailnet click-through — this task's browser
+         verification intentionally stops at "redirects correctly to the real Google endpoint," matching
+         task 13's own description of owning "real login ... (Basic; OIDC if Tailscale Serve available)".
 - [ ] 12. Symbol-level COMPRESS — `compressToSymbols` heuristic in context builder (imports/exports/declaration headers kept, bodies dropped, trailer), <2-declaration fallback to truncation, GOVERN scans full pre-compression content (secret-in-dropped-body test), per-piece reason for waste metrics.
      Satisfies: REQ-22. Verify: `pnpm -C core test`.
 - [ ] 13. LIVE pass (manual — never CI; Phase-1 task-11 analog) — live Codex conformance P1-P8 (expect INV-16 wire-vocabulary class: fix Ring 2 prompt/classification, never verdicts; discrimination self-test stays green), §5.3 non-interactive-usage policy review recorded BEFORE first fusion activation, <=3 live fusion activations under profile caps -> uplift interval into `docs/calibration/`, real login + F-Loop approve from a second machine over tailnet (Basic; OIDC if Tailscale Serve available, else recorded fallback), one-time governance approval of the new policy snapshot, auditor real sample, real-repo auto-merge stretch (not DoD), replay/cache per-run and never committed. Done = §14 Phase 3 DoD evidence complete.
