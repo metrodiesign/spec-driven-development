@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 
 import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo } from './logic/format.ts';
 import { interpretAuthProbe, type AuthGateState } from './logic/auth.ts';
+import { isTheme, resolveInitialTheme, themeToggleLabel, toggleTheme, THEME_STORAGE_KEY, type Theme } from './logic/theme.ts';
 import { TerminalPanel } from './TerminalPanel.tsx';
 import { Surfaces } from './Surfaces.tsx';
 import { Loop } from './Loop.tsx';
@@ -63,6 +64,27 @@ function useAuthGate(): AuthGateState {
   return state;
 }
 
+// Theme toggle (REQ-20.2): index.html's inline script already stamps
+// data-theme on <html> before paint, so read that as the source of truth
+// instead of re-resolving prefers-color-scheme a second time here.
+function useTheme(): { theme: Theme; toggle: () => void } {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const attr = document.documentElement.getAttribute('data-theme');
+    return isTheme(attr)
+      ? attr
+      : resolveInitialTheme(localStorage.getItem(THEME_STORAGE_KEY), window.matchMedia('(prefers-color-scheme: dark)').matches);
+  });
+  const toggle = (): void => {
+    setTheme((prev) => {
+      const next = toggleTheme(prev);
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+      return next;
+    });
+  };
+  return { theme, toggle };
+}
+
 function useFetch<T>(url: string | null): T | null {
   const [data, setData] = useState<T | null>(null);
   useEffect(() => {
@@ -86,6 +108,7 @@ function useFetch<T>(url: string | null): T | null {
 export function App() {
   const gate = useAuthGate();
   const ready = gate === 'authed';
+  const { theme, toggle: onToggleTheme } = useTheme();
 
   const status = useFetch<Status>(ready ? '/api/status' : null);
   const auth = useFetch<AuthInfo>(ready ? '/api/auth' : null);
@@ -113,7 +136,12 @@ export function App() {
         overflowWrap: 'anywhere',
       }}
     >
-      <h1>Platform Console</h1>
+      <header className="app-header">
+        <h1>Platform Console</h1>
+        <button type="button" aria-pressed={theme === 'dark'} onClick={onToggleTheme}>
+          {themeToggleLabel(theme)}
+        </button>
+      </header>
       <p role="note">
         {status?.disclaimer ??
           'Third-party tool operating on your local Claude Code installation — not an Anthropic product.'}
@@ -126,8 +154,8 @@ export function App() {
           style={{
             padding: '0.75rem',
             border: '2px solid',
-            borderColor: banner.tone === 'red' ? '#b30000' : '#2e7d32',
-            color: banner.tone === 'red' ? '#b30000' : '#2e7d32',
+            borderColor: banner.tone === 'red' ? 'var(--color-danger)' : 'var(--color-success)',
+            color: banner.tone === 'red' ? 'var(--color-danger)' : 'var(--color-success)',
             marginBottom: '1rem',
           }}
         >

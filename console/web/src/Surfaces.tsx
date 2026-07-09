@@ -24,13 +24,19 @@ function useFetch<T>(url: string | null): T | null {
 }
 
 const box: React.CSSProperties = {
-  border: '1px solid #8884',
+  border: '1px solid var(--color-border)',
   borderRadius: 6,
   padding: '0.75rem',
   marginBottom: '0.75rem',
   overflowWrap: 'anywhere',
 };
-const pre: React.CSSProperties = { overflowX: 'auto', maxWidth: '100%', background: '#8881', padding: '0.5rem', borderRadius: 4 };
+const pre: React.CSSProperties = {
+  overflowX: 'auto',
+  maxWidth: '100%',
+  background: 'var(--color-bg-subtle)',
+  padding: '0.5rem',
+  borderRadius: 4,
+};
 
 export function Surfaces({ project, remote }: { project: string | null; remote: boolean }): React.JSX.Element {
   const stats = useFetch<SysStats>('/api/system/stats');

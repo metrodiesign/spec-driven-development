@@ -80,7 +80,7 @@ export function Login(): React.JSX.Element {
           </label>
         </p>
         {error !== null && (
-          <p role="alert" style={{ color: '#b30000' }}>
+          <p role="alert" style={{ color: 'var(--color-danger)' }}>
             {error}
           </p>
         )}

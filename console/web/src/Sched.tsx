@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { automationHint, interpretStartResponse, schedStatusLabel, type SchedStatus } from './logic/sched.ts';
 
 const box: React.CSSProperties = {
-  border: '1px solid #8884',
+  border: '1px solid var(--color-border)',
   borderRadius: 6,
   padding: '0.75rem',
   marginBottom: '0.75rem',

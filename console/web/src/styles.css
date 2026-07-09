@@ -1,0 +1,72 @@
+/* Console design tokens — REQ-20 (themes) + REQ-21 (responsive).
+   Colors only: component layout stays inline per-file (design.md H). */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Light values match the pre-theme unstyled look byte-for-byte — #8884/#8881
+     were CSS #RGBA shorthand; rgba() here is their exact equivalent, not an
+     approximation, so light mode has zero visual diff from before this task. */
+  --color-bg: #ffffff;
+  --color-bg-subtle: rgba(136, 136, 136, 0.067);
+  --color-text: #000000;
+  --color-border: rgba(136, 136, 136, 0.267);
+  --color-border-strong: #444444;
+  --color-link: #0645ad;
+  --color-danger: #b30000;
+  --color-success: #2e7d32;
+  --color-warning: #b8860b;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg: #121212;
+  --color-bg-subtle: #1c1c1f;
+  --color-text: #e8e8e8;
+  --color-border: #45454c;
+  --color-border-strong: #7a7a82;
+  --color-link: #64b5f6;
+  --color-danger: #ff6b6b;
+  --color-success: #66bb6a;
+  --color-warning: #b8860b;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+a {
+  color: var(--color-link);
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* REQ-21.3: keep controls reachable/tappable at mobile sizes. */
+  button,
+  input,
+  select,
+  textarea {
+    min-height: 2.75rem;
+    padding: 0.5rem 0.75rem;
+  }
+}

@@ -135,7 +135,7 @@ export function TerminalPanel({ project }: { project: string }) {
           ))}
         </ul>
       )}
-      <div ref={hostRef} style={{ overflowX: 'auto', border: '1px solid #444' }} />
+      <div ref={hostRef} style={{ overflowX: 'auto', border: '1px solid var(--color-border-strong)' }} />
       <p>
         <small>
           PTY {ptyId ?? '—'} · {attached ? 'attached (single active writer)' : 'not attached'}

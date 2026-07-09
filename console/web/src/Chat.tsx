@@ -17,7 +17,7 @@ import {
 import { windowSummary, type WindowInfo } from './logic/format.ts';
 
 const box: React.CSSProperties = {
-  border: '1px solid #8884',
+  border: '1px solid var(--color-border)',
   borderRadius: 6,
   padding: '0.75rem',
   marginBottom: '0.75rem',
@@ -85,7 +85,10 @@ export function Chat({ project }: { project: string }) {
   return (
     <section aria-label="Chat">
       <h2>Chat</h2>
-      <p role="alert" style={{ border: '2px solid #b30000', color: '#b30000', padding: '0.5rem', marginBottom: '0.75rem' }}>
+      <p
+        role="alert"
+        style={{ border: '2px solid var(--color-danger)', color: 'var(--color-danger)', padding: '0.5rem', marginBottom: '0.75rem' }}
+      >
         ไม่ครบเท่า CLI — slash commands/plan mode ไม่มี; ใช้ Terminal สำหรับ 100% parity
       </p>
       <p role="status">
@@ -133,7 +136,7 @@ export function Chat({ project }: { project: string }) {
           ))}
 
           {state.pendingApprovals.map((a) => (
-            <div key={a.toolUseId} role="alert" style={{ ...box, borderColor: '#b8860b' }}>
+            <div key={a.toolUseId} role="alert" style={{ ...box, borderColor: 'var(--color-warning)' }}>
               <p>
                 approve tool <code>{a.name}</code>? <small>{JSON.stringify(a.input)}</small>
               </p>
