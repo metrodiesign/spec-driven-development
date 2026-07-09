@@ -4,12 +4,16 @@ import { test } from 'node:test';
 import {
   attestationChecklist,
   canApprove,
+  canRollbackDeploy,
+  deployCardVisible,
+  deployProbeSummary,
   isGovernanceProposal,
   latestTaskState,
   nextSince,
   stateBadge,
   steeringControls,
   taskApprovalPackages,
+  type DeployStatus,
   type LoopApprovalPackage,
   type LoopEvent,
 } from './loop.ts';
@@ -91,4 +95,44 @@ test('steeringControls: PAUSED -> resume + immediate inject, pause disabled', ()
 
 test('steeringControls: a steerable running state -> pause + queue-at-boundary inject (REQ-17.1), resume disabled', () => {
   assert.deepEqual(steeringControls(false, 'IMPLEMENTING'), { canPause: true, canResume: false, canInject: true, injectAtNextBoundary: true });
+});
+
+test('deployCardVisible: hidden with no status, or the idle {state:null, approval:null} shape (REQ-7.4)', () => {
+  assert.equal(deployCardVisible(null), false, 'fetch failed / 501 not composed');
+  assert.equal(deployCardVisible({ state: null, approval: null }), false, 'composed but no deploy: configured');
+});
+
+test('deployCardVisible: visible once a state or a pending approval exists (REQ-7.1)', () => {
+  assert.equal(deployCardVisible({ state: 'CANARY', approval: null }), true);
+  const status: DeployStatus = { state: null, approval: pkg(['a']) };
+  assert.equal(deployCardVisible(status), true, 'PENDING_APPROVAL is carried as approval-present, state still null pre-decision');
+});
+
+test('canRollbackDeploy: only EXPANDED shows the manual-rollback control (REQ-7.2)', () => {
+  assert.equal(canRollbackDeploy('EXPANDED'), true);
+  for (const s of [null, 'CANARY', 'OBSERVING', 'ROLLING_BACK', 'ROLLED_BACK', 'ESCALATED']) {
+    assert.equal(canRollbackDeploy(s), false, `${String(s)} never shows rollback`);
+  }
+});
+
+test('deployProbeSummary: null before the stage starts (no CANARY event yet)', () => {
+  assert.equal(deployProbeSummary([]), null);
+  assert.equal(
+    deployProbeSummary([{ seq: 1, type: 'PROBE_RUN', taskId: 'T-1', payload: { exit: 0 } }]),
+    null,
+    'a repair-round probe with no CANARY event is never mistaken for a deploy probe',
+  );
+});
+
+test('deployProbeSummary: counts only PROBE_RUN events after CANARY, ignoring earlier repair-round probes (REQ-7.1)', () => {
+  const events: LoopEvent[] = [
+    // A repair-round probe BEFORE deploy even exists (hypothesis.ts shares PROBE_RUN) — must never count.
+    { seq: 1, type: 'PROBE_RUN', taskId: 'T-1', payload: { exit: 1 } },
+    { seq: 2, type: 'DEPLOY_STATE', taskId: 'T-1', payload: { state: 'CANARY' } },
+    { seq: 3, type: 'DEPLOY_STATE', taskId: 'T-1', payload: { state: 'OBSERVING' } },
+    { seq: 4, type: 'PROBE_RUN', taskId: 'T-1', payload: { exit: 0 } },
+    { seq: 5, type: 'PROBE_RUN', taskId: 'T-1', payload: { exit: 1 } },
+    { seq: 6, type: 'PROBE_RUN', taskId: 'T-1', payload: { exit: null, error: true } },
+  ];
+  assert.deepEqual(deployProbeSummary(events), { pass: 1, fail: 2 });
 });

@@ -100,6 +100,17 @@ export {
   type HumanPlaneServer,
 } from './human/api.ts';
 export {
+  runDeployStage,
+  runManualRollback,
+  type DeployClock,
+  type DeployOutcome,
+  type DeployRootCause,
+  type DeployRootCauseTrigger,
+  type DeployStageDeps,
+  type DeployState,
+  type DeployTrigger,
+} from './deploy/stage.ts';
+export {
   computeCalibration,
   computeFusionCalibration,
   type CalibrationInput,

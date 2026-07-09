@@ -83,6 +83,19 @@ async function makeLiveRun(runsRoot: string, runId: string, over?: Partial<Handl
       onPause: () => calls.push('pause'),
       onResume: () => calls.push('resume'),
       onInject: (g) => { calls.push(`inject:${g}`); return { ok: true, evidenceRef: 'blob://guid' }; },
+      // Deploy plane (REQ-6) — a SEPARATE surface from approvals/onDecision above; a
+      // package is always "pending" in this fixture so the happy-path proxy tests
+      // below don't need per-test overrides (mirrors the approvals Map fixture).
+      deployState: () => 'PENDING_APPROVAL',
+      deployApproval: () => pkg(`${runId}-D1`),
+      onDeployDecision: (decision) => {
+        calls.push(`deploy_decision:${decision}`);
+        return { ok: true };
+      },
+      onDeployRollback: () => {
+        calls.push('deploy_rollback');
+        return { ok: true };
+      },
       ...over,
     },
   });
@@ -271,6 +284,86 @@ test('POST /api/loop/:run/kill proxies + audits (REQ-15.4)', async () => {
   }
 });
 
+test('GET /api/loop/:run/deploy: unknown run -> 404; ended run -> 409; live run -> proxied 200 (REQ-15.2/15.6, REQ-6.3)', async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
+  const live = await makeLiveRun(runsRoot, 'RUN-LIVE');
+  mkdirSync(join(runsRoot, 'RUN-ENDED'));
+  const app = buildApp(deps(runsRoot));
+  try {
+    const unknown = await app.inject({ method: 'GET', url: '/api/loop/nope/deploy', headers: GOOD_HOST });
+    assert.equal(unknown.statusCode, 404);
+
+    const ended = await app.inject({ method: 'GET', url: '/api/loop/RUN-ENDED/deploy', headers: GOOD_HOST });
+    assert.equal(ended.statusCode, 409);
+    assert.deepEqual(ended.json(), { error: 'run_ended' });
+
+    const ok = await app.inject({ method: 'GET', url: '/api/loop/RUN-LIVE/deploy', headers: GOOD_HOST });
+    assert.equal(ok.statusCode, 200);
+    const body = ok.json() as { state: string; approval: { id: string } };
+    assert.equal(body.state, 'PENDING_APPROVAL');
+    assert.equal(body.approval.id, 'RUN-LIVE-D1');
+  } finally {
+    await live.close();
+    await app.close();
+    rmSync(runsRoot, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/loop/:run/deploy/decision: proxies through + records a local-operator audit entry (REQ-15.4/15.10, REQ-6.4)', async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
+  const live = await makeLiveRun(runsRoot, 'RUN-LIVE');
+  const d = deps(runsRoot) as AppDeps & { __audited: Record<string, unknown>[] };
+  const app = buildApp(d);
+  try {
+    const body = { decision: 'approve', attestations: ['I reviewed the diff', 'Tests cover the change'] };
+    const r = await app.inject({ method: 'POST', url: '/api/loop/RUN-LIVE/deploy/decision', headers: GOOD_HOST, payload: body });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(live.calls, ['deploy_decision:approve']);
+    assert.deepEqual(d.__audited, [
+      { at: NOW, event: 'loop_deploy_decision', run: 'RUN-LIVE', principal: 'local-operator', method: 'none' },
+    ]);
+  } finally {
+    await live.close();
+    await app.close();
+    rmSync(runsRoot, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/loop/:run/deploy/rollback: proxies through + audits on success (REQ-15.4, REQ-6.8)', async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
+  const live = await makeLiveRun(runsRoot, 'RUN-LIVE', { deployState: () => 'EXPANDED' });
+  const d = deps(runsRoot) as AppDeps & { __audited: Record<string, unknown>[] };
+  const app = buildApp(d);
+  try {
+    const r = await app.inject({ method: 'POST', url: '/api/loop/RUN-LIVE/deploy/rollback', headers: GOOD_HOST });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(live.calls, ['deploy_rollback']);
+    assert.equal(d.__audited.length, 1);
+    assert.equal(d.__audited[0]?.['event'], 'loop_deploy_rollback');
+  } finally {
+    await live.close();
+    await app.close();
+    rmSync(runsRoot, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/loop/:run/deploy/rollback outside EXPANDED -> proxied 409, no audit (REQ-6.9)', async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
+  const live = await makeLiveRun(runsRoot, 'RUN-LIVE', { deployState: () => 'CANARY' });
+  const d = deps(runsRoot) as AppDeps & { __audited: Record<string, unknown>[] };
+  const app = buildApp(d);
+  try {
+    const r = await app.inject({ method: 'POST', url: '/api/loop/RUN-LIVE/deploy/rollback', headers: GOOD_HOST });
+    assert.equal(r.statusCode, 409);
+    assert.deepEqual(live.calls, [], 'the callback never fires outside EXPANDED');
+    assert.deepEqual(d.__audited, []);
+  } finally {
+    await live.close();
+    await app.close();
+    rmSync(runsRoot, { recursive: true, force: true });
+  }
+});
+
 test('mutations on an ended run -> 409, upstream never called (REQ-15.6)', async () => {
   const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
   mkdirSync(join(runsRoot, 'RUN-ENDED'));
@@ -282,6 +375,10 @@ test('mutations on an ended run -> 409, upstream never called (REQ-15.6)', async
     assert.equal(pause.statusCode, 409);
     const approve = await app.inject({ method: 'POST', url: '/api/loop/RUN-ENDED/approvals/x', headers: GOOD_HOST, payload: { decision: 'approve' } });
     assert.equal(approve.statusCode, 409);
+    const deployDecision = await app.inject({ method: 'POST', url: '/api/loop/RUN-ENDED/deploy/decision', headers: GOOD_HOST, payload: { decision: 'approve' } });
+    assert.equal(deployDecision.statusCode, 409);
+    const deployRollback = await app.inject({ method: 'POST', url: '/api/loop/RUN-ENDED/deploy/rollback', headers: GOOD_HOST });
+    assert.equal(deployRollback.statusCode, 409);
   } finally {
     await app.close();
     rmSync(runsRoot, { recursive: true, force: true });

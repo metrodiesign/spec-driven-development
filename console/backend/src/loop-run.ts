@@ -13,6 +13,7 @@ import { join, relative } from 'node:path';
 
 import {
   applyGovernanceApproval,
+  attestationsFor,
   buildApprovalPackage,
   computeCalibration,
   createBudget,
@@ -29,11 +30,16 @@ import {
   readGovernanceLog,
   runApprovedMerge,
   runAutoMerge,
+  runDeployStage,
+  runManualRollback,
   runTaskLoop,
   transition,
   type ApprovalPackage,
   type CalibrationResult,
   type Clock,
+  type DeployClock,
+  type DeployState,
+  type DeployStageDeps,
   type EventLog,
   type HandlerDeps,
   type MappedAc,
@@ -234,6 +240,12 @@ export async function runSupervisedLoop(opts: {
    */
   approval?: { maxDiffBudget?: number; timeoutMs?: number };
   /**
+   * Deploy-stage tuning (REQ-6.12). `expandedWindowMs` is the manual-rollback window the
+   * Human Plane server stays open for once a deploy reaches EXPANDED — default 10 minutes.
+   * Irrelevant when the frozen contract has no `deploy:` section.
+   */
+  deploy?: { expandedWindowMs?: number };
+  /**
    * Console audit mirror (REQ-18.3): every approval, steering (pause/inject/resume),
    * kill, and governance decision is echoed here in addition to the durable core
    * event log. Absent → no mirror (the core event log remains authoritative).
@@ -366,6 +378,44 @@ export async function runSupervisedLoop(opts: {
         return res.ok ? { ok: true, kind: res.kind } : { ok: false, detail: res.reason };
       },
     };
+    // Deploy plane (REQ-6): a SEPARATE surface from the task approvals Map/onDecision —
+    // deploy never touches the task state machine (COMPLETED stays terminal for tasks;
+    // architect finding #1). `deployState` derives from the log so it stays correct
+    // across the async gap between a decision and the stage's first recorded event.
+    let currentDeployApproval: ApprovalPackage | null = null;
+    let pendingDeployResolve: ((outcome: 'approve' | 'reject') => void) | null = null;
+    let deployDeps: DeployStageDeps | null = null;
+    let manualRollback: Promise<unknown> | null = null;
+    const deployState = (): DeployState | null => {
+      if (opts.contract.deploy === undefined) return null;
+      const last = log.all({ type: 'DEPLOY_STATE' }).at(-1);
+      if (last !== undefined) return last.payload['state'] as DeployState;
+      return currentDeployApproval !== null ? 'PENDING_APPROVAL' : null;
+    };
+    const waitForDeployDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout'> =>
+      new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          pendingDeployResolve = null;
+          resolve('timeout');
+        }, timeoutMs);
+        pendingDeployResolve = (outcome) => {
+          clearTimeout(timer);
+          pendingDeployResolve = null;
+          resolve(outcome);
+        };
+      });
+    const onDeployDecision: HandlerDeps['onDeployDecision'] = (decision) => {
+      audit({ event: 'deploy_decision', taskId: TASK_ID, decision });
+      pendingDeployResolve?.(decision);
+      return { ok: true };
+    };
+    const onDeployRollback: HandlerDeps['onDeployRollback'] = () => {
+      if (deployDeps === null) return { ok: false, detail: 'not_expanded' };
+      audit({ event: 'deploy_manual_rollback', taskId: TASK_ID });
+      manualRollback = runManualRollback(deployDeps);
+      return { ok: true };
+    };
+
     // REQ-2.2: the same Map instance the Human Plane server reads GET /approvals from —
     // populated below once a task actually needs a human decision.
     const approvals = new Map<string, ApprovalPackage>();
@@ -394,26 +444,33 @@ export async function runSupervisedLoop(opts: {
           controller.requestResume();
         },
         onInject,
+        deployState,
+        deployApproval: () => currentDeployApproval,
+        onDeployDecision,
+        onDeployRollback,
         ...governance,
       },
     });
     try {
+      // Hoisted (not inlined) so the deploy stage (REQ-6, post-COMPLETED) can run every
+      // deploy command through this SAME executor instance.
+      const executor = createExecutor({
+        worktreeDir: fx.wt,
+        runId: 'RUN-LIVE',
+        taskId: 'T-1',
+        log,
+        evidence,
+        policy: createDefaultPathPolicy(),
+        sandbox: denyNetworkSandbox(process.platform),
+        clock,
+        ...(opts.toolHandlers !== undefined ? { toolHandlers: opts.toolHandlers } : {}),
+      });
       const result = await runTaskLoop({
         runId: 'RUN-LIVE',
         taskId: 'T-1',
         role: 'implementer',
         source,
-        executor: createExecutor({
-          worktreeDir: fx.wt,
-          runId: 'RUN-LIVE',
-          taskId: 'T-1',
-          log,
-          evidence,
-          policy: createDefaultPathPolicy(),
-          sandbox: denyNetworkSandbox(process.platform),
-          clock,
-          ...(opts.toolHandlers !== undefined ? { toolHandlers: opts.toolHandlers } : {}),
-        }),
+        executor,
         gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: 'RUN-LIVE', taskId: 'T-1', log, evidence, clock }),
         log,
         budget,
@@ -540,6 +597,59 @@ export async function runSupervisedLoop(opts: {
               const tr = transition(currentState(), 'cancel');
               if (tr.ok) log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'cancel' } });
               finalState = 'CANCELLED';
+            }
+          }
+        }
+
+        // Deploy gate (REQ-6): built ALWAYS once the task is COMPLETED and the frozen
+        // contract has deploy: configured — regardless of approvalPolicy content (hard
+        // human floor) and NEVER through the task approvals Map/onDecision (architect
+        // finding #1). Deploy has its own state machine and never changes finalState:
+        // the task stays COMPLETED whatever the deploy outcome.
+        if (finalState === 'COMPLETED' && opts.contract.deploy !== undefined) {
+          const deployConfig = opts.contract.deploy;
+          currentDeployApproval = {
+            id: `deploy-${TASK_ID}`,
+            taskId: TASK_ID,
+            runId: RUN_ID,
+            goalExcerpt: opts.contract.goal.objective,
+            acIds: opts.contract.acceptanceCriteria.map((a) => a.id),
+            diffRef: gitOut(fx.wt, 'rev-parse', 'main').trim(),
+            evidence: { gateReports: [evidence.put(JSON.stringify(gateReport))], worktreeHash: gateReport.worktreeHash },
+            assumptions: ['network: none (simulation)'],
+            unresolvedRisks: [],
+            // Architect finding #7: L4 is the only risk class attesting recoverability/
+            // rollback+backup — exactly what a deploy approver must attest.
+            attestations: attestationsFor('L4'),
+            riskClass: 'L4',
+            createdAt: clock.now(),
+          };
+          audit({ event: 'deploy_package_created', taskId: TASK_ID, approvalId: currentDeployApproval.id });
+
+          // REQ-6: deploy decision shares the task approval's timeout knob.
+          const deployTimeoutMs = opts.approval?.timeoutMs ?? 30 * 60_000;
+          const deployDecision = await waitForDeployDecision(deployTimeoutMs);
+          if (deployDecision === 'timeout') {
+            // No HTTP call happened, so (unlike approve/reject, recorded by api.ts) the
+            // timeout event + audit is composition's own job (mirrors escalateTask above).
+            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'DEPLOY_DECISION', payload: { approvalId: currentDeployApproval.id, decision: 'timeout' } });
+            audit({ event: 'deploy_decision', taskId: TASK_ID, decision: 'timeout' });
+          }
+          currentDeployApproval = null;
+
+          if (deployDecision === 'approve') {
+            // No production wait exists anywhere in core yet (task 2 finding) — real here,
+            // tests just configure small interval_ms/expandedWindowMs.
+            const deployClock: DeployClock = { now: () => clock.now(), wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) };
+            deployDeps = { runId: RUN_ID, taskId: TASK_ID, config: deployConfig, executor, log, evidence, clock: deployClock };
+            const deployOutcome = await runDeployStage(deployDeps);
+            if (deployOutcome.finalState === 'EXPANDED') {
+              const expandedWindowMs = opts.deploy?.expandedWindowMs ?? 10 * 60_000;
+              await deployClock.wait(expandedWindowMs);
+              // A manual rollback triggered during the window must finish before the
+              // server (and this run) tears down — REQ-6.12's "remain open" scope.
+              await manualRollback;
+              log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'DEPLOY_WINDOW_CLOSED', payload: {} });
             }
           }
         }

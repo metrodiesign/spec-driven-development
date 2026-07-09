@@ -175,7 +175,10 @@ export type EventType =
   // Phase 4 approval-pipeline production wiring (append-only, INV-10; REQ-2.2).
   | 'APPROVAL_PACKAGE_CREATED'
   // Phase 4 deploy stage addition (append-only, INV-10; REQ-5.1).
-  | 'DEPLOY_STATE';
+  | 'DEPLOY_STATE'
+  // Phase 4 deploy approval + Human Plane surface (append-only, INV-10; REQ-6.7/6.11/6.12).
+  | 'DEPLOY_DECISION'
+  | 'DEPLOY_WINDOW_CLOSED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

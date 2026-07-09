@@ -29,9 +29,15 @@ export type DeployTrigger =
   | 'expand_ok'
   | 'expand_failed'
   | 'rollback_ok'
-  | 'rollback_failed';
+  | 'rollback_failed'
+  | 'manual_rollback';
 
-export type DeployRootCauseTrigger = 'canary_failed' | 'observe_failed' | 'expand_failed' | 'rollback_failed';
+export type DeployRootCauseTrigger =
+  | 'canary_failed'
+  | 'observe_failed'
+  | 'expand_failed'
+  | 'rollback_failed'
+  | 'manual_rollback';
 
 export interface DeployRootCause {
   trigger: DeployRootCauseTrigger;
@@ -176,4 +182,14 @@ export async function runDeployStage(deps: DeployStageDeps): Promise<DeployOutco
 
   record(deps, 'EXPANDED', 'expand_ok');
   return { finalState: 'EXPANDED', probeResults };
+}
+
+/**
+ * Manual rollback (REQ-6.8): operator-triggered via POST /deploy/rollback, legal only from
+ * EXPANDED (the caller's job to guard — see api.ts). Reuses `runRollback` so there is exactly
+ * one rollback code path with identical evidence/state semantics as the automated trigger.
+ */
+export async function runManualRollback(deps: DeployStageDeps): Promise<DeployOutcome> {
+  const { finalState, rootCause } = await runRollback(deps, 'manual_rollback', 0, []);
+  return { finalState, probeResults: [], rootCause };
 }

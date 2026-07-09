@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { redactSecrets } from './redact.ts';
 import type { EventLog } from '../state/event-log.ts';
 import type { ApprovalPackage } from './approval.ts';
+import type { DeployState } from '../deploy/stage.ts';
 import type { GovernanceKind, GovernanceProposal } from '../governance/policy.ts';
 import type { TaskState } from '../types.ts';
 
@@ -62,6 +63,18 @@ export interface HandlerDeps {
    * both paths feed the SAME queue `runTaskLoop` drains at its next boundary.
    */
   onInject?(guidance: string, opts: { atNextBoundary: boolean }): { ok: true; evidenceRef: string } | { ok: false; reason: string };
+  /**
+   * Deploy approval + Human Plane deploy surface (REQ-6). A SEPARATE path from
+   * `onDecision`/`approvals` — the deploy package never enters the task `approvals`
+   * Map and its decision never touches the task state machine (COMPLETED stays
+   * terminal for tasks; architect finding #1). All optional: a server started
+   * without them keeps GET /deploy and POST /deploy/* at the Phase-1 501.
+   */
+  deployState?(): DeployState | null;
+  deployApproval?(): ApprovalPackage | null;
+  onDeployDecision?(decision: 'approve' | 'reject'): { ok: boolean; state?: DeployState; detail?: string };
+  /** Manual rollback, EXPANDED-only (guarded here, before this is ever called — REQ-6.9). */
+  onDeployRollback?(): { ok: boolean; detail?: string };
 }
 
 export interface HttpLike {
@@ -149,6 +162,61 @@ export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult
     deps.log.append({ runId: deps.runId, taskId: null, type: 'KILL_REQUESTED', payload: {} });
     deps.onKill();
     return { status: 200, body: { killed: true } };
+  }
+
+  if (req.method === 'GET' && path === '/deploy') {
+    // Phase-1 pattern (mirrors /steering/* below): a server started without deploy
+    // composed keeps this a flat 501 (REQ-6.3).
+    if (deps.deployState === undefined) {
+      return { status: 501, body: { error: 'not_enabled_phase1', detail: 'deploy not composed' } };
+    }
+    return { status: 200, body: { state: deps.deployState(), approval: deps.deployApproval?.() ?? null } };
+  }
+
+  if (req.method === 'POST' && path === '/deploy/decision') {
+    if (deps.onDeployDecision === undefined) {
+      return { status: 501, body: { error: 'not_enabled_phase1', detail: 'deploy not composed' } };
+    }
+    const pending = deps.deployApproval?.() ?? null;
+    if (pending === null) return { status: 404, body: { error: 'no_pending_deploy' } };
+    let parsed: { decision?: unknown; attestations?: unknown };
+    try {
+      parsed = JSON.parse(req.body) as typeof parsed;
+    } catch {
+      return { status: 400, body: { error: 'bad_json' } };
+    }
+    const decision = parsed.decision;
+    if (decision !== 'approve' && decision !== 'reject') {
+      return { status: 400, body: { error: 'decision must be approve|reject' } };
+    }
+    if (decision === 'approve') {
+      const given = new Set(Array.isArray(parsed.attestations) ? parsed.attestations.map(String) : []);
+      const complete = pending.attestations.every((a) => given.has(a));
+      if (!complete) return { status: 400, body: { error: 'attestations_incomplete' } };
+    }
+    deps.log.append({
+      runId: deps.runId,
+      taskId: pending.taskId,
+      type: 'DEPLOY_DECISION',
+      payload: { approvalId: pending.id, decision },
+    });
+    const res = deps.onDeployDecision(decision);
+    if (!res.ok) return { status: 409, body: { error: res.detail ?? 'deploy_decision_refused' } };
+    return { status: 200, body: { state: res.state ?? null } };
+  }
+
+  if (req.method === 'POST' && path === '/deploy/rollback') {
+    if (deps.onDeployRollback === undefined) {
+      return { status: 501, body: { error: 'not_enabled_phase1', detail: 'deploy not composed' } };
+    }
+    // Legal ONLY from EXPANDED (REQ-6.9) — the automated path owns rollback during
+    // CANARY/OBSERVING; interrupting a running stage is the kill switch's job.
+    if (deps.deployState?.() !== 'EXPANDED') {
+      return { status: 409, body: { error: 'not_expanded', state: deps.deployState?.() ?? null } };
+    }
+    const res = deps.onDeployRollback();
+    if (!res.ok) return { status: 409, body: { error: res.detail ?? 'rollback_refused' } };
+    return { status: 200, body: { ok: true } };
   }
 
   if (req.method === 'POST' && path.startsWith('/steering/')) {

@@ -805,6 +805,38 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       if (res.status === 200) audit({ event: 'loop_kill', run: req.params.run, ...localOperator });
       return reply.code(res.status).send(res.body);
     });
+
+    // REQ-6/7: F-Loop deploy card — a SEPARATE surface from /approvals (architect
+    // finding #1); same proxy + audit-on-success pattern as the routes above.
+    app.get<{ Params: { run: string } }>('/api/loop/:run/deploy', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'GET', path: '/deploy' });
+      return reply.code(res.status).send(res.body);
+    });
+
+    app.post<{ Params: { run: string }; Body: unknown }>('/api/loop/:run/deploy/decision', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'POST', path: '/deploy/decision', body: req.body });
+      if (res.status === 200) {
+        audit({ event: 'loop_deploy_decision', run: req.params.run, ...localOperator });
+      }
+      return reply.code(res.status).send(res.body);
+    });
+
+    app.post<{ Params: { run: string } }>('/api/loop/:run/deploy/rollback', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'POST', path: '/deploy/rollback' });
+      if (res.status === 200) {
+        audit({ event: 'loop_deploy_rollback', run: req.params.run, ...localOperator });
+      }
+      return reply.code(res.status).send(res.body);
+    });
   }
 
   // --- F-Sched (REQ-16): start/stop the platform loop process or an

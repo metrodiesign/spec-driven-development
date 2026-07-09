@@ -43,6 +43,10 @@ const CONTRACT: TaskContract = {
 
 const clock = { now: () => 1_000_000 };
 
+// Deploy commands run through the REAL sandboxed executor (RUN_COMMAND), same
+// requirement as core/src/deploy/stage.test.ts (D-003).
+const darwinOnly = { skip: process.platform !== 'darwin' ? 'darwin-only RUN_COMMAND sandbox (D-003)' : false };
+
 interface ApprovalPackageJSON {
   id: string;
   taskId: string;
@@ -101,6 +105,39 @@ function decide(url: string, token: string, id: string, decision: 'approve' | 'r
   }).then((res) => res.status);
 }
 
+interface DeployStatusJSON {
+  state: string | null;
+  approval: ApprovalPackageJSON | null;
+}
+
+function fetchDeploy(url: string, token: string): Promise<DeployStatusJSON> {
+  return fetch(`${url}/deploy`, { headers: { authorization: `Bearer ${token}` } }).then(
+    (res) => res.json() as Promise<DeployStatusJSON>,
+  );
+}
+
+/** Poll GET /deploy until `state` matches `want`, then return the full status. */
+function waitForDeployState(url: string, token: string, want: string): Promise<DeployStatusJSON> {
+  return waitFor(async () => {
+    const s = await fetchDeploy(url, token);
+    return s.state === want ? s : null;
+  });
+}
+
+function decideDeploy(url: string, token: string, decision: 'approve' | 'reject', attestations: string[] = []): Promise<number> {
+  return fetch(`${url}/deploy/decision`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ decision, attestations }),
+  }).then((res) => res.status);
+}
+
+function rollbackDeploy(url: string, token: string): Promise<number> {
+  return fetch(`${url}/deploy/rollback`, { method: 'POST', headers: { authorization: `Bearer ${token}` } }).then(
+    (res) => res.status,
+  );
+}
+
 test('supervised loop with the FakeAdapter reaches REVIEWING; calibration computed (harness math only)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
@@ -153,6 +190,17 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
 // input the auto-merge gate needs to fire (REQ-7.2).
 const L1_CONTRACT: TaskContract = { ...CONTRACT, raw: { risk: 'L1' } };
 
+// Deploy config whose commands always succeed — reaches EXPANDED (REQ-6). Tiny
+// probes/interval so the composition tests below stay fast.
+const DEPLOY_OK: NonNullable<TaskContract['deploy']> = {
+  canaryCmd: 'exit 0',
+  observeCmd: 'exit 0',
+  expandCmd: 'exit 0',
+  rollbackCmd: 'exit 0',
+  observe: { probes: 1, failureThreshold: 0, intervalMs: 5 },
+};
+const L1_CONTRACT_DEPLOY: TaskContract = { ...L1_CONTRACT, deploy: DEPLOY_OK };
+
 test('E2E (REQ-18.4): an L1 task auto-merges + the sampled audit reproduces -> COMPLETED', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-e2e-'));
   try {
@@ -178,6 +226,7 @@ test('E2E (REQ-18.4): an L1 task auto-merges + the sampled audit reproduces -> C
       assert.equal(result?.payload['sampled'], true);
       assert.equal(result?.payload['reproduced'], true, 'the clean-checkout T1 reproduced the loop T1');
       assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).length, 0, 'no human approval on the auto path');
+      assert.equal(log.all({ type: 'DEPLOY_STATE' }).length, 0, 'no deploy: configured -> the deploy gate never fires (REQ-6.3)');
     } finally {
       log.close();
     }
@@ -318,6 +367,174 @@ test('kill while a package is pending ends the wait -> CANCELLED, the same termi
     rmSync(persistDir, { recursive: true, force: true });
   }
 });
+
+// --- Deploy gate (REQ-6): built ALWAYS post-COMPLETED when deploy: is configured,
+// on a SEPARATE surface from the task approvals Map/onDecision (architect finding
+// #1) — guard-path unit coverage (400/404/409/501) lives in core/src/human/api.test.ts;
+// these prove the real composition wiring end-to-end. ---
+
+test(
+  'deploy approval package built ALWAYS after COMPLETED; approve -> EXPANDED; never touches the task Map/onDecision (REQ-6.1/6.2/6.4/6.12)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-approve-'));
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+        deploy: { expandedWindowMs: 50 },
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      assert.equal(pending.approval?.id, 'deploy-T-1');
+      assert.equal(pending.approval?.riskClass, 'L4', 'architect finding #7: deploy uses L4 attestations');
+
+      // Regression (architect finding #1): the deploy package never enters GET /approvals.
+      const taskApprovals = await fetchApprovals(url, token);
+      assert.ok(!taskApprovals.some((p) => p.id === 'deploy-T-1'));
+
+      const decideStatus = await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      assert.equal(decideStatus, 200);
+
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED', 'deploy outcome never changes the task finalState');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.deepEqual(
+          log.all({ type: 'DEPLOY_STATE' }).map((e) => e.payload['state']),
+          ['CANARY', 'OBSERVING', 'EXPANDED'],
+        );
+        assert.equal(log.all({ type: 'DEPLOY_DECISION' }).at(-1)?.payload['decision'], 'approve');
+        assert.equal(log.all({ type: 'DEPLOY_WINDOW_CLOSED' }).length, 1, 'REQ-6.12: window closes after EXPANDED');
+        assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).length, 0, 'a deploy decision is never a task APPROVAL_RECORDED');
+        assert.equal(
+          log.all({ type: 'TASK_STATE' }).filter((e) => e.payload['trigger'] === 'approve').length,
+          0,
+          'deploy approve never fires a task transition (architect finding #1)',
+        );
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'deploy reject -> DEPLOY_DECISION{decision:reject}, stage skipped, task stays COMPLETED (REQ-6.7)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-reject-'));
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      const status = await decideDeploy(url, token, 'reject');
+      assert.equal(status, 200);
+
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(log.all({ type: 'DEPLOY_STATE' }).length, 0, 'a rejected deploy never starts the stage');
+        assert.equal(log.all({ type: 'DEPLOY_DECISION' }).at(-1)?.payload['decision'], 'reject');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'deploy decision timeout -> DEPLOY_DECISION{decision:timeout}, stage skipped, task stays COMPLETED (REQ-6.11)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-timeout-'));
+    try {
+      const out = await runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 50 },
+      });
+      assert.equal(out.finalState, 'COMPLETED', 'a skipped deploy never touches finalState');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(log.all({ type: 'DEPLOY_STATE' }).length, 0, 'a timed-out deploy decision never starts the stage');
+        assert.equal(log.all({ type: 'DEPLOY_DECISION' }).at(-1)?.payload['decision'], 'timeout');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'manual rollback at EXPANDED runs rollback_cmd -> ROLLED_BACK, audited (REQ-6.8/6.10)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-rollback-'));
+    const audited: Record<string, unknown>[] = [];
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+        deploy: { expandedWindowMs: 500 },
+        auditSink: (entry) => audited.push(entry),
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      await waitForDeployState(url, token, 'EXPANDED');
+
+      const status = await rollbackDeploy(url, token);
+      assert.equal(status, 200);
+
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED', 'a deploy rollback never touches the task finalState');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        const states = log.all({ type: 'DEPLOY_STATE' });
+        assert.deepEqual(
+          states.map((e) => e.payload['state']),
+          ['CANARY', 'OBSERVING', 'EXPANDED', 'ROLLING_BACK', 'ROLLED_BACK'],
+        );
+        assert.equal(states.find((e) => e.payload['state'] === 'ROLLING_BACK')?.payload['trigger'], 'manual_rollback');
+        assert.ok(audited.some((e) => e['event'] === 'deploy_manual_rollback'), 'REQ-6.10: manual rollback audited');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test('a diff over the budget escalates split_required — no package built (REQ-2.3)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-splitreq-'));
