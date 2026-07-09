@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 
 import { automationHint, interpretStartResponse, schedStatusLabel, type SchedStatus } from './logic/sched.ts';
+import { useI18n } from './I18nContext.tsx';
 
 const box: React.CSSProperties = {
   border: '1px solid var(--color-border)',
@@ -16,6 +17,7 @@ const box: React.CSSProperties = {
 const POLL_MS = 3000;
 
 export function Sched(): React.JSX.Element {
+  const { t } = useI18n();
   const [status, setStatus] = useState<SchedStatus | null>(null);
   const [goal, setGoal] = useState('');
   const [task, setTask] = useState('');
@@ -47,13 +49,13 @@ export function Sched(): React.JSX.Element {
     });
     const outcome = interpretStartResponse(res.status, await res.json());
     if (outcome.kind === 'started') {
-      setNote(`started (pid ${outcome.pid})`);
+      setNote(t('schedStarted', { pid: outcome.pid }));
       setConfirm(null);
       refreshStatus();
     } else if (outcome.kind === 'needs_confirmation') {
       setConfirm({ hint: automationHint(outcome.automation), confirmToken: outcome.confirmToken });
     } else {
-      setNote(`start refused: ${outcome.reason}`);
+      setNote(t('schedStartRefused', { reason: outcome.reason }));
       setConfirm(null);
     }
   }
@@ -61,7 +63,7 @@ export function Sched(): React.JSX.Element {
   async function stop(): Promise<void> {
     const res = await fetch('/api/sched/stop', { method: 'POST' });
     const { stopped } = (await res.json()) as { stopped: boolean };
-    setNote(stopped ? 'stopped' : 'nothing was running');
+    setNote(stopped ? t('schedStopped') : t('schedNothingRunning'));
     refreshStatus();
   }
 
@@ -72,7 +74,7 @@ export function Sched(): React.JSX.Element {
       body: JSON.stringify({ name: scriptName }),
     });
     const body = (await res.json()) as { error?: string; pid?: number };
-    setNote(res.ok ? `script started (pid ${body.pid})` : `script refused: ${body.error}`);
+    setNote(res.ok ? t('schedScriptStarted', { pid: body.pid ?? 0 }) : t('schedScriptRefused', { error: body.error ?? '' }));
     refreshStatus();
   }
 
@@ -80,15 +82,15 @@ export function Sched(): React.JSX.Element {
 
   return (
     <section aria-label="F-Sched">
-      <h2>Sched</h2>
-      <p role="status">{status === null ? 'loading…' : schedStatusLabel(status)}</p>
+      <h2>{t('schedHeading')}</h2>
+      <p role="status">{status === null ? t('loading') : schedStatusLabel(status)}</p>
       {note !== null && <p role="status">{note}</p>}
 
-      <div style={box} aria-label="Loop run">
-        <h3>Loop run</h3>
+      <div style={box} aria-label={t('schedLoopRunHeading')}>
+        <h3>{t('schedLoopRunHeading')}</h3>
         <p>
           <label>
-            goal.yaml path{' '}
+            {t('schedGoalPathLabel')}{' '}
             <input
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
@@ -99,38 +101,38 @@ export function Sched(): React.JSX.Element {
         </p>
         <p>
           <label>
-            task id (optional) <input value={task} onChange={(e) => setTask(e.target.value)} style={{ width: '10rem' }} />
+            {t('schedTaskIdLabel')} <input value={task} onChange={(e) => setTask(e.target.value)} style={{ width: '10rem' }} />
           </label>{' '}
           <label>
-            <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> live
+            <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> {t('schedLiveLabel')}
           </label>
         </p>
         <p>
           <button type="button" disabled={running || goal.trim().length === 0} onClick={() => void start()}>
-            Start
+            {t('schedStartButton')}
           </button>{' '}
           <button type="button" disabled={!running} onClick={() => void stop()}>
-            Stop
+            {t('schedStopButton')}
           </button>
         </p>
         {confirm !== null && (
-          <div style={box} role="alert" aria-label="Confirm start">
+          <div style={box} role="alert" aria-label={t('schedConfirmStartAriaLabel')}>
             <p>{confirm.hint}</p>
             <button type="button" onClick={() => void start(confirm.confirmToken)}>
-              Confirm and start
+              {t('schedConfirmAndStartButton')}
             </button>{' '}
             <button type="button" onClick={() => setConfirm(null)}>
-              Cancel
+              {t('schedCancelButton')}
             </button>
           </div>
         )}
       </div>
 
-      <div style={box} aria-label="Script">
-        <h3>Allowlisted script</h3>
+      <div style={box} aria-label={t('schedScriptSectionAriaLabel')}>
+        <h3>{t('schedAllowlistedScriptHeading')}</h3>
         <p>
           <label>
-            script name{' '}
+            {t('schedScriptNameLabel')}{' '}
             <input
               value={scriptName}
               onChange={(e) => setScriptName(e.target.value)}
@@ -139,7 +141,7 @@ export function Sched(): React.JSX.Element {
             />
           </label>{' '}
           <button type="button" disabled={running || scriptName.trim().length === 0} onClick={() => void runScript()}>
-            Run
+            {t('schedRunButton')}
           </button>
         </p>
       </div>

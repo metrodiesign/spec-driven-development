@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 
 import { canAct, overCap, TITLE_MAX, BODY_MAX, type IssueRecord } from './logic/issues.ts';
+import { useI18n } from './I18nContext.tsx';
 
 const box: React.CSSProperties = {
   border: '1px solid var(--color-border)',
@@ -16,6 +17,7 @@ const box: React.CSSProperties = {
 };
 
 export function Issues(): React.JSX.Element {
+  const { t } = useI18n();
   const [issues, setIssues] = useState<IssueRecord[]>([]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -44,27 +46,28 @@ export function Issues(): React.JSX.Element {
       refresh();
     } else {
       const err = (await res.json()) as { error?: string };
-      setNote(`filing failed: ${err.error ?? res.status}`);
+      setNote(t('issuesFilingFailed', { error: err.error ?? res.status }));
     }
   }
 
   async function act(id: string, action: 'convert' | 'reject'): Promise<void> {
     const res = await fetch(`/api/issues/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
-    setNote(res.ok ? null : `${action} failed: ${res.status}`);
+    const actionLabel = action === 'convert' ? t('issuesConvertButton') : t('reject');
+    setNote(res.ok ? null : t('issuesActionFailed', { action: actionLabel, status: res.status }));
     refresh();
   }
 
   return (
     <section aria-label="F-Issue">
-      <h2>Issues</h2>
-      <p role="status">issue text is untrusted data — shown as plain text, never executed or run automatically</p>
+      <h2>{t('issuesHeading')}</h2>
+      <p role="status">{t('issuesUntrustedNotice')}</p>
       {note !== null && <p role="alert">{note}</p>}
 
-      <div style={box} aria-label="File an issue">
-        <h3>File an issue</h3>
+      <div style={box} aria-label={t('issuesFileHeading')}>
+        <h3>{t('issuesFileHeading')}</h3>
         <p>
           <label>
-            title{' '}
+            {t('issuesTitleLabel')}{' '}
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -75,7 +78,7 @@ export function Issues(): React.JSX.Element {
         </p>
         <p>
           <label>
-            body
+            {t('issuesBodyLabel')}
             <br />
             <textarea
               value={body}
@@ -87,29 +90,29 @@ export function Issues(): React.JSX.Element {
           </label>
         </p>
         <button type="button" disabled={title.length === 0 || body.length === 0 || overCap(title, body)} onClick={() => void file()}>
-          File
+          {t('issuesFileButton')}
         </button>
       </div>
 
       {issues.length === 0 ? (
-        <p>no issues yet</p>
+        <p>{t('issuesNoIssuesYet')}</p>
       ) : (
         issues.map((issue) => (
-          <div key={issue.id} style={box} aria-label={`Issue ${issue.id}`}>
+          <div key={issue.id} style={box} aria-label={t('issuesIssueAriaLabel', { id: issue.id })}>
             <p>
               <strong>{issue.title}</strong> · <code>{issue.status}</code>
             </p>
             <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{issue.body}</pre>
             <button type="button" disabled={!canAct(issue)} onClick={() => void act(issue.id, 'convert')}>
-              Convert to draft goal
+              {t('issuesConvertButton')}
             </button>{' '}
             <button type="button" disabled={!canAct(issue)} onClick={() => void act(issue.id, 'reject')}>
-              Reject
+              {t('reject')}
             </button>
             {issue.goalDraftPath !== undefined && (
               <p>
                 <small>
-                  draft: <code>{issue.goalDraftPath}</code>
+                  {t('issuesDraftLabel')} <code>{issue.goalDraftPath}</code>
                 </small>
               </p>
             )}

@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo } from './logic/format.ts';
 import { interpretAuthProbe, type AuthGateState } from './logic/auth.ts';
 import { isTheme, resolveInitialTheme, themeToggleLabel, toggleTheme, THEME_STORAGE_KEY, type Theme } from './logic/theme.ts';
+import { useI18n } from './I18nContext.tsx';
 import { TerminalPanel } from './TerminalPanel.tsx';
 import { Surfaces } from './Surfaces.tsx';
 import { Loop } from './Loop.tsx';
@@ -109,6 +110,7 @@ export function App() {
   const gate = useAuthGate();
   const ready = gate === 'authed';
   const { theme, toggle: onToggleTheme } = useTheme();
+  const { t, locale, onToggleLocale } = useI18n();
 
   const status = useFetch<Status>(ready ? '/api/status' : null);
   const auth = useFetch<AuthInfo>(ready ? '/api/auth' : null);
@@ -137,19 +139,19 @@ export function App() {
       }}
     >
       <header className="app-header">
-        <h1>Platform Console</h1>
+        <h1>{t('appTitle')}</h1>
         <button type="button" aria-pressed={theme === 'dark'} onClick={onToggleTheme}>
-          {themeToggleLabel(theme)}
+          {t(themeToggleLabel(theme))}
+        </button>
+        <button type="button" onClick={onToggleLocale}>
+          {locale === 'th' ? t('localeToggleToEnglish') : t('localeToggleToThai')}
         </button>
       </header>
-      <p role="note">
-        {status?.disclaimer ??
-          'Third-party tool operating on your local Claude Code installation — not an Anthropic product.'}
-      </p>
+      <p role="note">{status?.disclaimer ?? t('appStatusDisclaimerFallback')}</p>
 
       {banner !== null && (
         <section
-          aria-label="Auth status"
+          aria-label={t('appAuthStatusAriaLabel')}
           role={banner.tone === 'red' ? 'alert' : 'status'}
           style={{
             padding: '0.75rem',
@@ -163,32 +165,32 @@ export function App() {
         </section>
       )}
 
-      <section aria-label="CLI status">
-        <h2>Status</h2>
+      <section aria-label={t('appCliStatusAriaLabel')}>
+        <h2>{t('appStatusHeading')}</h2>
         {status === null ? (
-          <p>loading…</p>
+          <p>{t('loading')}</p>
         ) : status.cli.available ? (
           <p>
-            CLI version: <code>{status.cli.version}</code> · active runs: {status.activeRuns.length}
+            {t('appCliVersionPrefix')} <code>{status.cli.version}</code> {t('appActiveRunsInfix')} {status.activeRuns.length}
           </p>
         ) : (
           <p>{status.cli.hint}</p>
         )}
       </section>
 
-      <section aria-label="Usage estimate">
-        <h2>Usage (estimate)</h2>
+      <section aria-label={t('appUsageAriaLabel')}>
+        <h2>{t('appUsageHeading')}</h2>
         {usage === null ? (
-          <p>loading…</p>
+          <p>{t('loading')}</p>
         ) : (
           <>
             <p>{windowSummary(usage.currentWindow, Date.now())}</p>
-            <p>5h windows opened in the last 7 days: {usage.windowsLast7Days}</p>
+            <p>{t('appWindowsOpenedLine', { count: usage.windowsLast7Days })}</p>
             {usage.weekly.available ? (
               <p>
-                Weekly since {usage.weekly.sinceReset}: {usage.weekly.entryCount} entries
+                {t('appWeeklySinceLine', { date: usage.weekly.sinceReset, count: usage.weekly.entryCount })}
                 {usage.weekly.calibratedPercent !== undefined
-                  ? ` · calibrated at ${usage.weekly.calibratedPercent}%`
+                  ? t('appCalibratedSuffix', { percent: usage.weekly.calibratedPercent })
                   : ''}
               </p>
             ) : (
@@ -203,18 +205,18 @@ export function App() {
         )}
       </section>
 
-      <section aria-label="Projects">
-        <h2>Projects</h2>
+      <section aria-label={t('appProjectsHeading')}>
+        <h2>{t('appProjectsHeading')}</h2>
         {projectsRes === null ? (
-          <p>loading…</p>
+          <p>{t('loading')}</p>
         ) : projectsRes.projects.length === 0 ? (
-          <p>{projectsRes.guidance ?? 'no projects yet'}</p>
+          <p>{projectsRes.guidance ?? t('appNoProjectsFallback')}</p>
         ) : (
           <ul>
             {projectsRes.projects.map((p) => (
               <li key={p.id}>
                 <a href={`?project=${encodeURIComponent(p.id)}`}>{projectLabel(p)}</a>{' '}
-                <small>({p.sessionCount} sessions)</small>
+                <small>{t('appSessionsCountSuffix', { count: p.sessionCount })}</small>
               </li>
             ))}
           </ul>
@@ -234,12 +236,12 @@ export function App() {
       {selected !== null && <Chat project={selected} />}
 
       {selected !== null && (
-        <section aria-label="Sessions">
+        <section aria-label={t('appSessionsAriaLabel')}>
           <h2>
-            Sessions — <code>{selected}</code>
+            {t('appSessionsHeadingPrefix')} <code>{selected}</code>
           </h2>
           {sessionsRes === null ? (
-            <p>loading…</p>
+            <p>{t('loading')}</p>
           ) : (
             <>
               {sessionsRes.warnings.length > 0 && (
@@ -247,13 +249,13 @@ export function App() {
               )}
               <div style={{ overflowX: 'auto' }}>
                 <table>
-                <caption>Sessions read live from local transcripts</caption>
+                <caption>{t('appSessionsCaption')}</caption>
                 <thead>
                   <tr>
-                    <th scope="col">session</th>
-                    <th scope="col">first</th>
-                    <th scope="col">last</th>
-                    <th scope="col">entries</th>
+                    <th scope="col">{t('appThSession')}</th>
+                    <th scope="col">{t('appThFirst')}</th>
+                    <th scope="col">{t('appThLast')}</th>
+                    <th scope="col">{t('appThEntries')}</th>
                   </tr>
                 </thead>
                 <tbody>

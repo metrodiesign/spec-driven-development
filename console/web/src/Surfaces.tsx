@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 
 import { statsRows, listOrEmpty, mcpAuthenticateState, type SysStats } from './logic/surfaces.ts';
+import { useI18n } from './I18nContext.tsx';
 
 function useFetch<T>(url: string | null): T | null {
   const [data, setData] = useState<T | null>(null);
@@ -39,6 +40,7 @@ const pre: React.CSSProperties = {
 };
 
 export function Surfaces({ project, remote }: { project: string | null; remote: boolean }): React.JSX.Element {
+  const { t } = useI18n();
   const stats = useFetch<SysStats>('/api/system/stats');
   const doctor = useFetch<{ available: boolean; degraded?: boolean; output?: string; hint?: string }>('/api/system/doctor');
   const subs = useFetch<{ subagents: string[] }>('/api/subagents?scope=user');
@@ -50,27 +52,29 @@ export function Surfaces({ project, remote }: { project: string | null; remote: 
   const mcpAuth = mcpAuthenticateState(remote);
 
   return (
-    <section aria-label="Governance surfaces">
-      <h2>Governance</h2>
+    <section aria-label={t('surfacesAriaLabel')}>
+      <h2>{t('surfacesHeading')}</h2>
 
-      <div style={box} aria-label="System">
-        <h3>System</h3>
-        {stats === null ? <p>loading…</p> : <ul>{statsRows(stats).map((r) => <li key={r}>{r}</li>)}</ul>}
+      <div style={box} aria-label={t('surfacesSystemHeading')}>
+        <h3>{t('surfacesSystemHeading')}</h3>
+        {stats === null ? <p>{t('loading')}</p> : <ul>{statsRows(stats).map((r) => <li key={r}>{r}</li>)}</ul>}
         {doctor !== null && (
           <p role={doctor.degraded === true ? 'status' : undefined}>
-            doctor: {doctor.available ? 'ok' : (doctor.hint ?? 'unavailable')}
+            {t('surfacesDoctorPrefix')} {doctor.available ? t('surfacesDoctorOk') : (doctor.hint ?? t('surfacesDoctorUnavailable'))}
           </p>
         )}
       </div>
 
-      <div style={box} aria-label="MCP servers">
-        <h3>MCP (project)</h3>
+      <div style={box} aria-label={t('surfacesMcpAriaLabel')}>
+        <h3>{t('surfacesMcpHeading')}</h3>
         {project === null ? (
-          <p>select a project to view its <code>.mcp.json</code></p>
+          <p>
+            {t('surfacesSelectProjectHint')} <code>.mcp.json</code>
+          </p>
         ) : mcp === null ? (
-          <p>loading…</p>
+          <p>{t('loading')}</p>
         ) : (
-          <pre style={pre}>{mcp.content === '' ? 'no .mcp.json yet' : mcp.content}</pre>
+          <pre style={pre}>{mcp.content === '' ? t('surfacesNoMcpYet') : mcp.content}</pre>
         )}
         {project !== null && (
           <p>
@@ -81,7 +85,7 @@ export function Surfaces({ project, remote }: { project: string | null; remote: 
                 window.location.search = `?project=${encodeURIComponent(project)}&cmd=mcp`;
               }}
             >
-              Authenticate
+              {t('surfacesAuthenticateButton')}
             </button>
             {mcpAuth.hint !== null && (
               <>
@@ -93,20 +97,20 @@ export function Surfaces({ project, remote }: { project: string | null; remote: 
         )}
       </div>
 
-      <div style={box} aria-label="Hooks">
-        <h3>Hooks (user)</h3>
-        <p><small>Edits require two-step consent (preview + confirm token) — see the CLI or the hook editor.</small></p>
-        {hooks === null ? <p>loading…</p> : <pre style={pre}>{hooks.content === '' ? 'no user settings.json' : hooks.content}</pre>}
+      <div style={box} aria-label={t('surfacesHooksAriaLabel')}>
+        <h3>{t('surfacesHooksHeading')}</h3>
+        <p><small>{t('surfacesHooksConsentNote')}</small></p>
+        {hooks === null ? <p>{t('loading')}</p> : <pre style={pre}>{hooks.content === '' ? t('surfacesNoUserSettings') : hooks.content}</pre>}
       </div>
 
-      <div style={box} aria-label="Subagents">
-        <h3>Subagents (user)</h3>
-        <p>{subs === null ? 'loading…' : listOrEmpty(subs.subagents, 'subagents')}</p>
+      <div style={box} aria-label={t('surfacesSubagentsAriaLabel')}>
+        <h3>{t('surfacesSubagentsHeading')}</h3>
+        <p>{subs === null ? t('loading') : listOrEmpty(subs.subagents, 'subagents')}</p>
       </div>
 
-      <div style={box} aria-label="Skills">
-        <h3>Skills (user)</h3>
-        <p>{skills === null ? 'loading…' : listOrEmpty(skills.skills, 'skills')}</p>
+      <div style={box} aria-label={t('surfacesSkillsAriaLabel')}>
+        <h3>{t('surfacesSkillsHeading')}</h3>
+        <p>{skills === null ? t('loading') : listOrEmpty(skills.skills, 'skills')}</p>
       </div>
     </section>
   );

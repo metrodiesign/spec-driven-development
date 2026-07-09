@@ -20,7 +20,12 @@ export function toggleTheme(current: Theme): Theme {
   return current === 'dark' ? 'light' : 'dark';
 }
 
-/** Button label names the theme a click switches TO, not the current one. */
-export function themeToggleLabel(current: Theme): string {
-  return current === 'dark' ? 'Light mode' : 'Dark mode';
+/**
+ * Button label key (REQ-22) names the theme a click switches TO, not the
+ * current one. Returns an i18n LocaleKey literal, not English text — App.tsx
+ * resolves it through t(). The two literals here are structurally checked
+ * against logic/i18n.ts's LocaleKey union at the App.tsx call site.
+ */
+export function themeToggleLabel(current: Theme): 'themeToggleToDark' | 'themeToggleToLight' {
+  return current === 'dark' ? 'themeToggleToLight' : 'themeToggleToDark';
 }

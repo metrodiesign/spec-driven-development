@@ -15,6 +15,7 @@ import {
   type ChatUiState,
 } from './logic/chat.ts';
 import { windowSummary, type WindowInfo } from './logic/format.ts';
+import { useI18n } from './I18nContext.tsx';
 
 const box: React.CSSProperties = {
   border: '1px solid var(--color-border)',
@@ -25,6 +26,7 @@ const box: React.CSSProperties = {
 };
 
 export function Chat({ project }: { project: string }) {
+  const { t } = useI18n();
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<ChatUiState>(initialChatUiState);
@@ -53,7 +55,7 @@ export function Chat({ project }: { project: string }) {
       body: JSON.stringify(body),
     });
     if (!r.ok) {
-      setNote(`session create failed: ${((await r.json()) as { error?: string }).error ?? r.status}`);
+      setNote(t('chatSessionCreateFailed', { error: ((await r.json()) as { error?: string }).error ?? r.status }));
       return;
     }
     const { wsTicket } = (await r.json()) as { sessionId: string; wsTicket: string };
@@ -83,23 +85,25 @@ export function Chat({ project }: { project: string }) {
   }
 
   return (
-    <section aria-label="Chat">
-      <h2>Chat</h2>
+    <section aria-label={t('chatHeading')}>
+      <h2>{t('chatHeading')}</h2>
       <p
         role="alert"
         style={{ border: '2px solid var(--color-danger)', color: 'var(--color-danger)', padding: '0.5rem', marginBottom: '0.75rem' }}
       >
-        ไม่ครบเท่า CLI — slash commands/plan mode ไม่มี; ใช้ Terminal สำหรับ 100% parity
+        {t('chatNonParityBanner')}
       </p>
       <p role="status">
-        <small>Quota: {windowSummary(quota, Date.now())}</small>
+        <small>
+          {t('chatQuotaLabel')} {windowSummary(quota, Date.now())}
+        </small>
       </p>
       {note !== null && <p role="alert">{note}</p>}
 
       {!connected && (
-        <div style={box} aria-label="Start chat">
+        <div style={box} aria-label={t('chatStartButton')}>
           <label>
-            resume session id (optional){' '}
+            {t('chatResumeLabel')}{' '}
             <input
               value={resume}
               onChange={(e) => setResume(e.target.value)}
@@ -107,19 +111,19 @@ export function Chat({ project }: { project: string }) {
             />
           </label>{' '}
           <label>
-            <input type="checkbox" checked={fork} onChange={(e) => setFork(e.target.checked)} /> fork
+            <input type="checkbox" checked={fork} onChange={(e) => setFork(e.target.checked)} /> {t('chatForkLabel')}
           </label>{' '}
           <button type="button" onClick={() => void start()}>
-            Start chat
+            {t('chatStartButton')}
           </button>
         </div>
       )}
 
       {connected && (
         <>
-          <div style={{ ...box, minHeight: '8rem' }} aria-label="Transcript">
+          <div style={{ ...box, minHeight: '8rem' }} aria-label={t('chatTranscriptAriaLabel')}>
             {state.messages.length === 0 ? (
-              <p>say something…</p>
+              <p>{t('chatEmptyTranscript')}</p>
             ) : (
               state.messages.map((m, i) => (
                 <p key={i} role={m.role === 'error' ? 'alert' : undefined}>
@@ -138,20 +142,21 @@ export function Chat({ project }: { project: string }) {
           {state.pendingApprovals.map((a) => (
             <div key={a.toolUseId} role="alert" style={{ ...box, borderColor: 'var(--color-warning)' }}>
               <p>
-                approve tool <code>{a.name}</code>? <small>{JSON.stringify(a.input)}</small>
+                {t('chatApproveToolPrefix')} <code>{a.name}</code>
+                {t('chatApproveToolSuffix')} <small>{JSON.stringify(a.input)}</small>
               </p>
               <button type="button" onClick={() => decide(a.toolUseId, 'allow')}>
-                Approve
+                {t('approve')}
               </button>{' '}
               <button type="button" onClick={() => decide(a.toolUseId, 'deny')}>
-                Deny
+                {t('deny')}
               </button>
             </div>
           ))}
 
           <p>
             <input
-              aria-label="Message"
+              aria-label={t('chatMessageAriaLabel')}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -160,7 +165,7 @@ export function Chat({ project }: { project: string }) {
               style={{ width: '24rem', maxWidth: '100%' }}
             />{' '}
             <button type="button" onClick={send} disabled={input.trim().length === 0}>
-              Send
+              {t('chatSend')}
             </button>
           </p>
         </>

@@ -31,7 +31,7 @@ test('toggleTheme: flips both directions', () => {
   assert.equal(toggleTheme('dark'), 'light');
 });
 
-test('themeToggleLabel: names the theme a click switches TO, not the current one', () => {
-  assert.equal(themeToggleLabel('light'), 'Dark mode');
-  assert.equal(themeToggleLabel('dark'), 'Light mode');
+test('themeToggleLabel: names the theme a click switches TO, not the current one (REQ-22 key, not text)', () => {
+  assert.equal(themeToggleLabel('light'), 'themeToggleToDark');
+  assert.equal(themeToggleLabel('dark'), 'themeToggleToLight');
 });
