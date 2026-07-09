@@ -1,6 +1,6 @@
 # Autonomous Engineering Platform on Claude — Unified Implementation Spec
 
-> **v1.3 (Unified) — สเปกเดียวและ source of truth สำหรับ implement** (ไม่มีเอกสารสเปกอื่นใน repo นี้) · v1.1 = interactive surface เป็น 100% CLI parity ผ่าน PTY (INV-17, §4.1) · v1.2 = sync สถานะส่งมอบ Phase 0–2 + rescope Phase 3 · v1.3 = sync สถานะส่งมอบ Phase 3 + rescope Phase 4 (ดูด backlog ค้างจาก Phase 3 เข้า scope + เพิ่ม DoD; GLM-5.2 ยังไม่มี access — เลื่อนต่อแบบมีเงื่อนไข ดู §14, §17)
+> **v1.3 (Unified) — source of truth หลักสำหรับ implement** (กฎเรื่องเอกสารสเปกอื่น/derived spec ดู §0.1) · v1.1 = interactive surface เป็น 100% CLI parity ผ่าน PTY (INV-17, §4.1) · v1.2 = sync สถานะส่งมอบ Phase 0–2 + rescope Phase 3 · v1.3 = sync สถานะส่งมอบ Phase 3 + rescope Phase 4 (ดูด backlog ค้างจาก Phase 3 เข้า scope + เพิ่ม DoD; GLM-5.2 ยังไม่มี access — เลื่อนต่อแบบมีเงื่อนไข ดู §14, §17)
 > **ภาษา:** prose อธิบายเป็นไทย · artifact ทุกชนิด (schema, YAML, code, prompt, ชื่อไฟล์, endpoint) เป็นอังกฤษ — ห้ามแปล artifact เป็นไทย
 > **บริบท:** แพลตฟอร์มรันบนเครื่องเจ้าของบัญชี **Claude Max 20x subscription** (auth ผ่าน `claude login` — ไม่ใช่ API plan) · single-operator
 
@@ -8,7 +8,7 @@
 
 ## §0 กติกาการ Implement (อ่านก่อนทุกอย่าง)
 
-1. **สเปกเดียว:** ไฟล์นี้เป็นสเปกและ source of truth เดียวสำหรับงานนี้ — **ไม่มีเอกสารสเปก/blueprint อื่นให้อ้างอิงใน repo นี้** ถ้าพบไฟล์สเปกอื่น ให้ถือว่าล้าสมัยและไม่นำมาใช้ (กันคำสั่งขัดกัน)
+1. **สเปกเดียว:** ไฟล์นี้เป็น source of truth หลักสำหรับภาพรวม/roadmap ของงานนี้ — **ข้อยกเว้นเดียว:** `.ai/specs/platform-phase*/{requirements,design,tasks}.md` เป็น derived spec ของแต่ละ phase (ผลิตตาม spec workflow ปกติของ repo นี้ ตาม CLAUDE.md — ดู pointer ที่ §17) ให้อ่านประกอบกัน ไม่ใช่แข่งกัน · ไฟล์สเปก/blueprint อื่นนอกเหนือจากสองแหล่งนี้ที่พบใน repo ให้ถือว่าล้าสมัยและไม่นำมาใช้ (กันคำสั่งขัดกัน)
 2. **Normative:** "ต้อง/ห้าม" = ข้อบังคับ · "ควร" = default ที่เปลี่ยนได้เมื่อมีเหตุผลและบันทึกใน `docs/DEVIATIONS.md` · คอลัมน์ "ข้อจำกัด/ห้าม claim" ในตาราง = สิ่งที่ห้ามอ้างเกินจริง ต้องสะท้อนใน docs/comments ของโค้ด
 3. **สร้างทีละ Phase ตาม §14 เท่านั้น** — ชื่อที่ปรากฏในเอกสาร ≠ ต้องสร้างตอนนี้ ทุกส่วนมี phase กำกับ · "เสร็จ" ของแต่ละเฟส = ผ่าน DoD (fault-injection + calibration + security checklist) ไม่ใช่ "เขียนโค้ดครบ"
 4. **เขียนเทสต์ก่อน implement** รวมถึงตัว core เอง (RED→GREEN ของ control plane)
