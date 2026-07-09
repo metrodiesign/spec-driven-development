@@ -163,6 +163,33 @@ test('routing.json / fusion-profiles.json joining POLICY_FILES makes creating th
   }
 });
 
+test('adding/changing the outcomeRouting block in an already-approved routing.json requires re-approval (REQ-14.2)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    writeFileSync(join(dir, 'routing.json'), JSON.stringify({ maxSusceptibility: 0.5 }));
+    const initial = ensureGovernanceApproved({ policyDir: dir, logPath, clock });
+    if (initial.ok) throw new Error('unreachable');
+    approveProposal({ logPath, id: initial.proposal.id, clock, decidedBy: 'human' });
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, true);
+
+    // Adding the outcomeRouting block (REQ-14.1) is itself a routing.json byte
+    // change -> refuse until re-approved, same mechanism as any other policy edit.
+    writeFileSync(join(dir, 'routing.json'), JSON.stringify({ maxSusceptibility: 0.5, outcomeRouting: { mode: 'shadow', epsilon: 10, minSamples: 20, minDivergences: 1 } }));
+    const afterAdd = ensureGovernanceApproved({ policyDir: dir, logPath, clock });
+    assert.equal(afterAdd.ok, false, 'adding the outcomeRouting block requires re-approval');
+    if (afterAdd.ok) throw new Error('unreachable');
+
+    // Flipping mode shadow -> active (activation, REQ-14.3) is ALSO a byte change -> refuse again.
+    approveProposal({ logPath, id: afterAdd.proposal.id, clock, decidedBy: 'human' });
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, true);
+    writeFileSync(join(dir, 'routing.json'), JSON.stringify({ maxSusceptibility: 0.5, outcomeRouting: { mode: 'active', epsilon: 10, minSamples: 20, minDivergences: 1 } }));
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, false, 'shadow -> active activation requires re-approval too');
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('flakySuspect -> flaky_quarantine proposal, never auto; approval is required for quarantine (REQ-9.5)', () => {
   const dir = policyDir();
   const logPath = logPathIn(dir);

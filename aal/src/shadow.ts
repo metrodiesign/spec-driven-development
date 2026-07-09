@@ -93,3 +93,63 @@ export function compareShadow(events: PlatformEvent[]): ShadowComparison {
     divergences,
   };
 }
+
+/**
+ * Per-adapter reviewing-reached stats (REQ-13.2), the cheapest outcome signal
+ * that exists today: replay every prior SHADOW_ROUTE this log has recorded and
+ * check whether ITS task ever reached REVIEWING. A task still in flight (the
+ * common case for its own most-recent round) simply contributes 0 so far —
+ * stats sharpen as a shared log accumulates across many tasks (e.g. the
+ * calibration corpus), never from this round's own not-yet-known outcome.
+ * Relocated from console/backend/src/loop-run.ts (REQ-13.2 — exported so both
+ * the shadow recorder and `shadowProven` fold it identically, no duplicate math).
+ */
+export function computeShadowOutcomeStats(events: PlatformEvent[]): Record<string, ShadowOutcomeStats> {
+  const stats: Record<string, ShadowOutcomeStats> = {};
+  for (const e of events) {
+    if (e.type !== 'SHADOW_ROUTE') continue;
+    const live = e.payload['live'] as string;
+    const s = (stats[live] ??= { attempts: 0, reviewingReached: 0 });
+    s.attempts += 1;
+    const reachedReviewing = events.some(
+      (e2) => e2.type === 'TASK_STATE' && e2.taskId === e.taskId && e2.payload['state'] === 'REVIEWING',
+    );
+    if (reachedReviewing) s.reviewingReached += 1;
+  }
+  return stats;
+}
+
+export interface ShadowProofCriteria {
+  minSamples: number;
+  /** Defaults to 1 when omitted (AZ-10 — the same default routing.json's outcomeRouting block falls back to). */
+  minDivergences?: number;
+}
+
+export interface ShadowProofReport {
+  proven: boolean;
+  n: number;
+  agreementRate: number;
+  divergences: ShadowDivergence[];
+  perAdapter: Record<string, ShadowOutcomeStats>;
+}
+
+/**
+ * Evidence report for the human activation decision (REQ-13.1) — built entirely
+ * on the existing folds (`compareShadow` for n/agreementRate/divergences,
+ * `computeShadowOutcomeStats` for perAdapter, REQ-13.2's "no duplicate fold").
+ * `proven` is n >= minSamples AND divergences >= minDivergences (REQ-13.3).
+ * Nothing in routing code ever calls this — it is read by a human only (INV-16,
+ * REQ-13.4); wiring a caller (CLI/report) is a separate, later concern.
+ */
+export function shadowProven(events: PlatformEvent[], c: ShadowProofCriteria): ShadowProofReport {
+  const { n, agreementRate, divergences } = compareShadow(events);
+  const perAdapter = computeShadowOutcomeStats(events);
+  const minDivergences = c.minDivergences ?? 1;
+  return {
+    proven: n >= c.minSamples && divergences.length >= minDivergences,
+    n,
+    agreementRate,
+    divergences,
+    perAdapter,
+  };
+}

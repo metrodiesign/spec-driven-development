@@ -46,7 +46,6 @@ import {
   type EventLog,
   type HandlerDeps,
   type MappedAc,
-  type PlatformEvent,
   type RiskClass,
   type Role,
   type TaskContract,
@@ -55,6 +54,7 @@ import {
 } from 'core';
 import {
   breakerKey,
+  computeShadowOutcomeStats,
   createAALProposalSource,
   createBreaker,
   createRegistry,
@@ -63,6 +63,7 @@ import {
   PASS_FAIL_PROBES,
   shadowFrozen,
   shadowWouldChoose,
+  wrapRouterForOutcome,
   type AdapterHealth,
   type AdapterInterface,
   type ConformanceRecord,
@@ -85,29 +86,6 @@ function sha256(b: Uint8Array): string {
 /** Read the per-task risk class from the frozen contract; anything unrecognized → null (→ L2, REQ-7.6). */
 function parseRisk(v: unknown): RiskClass | null {
   return v === 'L0' || v === 'L1' || v === 'L2' || v === 'L3' || v === 'L4' ? v : null;
-}
-
-/**
- * Per-adapter reviewing-reached stats (REQ-7.2), the cheapest outcome signal
- * that exists today: replay every prior SHADOW_ROUTE this log has recorded and
- * check whether ITS task ever reached REVIEWING. A task still in flight (the
- * common case for its own most-recent round) simply contributes 0 so far —
- * stats sharpen as a shared log accumulates across many tasks (e.g. the
- * calibration corpus), never from this round's own not-yet-known outcome.
- */
-function computeShadowOutcomeStats(events: PlatformEvent[]): Record<string, { attempts: number; reviewingReached: number }> {
-  const stats: Record<string, { attempts: number; reviewingReached: number }> = {};
-  for (const e of events) {
-    if (e.type !== 'SHADOW_ROUTE') continue;
-    const live = e.payload['live'] as string;
-    const s = (stats[live] ??= { attempts: 0, reviewingReached: 0 });
-    s.attempts += 1;
-    const reachedReviewing = events.some(
-      (e2) => e2.type === 'TASK_STATE' && e2.taskId === e.taskId && e2.payload['state'] === 'REVIEWING',
-    );
-    if (reachedReviewing) s.reviewingReached += 1;
-  }
-  return stats;
 }
 
 /**
@@ -249,6 +227,14 @@ export async function runSupervisedLoop(opts: {
    */
   deploy?: { expandedWindowMs?: number };
   /**
+   * Outcome routing (REQ-14/15). Absent -> `mode: 'shadow'` (today's Phase-3
+   * behavior, byte-identical: SHADOW_ROUTE always records, nothing reorders).
+   * `off` stops shadow recording too; `active` additionally reorders the
+   * eligible set by outcome BEFORE shadow observes the (now-reordered) live
+   * choice — REQ-14.3's "recorder wrapped OUTSIDE the outcome wrapper".
+   */
+  outcomeRouting?: { mode: 'off' | 'shadow' | 'active'; epsilon: number };
+  /**
    * Lessons pipeline (REQ-10/11/12). Absent -> no lessons pipeline (Phase-1
    * parity, byte-identical): confirmed hypotheses are never folded into pending
    * lessons, and none is ever injected. Also requires `governanceLogPath` (a
@@ -303,12 +289,34 @@ export async function runSupervisedLoop(opts: {
     const healthProbe = (adapter as { healthProbe?: () => Promise<AdapterHealth> }).healthProbe;
     reg.register(adapter, opts.conformanceRecord ?? passingRecord(adapter.manifest().adapterId), healthProbe);
     const budget = createBudget(opts.contract.budget, clock);
+    // Outcome-routing mode wiring (REQ-14.3). Absent -> 'shadow', preserving the
+    // Phase-3 unconditional-recorder behavior byte-identical for every existing
+    // caller. 'active' wraps the outcome reorder FIRST, then shadow OUTSIDE it,
+    // so shadow observes the already-reordered live choice.
+    const outcomeMode = opts.outcomeRouting?.mode ?? 'shadow';
+    let router: Router = createRouter(reg);
+    if (outcomeMode === 'active') {
+      router = wrapRouterForOutcome(router, {
+        registry: reg,
+        stats: () => computeShadowOutcomeStats(log.all()),
+        epsilonPercent: opts.outcomeRouting?.epsilon ?? 0,
+        // Durable round count (OUTCOME_ROUTE events so far this run+task) so a
+        // process restart mid-run never repeats an already-explored round (REQ-15.3).
+        exploreKey: () => `${RUN_ID}:${TASK_ID}:${log.all({ type: 'OUTCOME_ROUTE', taskId: TASK_ID }).length}`,
+        log,
+        runId: RUN_ID,
+        taskId: TASK_ID,
+      });
+    }
+    if (outcomeMode !== 'off') {
+      router = wrapRouterForShadow(router, { registry: reg, log, runId: RUN_ID, taskId: TASK_ID });
+    }
     const source = createAALProposalSource({
       runId: 'RUN-LIVE',
       taskId: 'T-1',
-      // Shadow routing (REQ-7): observes each round's live choice in shadow only,
-      // never influences it (REQ-7.4).
-      router: wrapRouterForShadow(createRouter(reg), { registry: reg, log, runId: 'RUN-LIVE', taskId: 'T-1' }),
+      // Shadow routing (REQ-7) + outcome routing ACTIVE (REQ-14/15): observes
+      // each round's live choice; 'active' mode additionally reorders it above.
+      router,
       breaker,
       worktreeDir: fx.wt,
       taskContract: {

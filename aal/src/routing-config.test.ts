@@ -49,4 +49,43 @@ test('the committed .ai/policies/routing.json parses to a usable config', () => 
   assert.ok(cfg.maxSusceptibility >= 0 && cfg.maxSusceptibility <= 1);
   assert.ok(cfg.maxParallel >= 1);
   assert.deepEqual(cfg.sched.scriptAllowlist, []);
+  assert.equal(cfg.outcomeRouting.mode, 'off', 'no outcomeRouting block committed yet -> off, same as pre-Phase-4 behavior');
+});
+
+// --- outcomeRouting (REQ-14.1) ---
+
+test('a well-formed outcomeRouting block loads verbatim (REQ-14.1)', () => {
+  const cfg = parseRoutingConfig({ outcomeRouting: { mode: 'active', epsilon: 10, minSamples: 20, minDivergences: 2 } });
+  assert.deepEqual(cfg.outcomeRouting, { mode: 'active', epsilon: 10, minSamples: 20, minDivergences: 2 });
+});
+
+test('an absent outcomeRouting block defaults to mode off (REQ-14.1)', () => {
+  const cfg = parseRoutingConfig({ maxSusceptibility: 0.5 });
+  assert.deepEqual(cfg.outcomeRouting, DEFAULT_ROUTING_CONFIG.outcomeRouting);
+  assert.equal(cfg.outcomeRouting.mode, 'off');
+});
+
+test('an invalid mode never becomes active/shadow — falls back to off (REQ-14.1)', () => {
+  assert.equal(parseRoutingConfig({ outcomeRouting: { mode: 'ACTIVE' } }).outcomeRouting.mode, 'off');
+  assert.equal(parseRoutingConfig({ outcomeRouting: { mode: 'always_on' } }).outcomeRouting.mode, 'off');
+  assert.equal(parseRoutingConfig({ outcomeRouting: { mode: 123 } }).outcomeRouting.mode, 'off');
+});
+
+test('a malformed epsilon falls back to 0 — never a bigger explore rate than the file states (REQ-14.1)', () => {
+  assert.equal(parseRoutingConfig({ outcomeRouting: { epsilon: 'ten' } }).outcomeRouting.epsilon, 0);
+  assert.equal(parseRoutingConfig({ outcomeRouting: { epsilon: -1 } }).outcomeRouting.epsilon, 0);
+  assert.equal(parseRoutingConfig({ outcomeRouting: { epsilon: 100 } }).outcomeRouting.epsilon, 0, 'epsilon is a percent — 100 is out of [0,100)');
+  assert.equal(parseRoutingConfig({ outcomeRouting: { epsilon: 1.5 } }).outcomeRouting.epsilon, 0, 'non-integer rejected');
+});
+
+test('minDivergences defaults to 1 when missing/malformed (AZ-10)', () => {
+  assert.equal(parseRoutingConfig({ outcomeRouting: { mode: 'shadow' } }).outcomeRouting.minDivergences, 1);
+  assert.equal(parseRoutingConfig({ outcomeRouting: { minDivergences: -1 } }).outcomeRouting.minDivergences, 1);
+  assert.equal(parseRoutingConfig({ outcomeRouting: { minDivergences: 'many' } }).outcomeRouting.minDivergences, 1);
+  assert.equal(parseRoutingConfig({ outcomeRouting: { minDivergences: 3 } }).outcomeRouting.minDivergences, 3);
+});
+
+test('a malformed minSamples falls back to the strict default (REQ-14.1)', () => {
+  assert.equal(parseRoutingConfig({ outcomeRouting: { minSamples: -5 } }).outcomeRouting.minSamples, DEFAULT_ROUTING_CONFIG.outcomeRouting.minSamples);
+  assert.equal(parseRoutingConfig({ outcomeRouting: { minSamples: 50 } }).outcomeRouting.minSamples, 50);
 });

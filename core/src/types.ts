@@ -182,7 +182,10 @@ export type EventType =
   // Phase 4 lessons pipeline addition (append-only, INV-10; REQ-10.1/11.2/12.5).
   | 'LESSON_PROPOSED'
   | 'LESSON_APPROVED'
-  | 'LESSON_INJECTED';
+  | 'LESSON_INJECTED'
+  // Phase 4 outcome-routing ACTIVE addition (append-only, INV-10; REQ-15.4/15.5).
+  | 'OUTCOME_ROUTE'
+  | 'ROUTING_FROZEN';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

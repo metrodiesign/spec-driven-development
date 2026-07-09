@@ -188,6 +188,58 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
   }
 });
 
+// --- outcomeRouting mode wiring (REQ-14.3) — the reorder/epsilon math itself is
+// unit-tested in aal/src/router.test.ts; these are composition-level wiring
+// smoke tests over the same single-adapter fixture. ---
+
+test('outcomeRouting mode off suppresses SHADOW_ROUTE entirely (REQ-14.3)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      outcomeRouting: { mode: 'off', epsilon: 0 },
+    });
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'SHADOW_ROUTE' }).length, 0, 'mode off -> plain router, no shadow recording either');
+      assert.equal(log.all({ type: 'OUTCOME_ROUTE' }).length, 0);
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('outcomeRouting mode active wraps shadow OUTSIDE the outcome wrapper — both record (REQ-14.3/15.4)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      outcomeRouting: { mode: 'active', epsilon: 0 },
+    });
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      const outcomeRoutes = log.all({ type: 'OUTCOME_ROUTE' });
+      assert.ok(outcomeRoutes.length >= 1, 'active mode reorders + records OUTCOME_ROUTE');
+      assert.equal(outcomeRoutes[0]?.payload['basis'], 'insufficient_data', 'a single fresh adapter has no outcome history yet');
+      assert.ok(log.all({ type: 'SHADOW_ROUTE' }).length >= 1, 'shadow still observes the (already-reordered) live choice');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
 // An L1 task (declared risk in the frozen contract) with a golden-backed AC — the
 // input the auto-merge gate needs to fire (REQ-7.2).
 const L1_CONTRACT: TaskContract = { ...CONTRACT, raw: { risk: 'L1' } };
