@@ -14,6 +14,14 @@ export interface TaskContract {
   acceptanceCriteria: { id: string; description: string; verification?: string; golden?: boolean }[];
   budget: BudgetLimits;
   approvalPolicy: string[];
+  /** Optional canary-deploy stage (design "B. Deploy plane", REQ-4). Absent -> no deploy stage. */
+  deploy?: {
+    canaryCmd: string;
+    observeCmd: string;
+    expandCmd: string;
+    rollbackCmd: string;
+    observe: { probes: number; failureThreshold: number; intervalMs: number };
+  };
   raw: Record<string, unknown>;
 }
 
@@ -37,6 +45,16 @@ function asRecord(v: unknown, what: string): Record<string, unknown> {
 
 function req<T>(v: T | undefined, what: string): T {
   if (v === undefined || v === null) throw new ContractInvalidError(`missing ${what}`);
+  return v;
+}
+
+function reqNonEmptyStr(v: unknown, what: string): string {
+  if (typeof v !== 'string' || v.trim() === '') throw new ContractInvalidError(`missing ${what}`);
+  return v;
+}
+
+function reqNum(v: unknown, what: string): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw new ContractInvalidError(`${what} must be a number`);
   return v;
 }
 
@@ -77,6 +95,31 @@ export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContr
     if (Array.isArray(list)) approvalPolicy = list.map(String);
   }
 
+  // Optional deploy stage (REQ-4). No network-enabling knob is ever read here
+  // (REQ-4.5) — only these five keys reach the frozen contract.
+  let deploy: TaskContract['deploy'];
+  const deployRaw = root['deploy'];
+  if (deployRaw !== undefined) {
+    const d = asRecord(deployRaw, 'deploy');
+    const observeRaw = asRecord(req(d['observe'], 'deploy.observe'), 'deploy.observe');
+    const probes = reqNum(observeRaw['probes'], 'deploy.observe.probes');
+    const failureThreshold = reqNum(observeRaw['failure_threshold'], 'deploy.observe.failure_threshold');
+    const intervalMs = reqNum(observeRaw['interval_ms'], 'deploy.observe.interval_ms');
+    // AZ-3: a threshold a rollback could never exceed is refused at freeze time,
+    // never mid-stage.
+    if (probes < 1) throw new ContractInvalidError('deploy.observe.probes must be >= 1');
+    if (failureThreshold >= probes) {
+      throw new ContractInvalidError('deploy.observe.failure_threshold must be less than probes');
+    }
+    deploy = {
+      canaryCmd: reqNonEmptyStr(d['canary_cmd'], 'deploy.canary_cmd'),
+      observeCmd: reqNonEmptyStr(d['observe_cmd'], 'deploy.observe_cmd'),
+      expandCmd: reqNonEmptyStr(d['expand_cmd'], 'deploy.expand_cmd'),
+      rollbackCmd: reqNonEmptyStr(d['rollback_cmd'], 'deploy.rollback_cmd'),
+      observe: { probes, failureThreshold, intervalMs },
+    };
+  }
+
   return {
     hash: sha256Hex(rawBytes),
     goal: {
@@ -87,6 +130,7 @@ export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContr
     acceptanceCriteria,
     budget,
     approvalPolicy,
+    ...(deploy !== undefined ? { deploy } : {}),
     raw: root,
   };
 }

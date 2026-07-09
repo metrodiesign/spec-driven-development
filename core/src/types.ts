@@ -173,7 +173,9 @@ export type EventType =
   // Phase 3 outcome-routing shadow addition (append-only, INV-10; REQ-7).
   | 'SHADOW_ROUTE'
   // Phase 4 approval-pipeline production wiring (append-only, INV-10; REQ-2.2).
-  | 'APPROVAL_PACKAGE_CREATED';
+  | 'APPROVAL_PACKAGE_CREATED'
+  // Phase 4 deploy stage addition (append-only, INV-10; REQ-5.1).
+  | 'DEPLOY_STATE';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context
