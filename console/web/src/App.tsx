@@ -10,6 +10,7 @@ import { TerminalPanel } from './TerminalPanel.tsx';
 import { Surfaces } from './Surfaces.tsx';
 import { Loop } from './Loop.tsx';
 import { Sched } from './Sched.tsx';
+import { Issues } from './Issues.tsx';
 import { Login } from './Login.tsx';
 
 interface Status {
@@ -194,6 +195,8 @@ export function App() {
       <Loop />
 
       <Sched />
+
+      <Issues />
 
       <Surfaces project={selected} remote={auth?.remote ?? true} />
 

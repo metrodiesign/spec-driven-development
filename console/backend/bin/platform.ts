@@ -590,6 +590,11 @@ async function main(): Promise<void> {
     // wires the same appender the CLI uses — every governed write in app.ts (hook
     // install, retention prune, ...) starts recording too, not just F-Loop.
     loopRunsRoot: join(homedir(), '.ai', 'runs'),
+    // F-Issue (REQ-8/9): repo-anchored like policies/governance — issues feed
+    // draft goal.yaml files a human reviews as part of THIS project, not a
+    // per-machine runtime artifact (unlike loopRunsRoot above).
+    issuesDir: join(aiDir(), 'issues'),
+    issuesRateOk: createSpawnRateLimiter(10),
     audit: auditAppend,
     ...(behindProxyHost !== undefined ? { behindProxyHost } : {}),
     ...(authProvider ? { auth: authProvider } : {}),

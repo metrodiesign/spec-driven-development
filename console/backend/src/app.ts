@@ -38,6 +38,7 @@ import {
   validateMcpConfig,
   validateSubagentFrontmatter,
 } from './surfaces.ts';
+import { convertIssue, createIssue, listIssues, rejectIssue, TITLE_MAX, BODY_MAX } from './issues.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -73,6 +74,10 @@ export interface AppDeps {
   termRateOk?(): boolean;
   /** F-Loop (REQ-15): root dir whose subdirectories hold each run's human-plane.json. Absent = routes do not register (mirrors termManager). */
   loopRunsRoot?: string;
+  /** F-Issue (REQ-8/9): dir holding `.ai/issues/<id>.json` + `<id>.goal.yaml` drafts. Absent = routes do not register (mirrors termManager). */
+  issuesDir?: string;
+  /** Per-source rate limiter for POST /api/issues (REQ-8.5); default allows all (mirrors termRateOk). */
+  issuesRateOk?(): boolean;
   /**
    * F-Sched (REQ-16): the thin runtime for the one registered child + where its
    * governed inputs live. Absent = routes do not register (mirrors termManager).
@@ -836,6 +841,53 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         audit({ event: 'loop_deploy_rollback', run: req.params.run, ...localOperator });
       }
       return reply.code(res.status).send(res.body);
+    });
+  }
+
+  // --- F-Issue (REQ-8/9): local issue intake -> human-gated draft goal.yaml.
+  // Body text is UNTRUSTED DATA (INV-3) end to end; this layer only stores and
+  // echoes it — the web renders it as plain text with a banner, never as
+  // HTML/markdown. Never starts, schedules, or enqueues a run (REQ-9.3). ---
+  const issuesDir = deps.issuesDir;
+  if (issuesDir !== undefined) {
+    const localOperator = { principal: 'local-operator', method: 'none' };
+
+    app.post<{ Body: { title?: string; body?: string } }>('/api/issues', async (req, reply) => {
+      if (deps.issuesRateOk !== undefined && !deps.issuesRateOk()) {
+        return reply.code(429).send({ error: 'too many issues filed; slow down' });
+      }
+      const b = req.body ?? {};
+      if (typeof b.title !== 'string' || typeof b.body !== 'string') {
+        return reply.code(400).send({ error: 'title and body are required' });
+      }
+      const res = createIssue(issuesDir, { title: b.title, body: b.body }, deps.now);
+      if (!res.ok) {
+        return reply.code(413).send({ error: `title <= ${TITLE_MAX} chars, body <= ${BODY_MAX} chars` });
+      }
+      audit({ event: 'issue_create', id: res.issue.id, ...localOperator });
+      return res.issue;
+    });
+
+    app.get('/api/issues', async () => ({ issues: listIssues(issuesDir) }));
+
+    app.post<{ Params: { id: string } }>('/api/issues/:id/convert', async (req, reply) => {
+      const res = convertIssue(issuesDir, req.params.id);
+      if (!res.ok) {
+        const status = res.reason === 'not_found' ? 404 : 409;
+        return reply.code(status).send({ error: res.reason === 'not_found' ? 'no such issue' : 'issue is not open' });
+      }
+      audit({ event: 'issue_convert', id: req.params.id, ...localOperator });
+      return { issue: res.value };
+    });
+
+    app.post<{ Params: { id: string } }>('/api/issues/:id/reject', async (req, reply) => {
+      const res = rejectIssue(issuesDir, req.params.id);
+      if (!res.ok) {
+        const status = res.reason === 'not_found' ? 404 : 409;
+        return reply.code(status).send({ error: res.reason === 'not_found' ? 'no such issue' : 'issue is not open' });
+      }
+      audit({ event: 'issue_reject', id: req.params.id, ...localOperator });
+      return { issue: res.value };
     });
   }
 
