@@ -415,6 +415,10 @@ async function runLoop(rest: string[]): Promise<void> {
       clock: { now: () => Date.now() },
       conformanceRecord,
       persistDir: runDir, // live evidence (events.db, transcripts) survives — the fixture root does not
+      // Task-12 LIVE pass wiring (REQ-25.5/25.6): tasks 5/6 built these composition
+      // options but no CLI entry point ever threaded them through until now.
+      governanceLogPath: join(aiDir(), 'governance', 'events.jsonl'),
+      lessons: { dir: join(aiDir(), 'lessons') },
       autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
       auditSink: auditAppend,
       adapterFactory: (put) =>
@@ -433,6 +437,9 @@ async function runLoop(rest: string[]): Promise<void> {
       `LIVE run complete: ${result.finalState} (${result.iterations} iterations); ` +
         `held-out pass-rate range [${result.calibration.range.map((x) => x.toFixed(2)).join(', ')}], ` +
         `reproducibility ${result.calibration.reproducibility.toFixed(2)}.\n` +
+        `lessons: ${result.lessonHitRate.injectionCount} injected, hit-rate proxy ${result.lessonHitRate.hitRateProxy.toFixed(2)}; ` +
+        `shadowProven: n=${result.shadowProven.n} proven=${result.shadowProven.proven}; ` +
+        `fusionUplift: ${result.fusionUplift.available ? 'available' : 'not available (task-12 side script only)'}.\n` +
         `Record /usage before/after in docs/calibration/ (billing proof, manual — §15.4).\n`,
     );
     return;
