@@ -39,6 +39,7 @@ import {
   validateSubagentFrontmatter,
 } from './surfaces.ts';
 import { convertIssue, createIssue, listIssues, rejectIssue, TITLE_MAX, BODY_MAX } from './issues.ts';
+import type { ChatManager, CreateChatSessionInput } from './chat.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -78,6 +79,10 @@ export interface AppDeps {
   issuesDir?: string;
   /** Per-source rate limiter for POST /api/issues (REQ-8.5); default allows all (mirrors termRateOk). */
   issuesRateOk?(): boolean;
+  /** F-Chat (REQ-17/18/19): ticket issuer. Absent = routes do not register (mirrors termManager/issuesDir). */
+  chat?: ChatManager;
+  /** Per-source rate limiter for POST /api/chat/sessions; default allows all (mirrors termRateOk/issuesRateOk). */
+  chatRateOk?(): boolean;
   /**
    * F-Sched (REQ-16): the thin runtime for the one registered child + where its
    * governed inputs live. Absent = routes do not register (mirrors termManager).
@@ -888,6 +893,35 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       }
       audit({ event: 'issue_reject', id: req.params.id, ...localOperator });
       return { issue: res.value };
+    });
+  }
+
+  // --- F-Chat (REQ-17/18/19): ticketed session creation only — the WS bridge
+  // itself attaches directly to the HTTP server outside fastify, mirroring
+  // F-Term's term-runtime.ts split (chat-runtime.ts, verified live not in CI).
+  // The wire body's `projectDir` is the SAME opaque project id the client
+  // already has (App.tsx's `?project=` selection, TerminalPanel's `project`
+  // prop) — resolved to a real cwd server-side via readProjects, mirroring
+  // F-Term's own cwdFor; never a raw client-supplied filesystem path.
+  const chat = deps.chat;
+  if (chat !== undefined) {
+    const localOperator = { principal: 'local-operator', method: 'none' };
+    app.post<{ Body: { projectDir?: string; resume?: string; fork?: boolean } }>('/api/chat/sessions', async (req, reply) => {
+      if (deps.chatRateOk !== undefined && !deps.chatRateOk()) {
+        return reply.code(429).send({ error: 'too many chat sessions; slow down' });
+      }
+      const b = req.body ?? {};
+      if (typeof b.projectDir !== 'string' || b.projectDir.length === 0) {
+        return reply.code(400).send({ error: 'projectDir is required' });
+      }
+      const cwd = readProjects(deps.homeDir).projects.find((p) => p.id === b.projectDir)?.cwd;
+      if (cwd === undefined || cwd === null) return reply.code(400).send({ error: 'unknown projectDir' });
+      const input: CreateChatSessionInput = { projectDir: cwd };
+      if (typeof b.resume === 'string') input.resume = b.resume;
+      if (b.fork === true) input.fork = true;
+      const { sessionId, ticket } = chat.create(input);
+      audit({ event: 'chat_session_create', sessionId, ...localOperator });
+      return { sessionId, wsTicket: ticket };
     });
   }
 

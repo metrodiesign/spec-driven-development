@@ -25,6 +25,7 @@ import {
   readConformanceRecord,
 } from '../src/loop-cli.ts';
 import { createTermRuntime } from '../src/term-runtime.ts';
+import { createChatRuntime } from '../src/chat-runtime.ts';
 import { runGovernanceCommand } from '../src/governance-cli.ts';
 import { runAuditorCommand } from '../src/auditor-cli.ts';
 import { createSchedRuntime, type ChildLike, type SpawnChild } from '../src/sched.ts';
@@ -577,6 +578,16 @@ async function main(): Promise<void> {
         })
       : undefined;
 
+  // F-Chat (REQ-17/18/19): unlike F-Term, INV-17's "interactive approval =
+  // CLI-native" rule is scoped OFF for F-Chat (design.md G) — no loopback/
+  // behind-proxy gate; the single-use WS ticket (minted only from an authed
+  // POST) is the transport's own security boundary, same as F-Term's.
+  const chatRuntime = createChatRuntime({
+    auditPath: join(dataDir, 'chat-audit.jsonl'),
+    ticketTtlS: 30,
+    approvalTimeoutMs: 120_000,
+  });
+
   const app = buildApp({
     homeDir: homedir(),
     env: process.env,
@@ -595,6 +606,8 @@ async function main(): Promise<void> {
     // per-machine runtime artifact (unlike loopRunsRoot above).
     issuesDir: join(aiDir(), 'issues'),
     issuesRateOk: createSpawnRateLimiter(10),
+    chat: chatRuntime.manager,
+    chatRateOk: createSpawnRateLimiter(10),
     audit: auditAppend,
     ...(behindProxyHost !== undefined ? { behindProxyHost } : {}),
     ...(authProvider ? { auth: authProvider } : {}),
@@ -612,6 +625,7 @@ async function main(): Promise<void> {
 
   await app.listen({ host, port });
   if (termRuntime !== undefined) termRuntime.attachWs(app.server);
+  chatRuntime.attachWs(app.server);
   const url = `http://${host === '::1' ? '[::1]' : host}:${port}`;
   process.stdout.write(`platform console listening on ${url}\n`);
   if (values['no-open'] !== true && process.platform === 'darwin') {

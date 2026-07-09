@@ -11,6 +11,7 @@ import { Surfaces } from './Surfaces.tsx';
 import { Loop } from './Loop.tsx';
 import { Sched } from './Sched.tsx';
 import { Issues } from './Issues.tsx';
+import { Chat } from './Chat.tsx';
 import { Login } from './Login.tsx';
 
 interface Status {
@@ -201,6 +202,8 @@ export function App() {
       <Surfaces project={selected} remote={auth?.remote ?? true} />
 
       {selected !== null && <TerminalPanel project={selected} />}
+
+      {selected !== null && <Chat project={selected} />}
 
       {selected !== null && (
         <section aria-label="Sessions">
