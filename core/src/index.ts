@@ -114,10 +114,12 @@ export {
 export {
   computeCalibration,
   computeFusionCalibration,
+  computeLessonHitRate,
   type CalibrationInput,
   type CalibrationResult,
   type FusionCalibrationInput,
   type FusionCalibrationResult,
+  type LessonHitRateStats,
 } from './calibration/calibration.ts';
 export {
   loadCalibrationCorpus,

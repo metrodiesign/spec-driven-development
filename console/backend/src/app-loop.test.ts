@@ -364,6 +364,32 @@ test('POST /api/loop/:run/deploy/rollback outside EXPANDED -> proxied 409, no au
   }
 });
 
+test('POST /api/loop/:run/deploy/decision: an upstream rate-limit denial proxies through unchanged (REQ-23.1)', async () => {
+  // §13.3 sweep (task 11): the deploy proxy has no rate limiter of its own — the
+  // console is a client that owns no state (INV-11); enforcement lives at the
+  // Human Plane server's own rateOk() gate, checked before any path routing
+  // (core/src/human/api.ts), same mechanism every other F-Loop route already rides.
+  const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
+  const live = await makeLiveRun(runsRoot, 'RUN-LIVE', { rateOk: () => false });
+  const d = deps(runsRoot) as AppDeps & { __audited: Record<string, unknown>[] };
+  const app = buildApp(d);
+  try {
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/loop/RUN-LIVE/deploy/decision',
+      headers: GOOD_HOST,
+      payload: { decision: 'approve' },
+    });
+    assert.equal(r.statusCode, 429);
+    assert.deepEqual(live.calls, [], 'the rate limit fires before onDeployDecision is ever called');
+    assert.deepEqual(d.__audited, [], 'no audit entry for a denied request');
+  } finally {
+    await live.close();
+    await app.close();
+    rmSync(runsRoot, { recursive: true, force: true });
+  }
+});
+
 test('mutations on an ended run -> 409, upstream never called (REQ-15.6)', async () => {
   const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
   mkdirSync(join(runsRoot, 'RUN-ENDED'));

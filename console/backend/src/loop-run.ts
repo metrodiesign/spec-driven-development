@@ -16,6 +16,7 @@ import {
   attestationsFor,
   buildApprovalPackage,
   computeCalibration,
+  computeLessonHitRate,
   createBudget,
   createDefaultPathPolicy,
   createEvidenceStore,
@@ -45,6 +46,7 @@ import {
   type DeployStageDeps,
   type EventLog,
   type HandlerDeps,
+  type LessonHitRateStats,
   type MappedAc,
   type RiskClass,
   type Role,
@@ -62,6 +64,7 @@ import {
   DEFAULT_BREAKER_OPTIONS,
   PASS_FAIL_PROBES,
   shadowFrozen,
+  shadowProven,
   shadowWouldChoose,
   wrapRouterForOutcome,
   type AdapterHealth,
@@ -72,6 +75,7 @@ import {
   type Registry,
   type RouteHints,
   type Router,
+  type ShadowProofReport,
 } from 'aal';
 import { runPlannerFusion } from './fusion.ts';
 
@@ -185,6 +189,28 @@ export interface LoopRunResult {
   finalState: string;
   iterations: number;
   calibration: CalibrationResult;
+  /** REQ-24.1: lesson injection count + hit-rate PROXY, folded from this run's own log. */
+  lessonHitRate: LessonHitRateStats;
+  /** REQ-24.2: a shadowProven snapshot over this run's own log — evidence for a human's
+   *  activation decision only (INV-16); nothing here ever gates routing automatically. */
+  shadowProven: ShadowProofReport;
+  /** REQ-24.3: fusion-uplift interval slot. This composition never runs a paired
+   *  single-vs-fused corpus, so it is always empty-but-labeled — filled only by the
+   *  task-12 LIVE pass, never fabricated. */
+  fusionUplift: { available: false };
+}
+
+/** REQ-24.1/24.2: the calibration-report extras beyond computeCalibration's own
+ *  shape (design.md "I. Security sweep + calibration wiring" — extend, not replace).
+ *  minSamples 20 mirrors routing.json's own outcomeRouting default (design.md "Data
+ *  Models" E); this snapshot is read by a human only, same as shadowProven itself. */
+function calibrationExtras(log: EventLog): Pick<LoopRunResult, 'lessonHitRate' | 'shadowProven' | 'fusionUplift'> {
+  const events = log.all();
+  return {
+    lessonHitRate: computeLessonHitRate(events),
+    shadowProven: shadowProven(events, { minSamples: 20 }),
+    fusionUplift: { available: false },
+  };
 }
 
 /**
@@ -294,7 +320,12 @@ export async function runSupervisedLoop(opts: {
       const deferred = pendingQuarantines(readGovernanceLog(opts.governanceLogPath));
       if (deferred.includes(TASK_ID)) {
         log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: 'QUARANTINED', trigger: 'quarantine', deferred: true } });
-        return { finalState: 'QUARANTINED', iterations: 0, calibration: computeCalibration({ heldOut: [false], reruns: [] }) };
+        return {
+          finalState: 'QUARANTINED',
+          iterations: 0,
+          calibration: computeCalibration({ heldOut: [false], reruns: [] }),
+          ...calibrationExtras(log),
+        };
       }
     }
     // Merge topology (REQ-7.1): each task runs on its own `task/<taskId>` branch,
@@ -757,7 +788,7 @@ export async function runSupervisedLoop(opts: {
           });
         }
       }
-      return { finalState, iterations: result.iterations, calibration };
+      return { finalState, iterations: result.iterations, calibration, ...calibrationExtras(log) };
     } finally {
       await server.close();
     }

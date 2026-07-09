@@ -429,6 +429,11 @@ test(
         lessons: { dir: lessonsDir },
       });
       assert.equal(out1.finalState, 'COMPLETED');
+      // REQ-24.1: no approved lesson exists yet at run 1's own injection point (it is
+      // PROPOSED post-run, from run 1's own log) -> zero injections this run.
+      assert.deepEqual(out1.lessonHitRate, { injectionCount: 0, hitRateProxy: 0 });
+      // REQ-24.3: never fabricated — this composition has no paired corpus to compute one from.
+      assert.deepEqual(out1.fusionUplift, { available: false });
 
       const log1 = openEventLog(join(persistDir1, 'events.db'), clock);
       let lessonId: string;
@@ -462,6 +467,17 @@ test(
         lessons: { dir: lessonsDir },
       });
       assert.equal(out2.finalState, 'ESCALATED', 'REQ-3.4 timeout on the resulting L2 approval package — not this test\'s subject');
+      // REQ-24.1: the reconciled lesson WAS injected into run 2's own T-1 — which DID
+      // reach REVIEWING (a real, already-logged transition) before the approval
+      // package's timeout later escalated it. The proxy is a point-in-time fact
+      // ("reached REVIEWING", per REQ-24.1's literal text), not "eventually
+      // completed" — so this counts as a hit despite the run's finalState above.
+      assert.deepEqual(out2.lessonHitRate, { injectionCount: 1, hitRateProxy: 1 });
+      // REQ-24.2: a real (if tiny) shadowProven snapshot rides along — evidence only,
+      // never a gate (INV-16); n is far below the 20-sample default so honestly unproven.
+      assert.ok(out2.shadowProven.n >= 1, 'the default shadow mode recorded at least one round');
+      assert.equal(out2.shadowProven.proven, false, 'small-n fixture run never claims activation');
+      assert.deepEqual(out2.fusionUplift, { available: false });
 
       const log2 = openEventLog(join(persistDir2, 'events.db'), clock);
       try {
