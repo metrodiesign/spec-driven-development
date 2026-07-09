@@ -17,6 +17,7 @@ import {
   listPendingProposals,
   pendingQuarantines,
   proposeFlakyQuarantine,
+  proposeLessonPromotion,
   readGovernanceLog,
   seedFixtureSnapshot,
   snapshotHash,
@@ -221,6 +222,74 @@ test('applyGovernanceApproval fires quarantine for flaky_quarantine, never for p
     const r2 = applyGovernanceApproval({ logPath, id: flaky.id, clock }, { fireQuarantine });
     assert.equal(r2.ok, true);
     assert.deepEqual(fired, ['T-3']);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('lesson_promote proposal carries lessonId through to the approved change record (REQ-11.1)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    const proposal = proposeLessonPromotion({ logPath, lessonId: 'lsn-abc123', clock });
+    assert.equal(proposal.kind, 'lesson_promote');
+    assert.equal(proposal.lessonId, 'lsn-abc123');
+
+    const approved = approveProposal({ logPath, id: proposal.id, clock, decidedBy: 'human' });
+    assert.equal(approved.ok, true);
+    if (!approved.ok) throw new Error('unreachable');
+    assert.equal(approved.change.kind, 'lesson_promote');
+    assert.equal(approved.change.lessonId, 'lsn-abc123');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('re-proposing the same lesson does not pile up duplicate proposals (idempotent, mirrors flaky_quarantine)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    proposeLessonPromotion({ logPath, lessonId: 'lsn-dup', clock });
+    proposeLessonPromotion({ logPath, lessonId: 'lsn-dup', clock });
+    const proposed = readGovernanceLog(logPath).filter((r) => r.type === 'GOVERNANCE_PROPOSED' && r.kind === 'lesson_promote');
+    assert.equal(proposed.length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('lesson_promote approval never fires quarantine; flaky_quarantine approval never calls promoteLesson (REQ-9.4/11.2 dispatch is kind-exclusive)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    const fired: string[] = [];
+    const promoted: string[] = [];
+    const hooks = { fireQuarantine: (taskId: string) => fired.push(taskId), promoteLesson: (lessonId: string) => promoted.push(lessonId) };
+
+    const lesson = proposeLessonPromotion({ logPath, lessonId: 'lsn-9', clock });
+    const r1 = applyGovernanceApproval({ logPath, id: lesson.id, clock }, hooks);
+    assert.equal(r1.ok, true);
+    if (r1.ok) assert.equal(r1.kind, 'lesson_promote');
+    assert.deepEqual(promoted, ['lsn-9']);
+    assert.deepEqual(fired, []);
+
+    const flaky = proposeFlakyQuarantine({ logPath, taskId: 'T-5', clock });
+    applyGovernanceApproval({ logPath, id: flaky.id, clock }, hooks);
+    assert.deepEqual(fired, ['T-5']);
+    assert.deepEqual(promoted, ['lsn-9'], 'flaky approval never re-triggers promoteLesson');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('applyGovernanceApproval without a promoteLesson hook still approves lesson_promote (hook is optional, REQ-11.2)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    const lesson = proposeLessonPromotion({ logPath, lessonId: 'lsn-no-hook', clock });
+    const res = applyGovernanceApproval({ logPath, id: lesson.id, clock }, { fireQuarantine: () => {} });
+    assert.equal(res.ok, true);
+    if (res.ok) assert.equal(res.kind, 'lesson_promote');
   } finally {
     cleanup(dir);
   }

@@ -6,7 +6,7 @@
 // an AdapterError — records the failure with the breaker and re-routes ONCE to
 // the next eligible adapter before a clean BLOCKED(no_capacity) (REQ-3).
 
-import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy } from 'core';
+import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy, loadApprovedLessons } from 'core';
 import { SecretInContextError } from 'core';
 import { breakerKey, type Breaker } from './breaker.ts';
 import { AdapterError } from './protocol.ts';
@@ -19,6 +19,7 @@ import type {
   ContextBundle,
   EventLog,
   Hypothesis,
+  LessonRecord,
   Proposal,
   ProposalClaim,
   ProposalInput,
@@ -60,6 +61,14 @@ export interface AALSourceDeps {
    * relax). Absent → Phase-2 routing, byte-identical (REQ-5.1).
    */
   routeHints?: (input: ProposalInput) => RouteHints;
+  /**
+   * Approved-lessons injection (REQ-12). Absent -> no lessons pipeline (Phase-1
+   * parity, byte-identical). Loaded ONCE at construction — approved lessons are
+   * static for the life of a run, and this is also where the REQ-11.3 offline-
+   * approval reconciler runs (a lesson_promote approved via the CLI while no run
+   * was live has its file moved here, on the next source that loads).
+   */
+  lessons?: { dir: string; governanceLogPath?: string; maxLessons?: number; maxBytes?: number };
 }
 
 function pathOf(a: Action): string | null {
@@ -89,6 +98,19 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
   // rounds and expand the provenance-allowed set (REQ-5.4).
   const readRequested = new Set<string>();
 
+  // REQ-12: load once — approved lessons don't change mid-run (also runs the
+  // REQ-11.3 offline reconciler exactly once per source construction).
+  const approvedLessons: LessonRecord[] = deps.lessons === undefined
+    ? []
+    : loadApprovedLessons({
+        dir: deps.lessons.dir,
+        ...(deps.lessons.governanceLogPath !== undefined ? { governanceLogPath: deps.lessons.governanceLogPath } : {}),
+        cap: { maxLessons: deps.lessons.maxLessons ?? 5, maxBytes: deps.lessons.maxBytes ?? 8192 },
+        log: deps.log,
+        runId: deps.runId,
+        taskId: deps.taskId,
+      });
+
   return {
     async propose(input: ProposalInput): Promise<Proposal> {
       const role = input.role; // per-call role, not a construction-time bind (REQ-4.1)
@@ -96,6 +118,8 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
       // Build context; a secret in a piece BLOCKS the build (REQ-7.3).
       let bundle: ContextBundle;
       let manifestRef: string;
+      let lessonsInjected: { id: string; evidenceRefs: string[] }[] = [];
+      let lessonsBlocked: { id: string; kind: string }[] = [];
       try {
         const built = buildContext({
           taskId: deps.taskId,
@@ -105,9 +129,12 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
           canaryToken: deps.ids.canary(),
           evidence: deps.evidence,
           ...(deps.excludePath ? { excludePath: deps.excludePath } : {}),
+          ...(approvedLessons.length > 0 ? { lessons: approvedLessons } : {}),
         });
         bundle = built.bundle;
         manifestRef = built.manifestRef;
+        lessonsInjected = built.lessonsInjected;
+        lessonsBlocked = built.lessonsBlocked;
       } catch (err) {
         if (err instanceof SecretInContextError) {
           deps.log.append({
@@ -119,6 +146,25 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
           return { claim: 'BLOCKED', actions: [], costUnits: 0 };
         }
         throw err;
+      }
+      // REQ-12.3: a secret-bearing lesson is blocked and recorded, per lesson —
+      // never the whole-build abort a repo-file secret triggers above.
+      for (const b of lessonsBlocked) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'ERROR',
+          payload: { reason: 'lesson_secret_blocked', lessonId: b.id, kind: b.kind },
+        });
+      }
+      // REQ-12.5: every injection (this round's bundle actually carrying lessons) is recorded.
+      if (lessonsInjected.length > 0) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'LESSON_INJECTED',
+          payload: { ids: lessonsInjected.map((l) => l.id), refs: lessonsInjected.flatMap((l) => l.evidenceRefs) },
+        });
       }
 
       // Refresh adapter health once per round BEFORE routing; emit QUOTA_PROBE on

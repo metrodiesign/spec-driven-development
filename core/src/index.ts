@@ -69,6 +69,7 @@ export {
   listPendingProposals,
   pendingQuarantines,
   proposeFlakyQuarantine,
+  proposeLessonPromotion,
   readGovernanceLog,
   seedFixtureSnapshot,
   snapshotHash,
@@ -153,3 +154,10 @@ export {
   type OobAuditorOptions,
   type OobVerdict,
 } from './audit/oob.ts';
+export {
+  foldConfirmedHypotheses,
+  loadApprovedLessons,
+  promoteLesson,
+  proposeLessonFromHypothesis,
+  type ConfirmedHypothesis,
+} from './lessons/lessons.ts';

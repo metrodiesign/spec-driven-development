@@ -178,7 +178,11 @@ export type EventType =
   | 'DEPLOY_STATE'
   // Phase 4 deploy approval + Human Plane surface (append-only, INV-10; REQ-6.7/6.11/6.12).
   | 'DEPLOY_DECISION'
-  | 'DEPLOY_WINDOW_CLOSED';
+  | 'DEPLOY_WINDOW_CLOSED'
+  // Phase 4 lessons pipeline addition (append-only, INV-10; REQ-10.1/11.2/12.5).
+  | 'LESSON_PROPOSED'
+  | 'LESSON_APPROVED'
+  | 'LESSON_INJECTED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context
@@ -208,6 +212,24 @@ export interface TaskContractExcerpt {
   title: string;
   objective: string;
   acceptanceCriteria: { id: string; description: string }[];
+}
+
+/**
+ * A confirmed repair hypothesis on its way to becoming reusable diagnostic
+ * knowledge (spec §10.4, REQ-10/11/12). `id` is content-addressed
+ * (`lsn-<sha256(statement+evidenceRefs)>`) so re-proposing the same lesson is
+ * idempotent. Lives as a JSON file under `.ai/lessons/{pending,approved}/`;
+ * `approvedAt` is set only once a human approves the paired `lesson_promote`
+ * governance proposal (INV-16 — the system cannot teach itself).
+ */
+export interface LessonRecord {
+  id: string;
+  statement: string;
+  sourceRunId: string;
+  sourceTaskId: string;
+  evidenceRefs: string[];
+  proposedAt: string;
+  approvedAt?: string;
 }
 
 /** Append-only event row (INV-10). `seq` is assigned by the log. */

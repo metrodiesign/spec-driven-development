@@ -24,9 +24,12 @@ import {
   createHumanPlaneServer,
   createLoopController,
   denyNetworkSandbox,
+  foldConfirmedHypotheses,
   listPendingProposals,
   openEventLog,
   pendingQuarantines,
+  promoteLesson,
+  proposeLessonFromHypothesis,
   readGovernanceLog,
   runApprovedMerge,
   runAutoMerge,
@@ -246,6 +249,14 @@ export async function runSupervisedLoop(opts: {
    */
   deploy?: { expandedWindowMs?: number };
   /**
+   * Lessons pipeline (REQ-10/11/12). Absent -> no lessons pipeline (Phase-1
+   * parity, byte-identical): confirmed hypotheses are never folded into pending
+   * lessons, and none is ever injected. Also requires `governanceLogPath` (a
+   * lesson can never be approved without a governance plane) — set without it
+   * is treated as absent.
+   */
+  lessons?: { dir: string; maxLessons?: number; maxBytes?: number };
+  /**
    * Console audit mirror (REQ-18.3): every approval, steering (pause/inject/resume),
    * kill, and governance decision is echoed here in addition to the durable core
    * event log. Absent → no mirror (the core event log remains authoritative).
@@ -313,6 +324,9 @@ export async function runSupervisedLoop(opts: {
       outputSchema: { type: 'object', required: ['claim', 'actionRequests'], properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } } },
       maxRepairRounds: 2,
       budgetRemaining: () => budget.remaining(),
+      ...(opts.lessons !== undefined && opts.governanceLogPath !== undefined
+        ? { lessons: { dir: opts.lessons.dir, governanceLogPath: opts.governanceLogPath, ...(opts.lessons.maxLessons !== undefined ? { maxLessons: opts.lessons.maxLessons } : {}), ...(opts.lessons.maxBytes !== undefined ? { maxBytes: opts.lessons.maxBytes } : {}) } }
+        : {}),
     });
     // Operability (REQ-18.1): a live Human Plane server makes the loop steerable and
     // killable while it runs. onDecision → machine transitions (task approvals);
@@ -365,6 +379,7 @@ export async function runSupervisedLoop(opts: {
       return { ok: true, evidenceRef };
     };
     const govLog = opts.governanceLogPath;
+    const lessonsOpt = opts.lessons;
     const governance: Partial<HandlerDeps> = govLog === undefined ? {} : {
       governanceProposals: () => listPendingProposals(readGovernanceLog(govLog)),
       onGovernanceApprove: (id) => {
@@ -373,6 +388,15 @@ export async function runSupervisedLoop(opts: {
             const tr = transition(currentState(), 'quarantine');
             if (tr.ok) log.append({ runId: RUN_ID, taskId: tid, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'quarantine' } });
           },
+          // REQ-11.2: a lesson_promote approved LIVE (through THIS run's own Human
+          // Plane server) moves pending/ -> approved/ immediately. The offline case
+          // (approved via the CLI while no run was live) is reconciled separately,
+          // at the NEXT run's `loadApprovedLessons` (aal/src/source.ts, REQ-11.3).
+          ...(lessonsOpt !== undefined
+            ? { promoteLesson: (lessonId: string) => {
+                promoteLesson({ dir: lessonsOpt.dir, lessonId, approvedAt: new Date(clock.now()).toISOString(), log, runId: RUN_ID, taskId: TASK_ID });
+              } }
+            : {}),
         });
         if (res.ok) audit({ event: 'governance_decision', id, kind: res.kind });
         return res.ok ? { ok: true, kind: res.kind } : { ok: false, detail: res.reason };
@@ -652,6 +676,27 @@ export async function runSupervisedLoop(opts: {
               log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'DEPLOY_WINDOW_CLOSED', payload: {} });
             }
           }
+        }
+      }
+      // REQ-10.1: post-run, fold this run's confirmed-hypothesis verdicts into
+      // pending lessons — the core orchestrator/hypothesis engine never see this;
+      // it is folded here, in the composition, from the run's OWN event log,
+      // regardless of how the run ended (a confirmed hypothesis mid-repair does
+      // not imply the run went on to succeed).
+      if (lessonsOpt !== undefined && govLog !== undefined) {
+        for (const c of foldConfirmedHypotheses(log.all({ type: 'HYPOTHESIS_CONFIRMED' }))) {
+          proposeLessonFromHypothesis({
+            dir: lessonsOpt.dir,
+            governanceLogPath: govLog,
+            statement: c.statement,
+            sourceRunId: c.runId,
+            sourceTaskId: c.taskId,
+            evidenceRefs: c.evidenceRefs,
+            clock,
+            log,
+            runId: RUN_ID,
+            taskId: TASK_ID,
+          });
         }
       }
       return { finalState, iterations: result.iterations, calibration };

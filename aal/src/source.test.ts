@@ -44,6 +44,7 @@ function harness(opts: {
   dataPolicyFor?: (adapterId: string) => ProviderDataPolicy | undefined;
   routeHints?: (input: ProposalInput) => RouteHints;
   susceptibility?: number;
+  lessons?: { dir: string; governanceLogPath?: string; maxLessons?: number; maxBytes?: number };
 }) {
   const root = mkdtempSync(join(tmpdir(), 'src-'));
   const worktree = join(root, 'wt');
@@ -82,6 +83,7 @@ function harness(opts: {
     maxRepairRounds: 2,
     ...(opts.dataPolicyFor ? { dataPolicyFor: opts.dataPolicyFor } : {}),
     ...(opts.routeHints ? { routeHints: opts.routeHints } : {}),
+    ...(opts.lessons ? { lessons: opts.lessons } : {}),
   });
   return { root, log, source, breaker, reg, cleanup: () => { log.close(); rmSync(root, { recursive: true, force: true }); } };
 }
@@ -142,6 +144,60 @@ test('a secret in a seeded file BLOCKS the build and escalates secret_in_context
     assert.ok(String(esc?.payload['file']).includes('leak.ts'));
   } finally {
     h.cleanup();
+  }
+});
+
+/** Seed `<dir>/approved/<id>.json` directly — bypasses the propose->promote lifecycle (that's lessons.ts's own test coverage). */
+function seedApprovedLesson(dir: string, overrides: { id: string; statement: string; evidenceRefs?: string[] }): void {
+  mkdirSync(join(dir, 'approved'), { recursive: true });
+  writeFileSync(
+    join(dir, 'approved', `${overrides.id}.json`),
+    JSON.stringify({
+      id: overrides.id,
+      statement: overrides.statement,
+      sourceRunId: 'RUN-0',
+      sourceTaskId: 'T-0',
+      evidenceRefs: overrides.evidenceRefs ?? [],
+      proposedAt: '2026-07-01T00:00:00.000Z',
+      approvedAt: '2026-07-02T00:00:00.000Z',
+    }),
+  );
+}
+
+test('REQ-12: an approved lesson is injected into every round\'s context bundle and recorded as LESSON_INJECTED', async () => {
+  const lessonsDir = mkdtempSync(join(tmpdir(), 'src-lessons-'));
+  seedApprovedLesson(lessonsDir, { id: 'lsn-fixed', statement: 'watch for the off-by-one in the retry loop', evidenceRefs: ['blob://probe-9'] });
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, lessons: { dir: lessonsDir } });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION', 'the round still succeeds with a lesson injected');
+    const injected = h.log.all({ type: 'LESSON_INJECTED' });
+    assert.equal(injected.length, 1);
+    assert.deepEqual(injected[0]?.payload['ids'], ['lsn-fixed']);
+    assert.deepEqual(injected[0]?.payload['refs'], ['blob://probe-9']);
+    assert.equal(h.log.all({ type: 'ERROR' }).length, 0);
+  } finally {
+    h.cleanup();
+    rmSync(lessonsDir, { recursive: true, force: true });
+  }
+});
+
+test('REQ-12.3: a secret-bearing approved lesson is blocked + ERROR-logged, but the round is NOT aborted', async () => {
+  const lessonsDir = mkdtempSync(join(tmpdir(), 'src-lessons-'));
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  seedApprovedLesson(lessonsDir, { id: 'lsn-secret', statement: `credential leaked: ${secret}` });
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, lessons: { dir: lessonsDir } });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION', 'unlike a repo-file secret, a blocked LESSON never aborts the round');
+    const errors = h.log.all({ type: 'ERROR' });
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0]?.payload['reason'], 'lesson_secret_blocked');
+    assert.equal(errors[0]?.payload['lessonId'], 'lsn-secret');
+    assert.equal(h.log.all({ type: 'LESSON_INJECTED' }).length, 0, 'the blocked lesson never counted as an injection');
+  } finally {
+    h.cleanup();
+    rmSync(lessonsDir, { recursive: true, force: true });
   }
 });
 

@@ -23,8 +23,10 @@ import { runSupervisedLoop, wrapRouterForShadow } from './loop-run.ts';
 import { FakeAdapter, type RegisteredAdapter, type Registry, type Router } from 'aal';
 import {
   approveProposal,
+  listPendingProposals,
   openEventLog,
   proposeFlakyQuarantine,
+  readGovernanceLog,
   seedFixtureSnapshot,
   type EventLog,
   type EventType,
@@ -266,6 +268,81 @@ test(
       }
     } finally {
       rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'E2E (REQ-10/11/12): a confirmed hypothesis becomes a pending lesson post-run; offline governance approval + the NEXT run\'s reconciler inject it',
+  darwinOnly,
+  async () => {
+    const persistDir1 = mkdtempSync(join(tmpdir(), 'loop-lesson-1-'));
+    const persistDir2 = mkdtempSync(join(tmpdir(), 'loop-lesson-2-'));
+    const lessonsDir = mkdtempSync(join(tmpdir(), 'loop-lesson-dir-'));
+    const governanceLogPath = join(persistDir1, 'governance.jsonl');
+    try {
+      // Run 1: the SAME repair fixture as the test above confirms a hypothesis.
+      // REQ-10.1: post-run, folded into a pending lesson + a lesson_promote proposal.
+      const out1 = await runSupervisedLoop({
+        contract: L1_CONTRACT,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', behavior: 'repairable', putContent: put }),
+        clock,
+        persistDir: persistDir1,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        governanceLogPath,
+        lessons: { dir: lessonsDir },
+      });
+      assert.equal(out1.finalState, 'COMPLETED');
+
+      const log1 = openEventLog(join(persistDir1, 'events.db'), clock);
+      let lessonId: string;
+      try {
+        const proposed = log1.all({ type: 'LESSON_PROPOSED' });
+        assert.equal(proposed.length, 1);
+        lessonId = String(proposed[0]?.payload['lessonId']);
+        assert.equal(proposed[0]?.payload['sourceRunId'], 'RUN-LIVE');
+      } finally {
+        log1.close();
+      }
+
+      const proposals = listPendingProposals(readGovernanceLog(governanceLogPath));
+      assert.equal(proposals.length, 1);
+      assert.equal(proposals[0]?.kind, 'lesson_promote');
+      assert.equal(proposals[0]?.lessonId, lessonId);
+
+      // "Approved via the CLI while no run is live" — REQ-11.3's offline case.
+      approveProposal({ logPath: governanceLogPath, id: proposals[0]?.id ?? '', clock, decidedBy: 'human' });
+
+      // Run 2: a plain (non-repairing) run against the SAME lessons/governance state.
+      // REQ-11.3: the reconciler moves pending/ -> approved/ on load. REQ-12: the
+      // approved lesson is then injected into this run's own context bundle.
+      const out2 = await runSupervisedLoop({
+        contract: CONTRACT,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir: persistDir2,
+        approval: { timeoutMs: 100 },
+        governanceLogPath,
+        lessons: { dir: lessonsDir },
+      });
+      assert.equal(out2.finalState, 'ESCALATED', 'REQ-3.4 timeout on the resulting L2 approval package — not this test\'s subject');
+
+      const log2 = openEventLog(join(persistDir2, 'events.db'), clock);
+      try {
+        const approved = log2.all({ type: 'LESSON_APPROVED' });
+        assert.equal(approved.length, 1, 'the offline reconciler moved + logged it on THIS run\'s load');
+        assert.equal(approved[0]?.payload['lessonId'], lessonId);
+
+        const injected = log2.all({ type: 'LESSON_INJECTED' });
+        assert.ok(injected.length >= 1, 'the now-approved lesson was injected into at least one round');
+        assert.deepEqual(injected[0]?.payload['ids'], [lessonId]);
+      } finally {
+        log2.close();
+      }
+    } finally {
+      rmSync(persistDir1, { recursive: true, force: true });
+      rmSync(persistDir2, { recursive: true, force: true });
+      rmSync(lessonsDir, { recursive: true, force: true });
     }
   },
 );
