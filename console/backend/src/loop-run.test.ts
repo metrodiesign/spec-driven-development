@@ -7,6 +7,11 @@
 // Phase 2 (REQ-18.1): the run now starts a live Human Plane server (steering/kill/
 // governance wired) and takes an injected Clock; a governance-approved deferred
 // quarantine takes effect on load (REQ-9.5).
+//
+// Phase 4 (REQ-1/2/3): the approval-package tests below drive the SAME live Human
+// Plane server over real HTTP (the discovery file at persistDir/human-plane.json),
+// concurrently with the in-flight runSupervisedLoop promise — proving the actual
+// wire contract a real F-Loop client uses, not a hand-rolled stub.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -38,6 +43,64 @@ const CONTRACT: TaskContract = {
 
 const clock = { now: () => 1_000_000 };
 
+interface ApprovalPackageJSON {
+  id: string;
+  taskId: string;
+  riskClass: string;
+  goalExcerpt: string;
+  acIds: string[];
+  diffRef: string;
+  evidence: { gateReports: string[]; worktreeHash: string };
+  attestations: string[];
+}
+
+/** Poll `fn` until it returns non-null, or throw after `timeoutMs` (default 5s). */
+async function waitFor<T>(fn: () => Promise<T | null> | T | null, timeoutMs = 5000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v !== null) return v;
+    if (Date.now() >= deadline) throw new Error('waitFor: timed out');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** Poll persistDir/human-plane.json for a live (non-tombstoned) discovery record. */
+function waitForDiscovery(persistDir: string): Promise<{ url: string; token: string }> {
+  return waitFor(() => {
+    let meta: { url?: unknown; token?: unknown; tombstoned?: unknown };
+    try {
+      meta = JSON.parse(readFileSync(join(persistDir, 'human-plane.json'), 'utf8')) as typeof meta;
+    } catch {
+      return null;
+    }
+    return meta.tombstoned === true || typeof meta.url !== 'string' || typeof meta.token !== 'string'
+      ? null
+      : { url: meta.url, token: meta.token };
+  });
+}
+
+async function fetchApprovals(url: string, token: string): Promise<ApprovalPackageJSON[]> {
+  const res = await fetch(`${url}/approvals`, { headers: { authorization: `Bearer ${token}` } });
+  return (await res.json()) as ApprovalPackageJSON[];
+}
+
+/** Poll GET /approvals until a package is pending, then return it. */
+function waitForApprovalPackage(url: string, token: string): Promise<ApprovalPackageJSON> {
+  return waitFor(async () => {
+    const list = await fetchApprovals(url, token);
+    return list[0] ?? null;
+  });
+}
+
+function decide(url: string, token: string, id: string, decision: 'approve' | 'reject', attestations: string[] = []): Promise<number> {
+  return fetch(`${url}/approvals/${id}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ decision, attestations }),
+  }).then((res) => res.status);
+}
+
 test('supervised loop with the FakeAdapter reaches REVIEWING; calibration computed (harness math only)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
@@ -46,8 +109,13 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
       persistDir,
+      // L2 (no declared risk) never auto-merges; a short window resolves the
+      // resulting approval package to ESCALATED (REQ-3.4) instead of the default
+      // 30-minute wait — REVIEWING itself, this test's actual subject, is asserted
+      // below from the event log regardless of what happens to it afterward.
+      approval: { timeoutMs: 100 },
     });
-    assert.equal(out.finalState, 'REVIEWING');
+    assert.equal(out.finalState, 'ESCALATED', 'nothing decides the resulting package here — REQ-3.4 timeout');
     assert.equal(out.calibration.n, 1);
     assert.equal(out.calibration.heldOutPassRate, 1, 'held-out (golden) passed — SCRIPTED, not a §12 metric');
     assert.equal(out.calibration.reproducibility, 1);
@@ -56,6 +124,12 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
     // single registered adapter can never diverge from its own live choice.
     const log = openEventLog(join(persistDir, 'events.db'), clock);
     try {
+      assert.ok(
+        log.all({ type: 'TASK_STATE' }).some((e) => e.payload['state'] === 'REVIEWING'),
+        'the loop reached REVIEWING',
+      );
+      assert.equal(log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).length, 1, 'REQ-2: a real package was built');
+      assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'approval_timeout', 'REQ-3.4');
       const shadowRoutes = log.all({ type: 'SHADOW_ROUTE' });
       assert.ok(shadowRoutes.length >= 1, 'each live route decision records a SHADOW_ROUTE event');
       assert.equal(shadowRoutes[0]?.payload['live'], shadowRoutes[0]?.payload['wouldChoose']);
@@ -147,21 +221,120 @@ test(
   },
 );
 
-test('a non-golden / no-risk task routes to the approval package — finalState stays REVIEWING (REQ-7.6/7.7)', async () => {
+test('a non-golden / no-risk task builds a real approval package with the core-computed fields (REQ-2.1/2.2/2.4/2.5, REQ-7.6/7.7)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-appkg-'));
   try {
-    // CONTRACT has no `risk` -> defaults to L2 -> approval package, not auto-merge.
+    // CONTRACT has no `risk` -> defaults to L2 -> the approval package, not auto-merge.
+    const resultPromise = runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 5000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    const pkg = await waitForApprovalPackage(url, token); // REQ-2.5: listed at GET /approvals while pending
+    assert.equal(pkg.taskId, 'T-1');
+    assert.equal(pkg.riskClass, 'L2', 'no declared risk defaults to L2 (REQ-7.6) — carried as effectiveRisk (REQ-2.1)');
+    assert.equal(pkg.goalExcerpt, CONTRACT.goal.objective);
+    assert.deepEqual(pkg.acIds, ['AC-1']);
+    assert.ok(pkg.diffRef.length > 0, 'the task diff was evidence-stored (REQ-2.1)');
+    assert.ok(pkg.evidence.worktreeHash.length > 0);
+    assert.ok(pkg.evidence.gateReports.length > 0);
+
+    const status = await decide(url, token, pkg.id, 'approve', pkg.attestations);
+    assert.equal(status, 200, 'attestations generated from riskClass satisfy the completeness check');
+
+    const out = await resultPromise;
+    assert.equal(out.finalState, 'COMPLETED', 'REQ-3.2: approve -> APPROVED -> runApprovedMerge -> COMPLETED');
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'AUTO_APPROVED' }).length, 0, 'a human decision, never a policy one (REQ-1.3)');
+      assert.equal(log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).length, 1);
+      assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).at(-1)?.payload['decision'], 'approve');
+      assert.ok(
+        log.all({ type: 'TASK_STATE' }).some((e) => e.payload['state'] === 'APPROVED' && e.payload['trigger'] === 'approve'),
+        'onDecision logs the HTTP decision string as trigger, not the state-machine trigger name',
+      );
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('a human reject ends the run CHANGES_REQUESTED — terminal, no retry (REQ-3.3)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-reject-'));
+  try {
+    const resultPromise = runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 5000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    const pkg = await waitForApprovalPackage(url, token);
+    const status = await decide(url, token, pkg.id, 'reject');
+    assert.equal(status, 200);
+
+    const out = await resultPromise;
+    assert.equal(out.finalState, 'CHANGES_REQUESTED');
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).at(-1)?.payload['decision'], 'reject');
+      assert.equal(log.all({ type: 'AUTO_APPROVED' }).length, 0);
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('kill while a package is pending ends the wait -> CANCELLED, the same terminal a mid-loop kill reaches (REQ-3.6)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-killpkg-'));
+  try {
+    const resultPromise = runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 5000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    await waitForApprovalPackage(url, token);
+    const res = await fetch(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
+
+    const out = await resultPromise;
+    assert.equal(out.finalState, 'CANCELLED');
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('a diff over the budget escalates split_required — no package built (REQ-2.3)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-splitreq-'));
+  try {
     const out = await runSupervisedLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
       persistDir,
       autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { maxDiffBudget: 0 }, // any non-empty diff exceeds a budget of 0
     });
-    assert.equal(out.finalState, 'REVIEWING', 'L2 (default) never auto-merges');
+    assert.equal(out.finalState, 'ESCALATED');
     const log = openEventLog(join(persistDir, 'events.db'), clock);
     try {
-      assert.equal(log.all({ type: 'AUTO_APPROVED' }).length, 0);
+      assert.equal(log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).length, 0, 'over budget -> no package (REQ-2.3)');
+      assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'split_required');
     } finally {
       log.close();
     }

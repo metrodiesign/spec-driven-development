@@ -119,10 +119,13 @@ export {
   auditSampleValue,
   reproduces,
   runAutoMerge,
+  runApprovedMerge,
   type AutoApproveInput,
   type AutoApproveDecision,
   type AutoApproveReason,
   type AutoMergeOutcome,
+  type ApprovedMergeOptions,
+  type ApprovedMergeOutcome,
   type MappedAc,
   type RunAutoMergeOptions,
 } from './merge/auto-merge.ts';

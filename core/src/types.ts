@@ -171,7 +171,9 @@ export type EventType =
   // Phase 3 out-of-band auditor addition (append-only, INV-10).
   | 'OOB_AUDIT_RESULT'
   // Phase 3 outcome-routing shadow addition (append-only, INV-10; REQ-7).
-  | 'SHADOW_ROUTE';
+  | 'SHADOW_ROUTE'
+  // Phase 4 approval-pipeline production wiring (append-only, INV-10; REQ-2.2).
+  | 'APPROVAL_PACKAGE_CREATED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

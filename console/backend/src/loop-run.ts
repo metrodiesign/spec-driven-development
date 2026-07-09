@@ -13,6 +13,7 @@ import { join, relative } from 'node:path';
 
 import {
   applyGovernanceApproval,
+  buildApprovalPackage,
   computeCalibration,
   createBudget,
   createDefaultPathPolicy,
@@ -26,9 +27,11 @@ import {
   openEventLog,
   pendingQuarantines,
   readGovernanceLog,
+  runApprovedMerge,
   runAutoMerge,
   runTaskLoop,
   transition,
+  type ApprovalPackage,
   type CalibrationResult,
   type Clock,
   type EventLog,
@@ -61,6 +64,10 @@ import {
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
+}
+/** Same as `git()` but returns stdout — for reading a diff into the evidence store (REQ-2.1). */
+function gitOut(cwd: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 function sha256(b: Uint8Array): string {
   return createHash('sha256').update(b).digest('hex');
@@ -216,10 +223,16 @@ export async function runSupervisedLoop(opts: {
    * L0/L1 risk (from the frozen contract's `risk`) + golden-backed ACs + no
    * dependency-touching diff auto-merges `task/<taskId>` into the fixture main and a
    * deterministic sample is re-audited from a clean checkout. Absent → auto-merge
-   * still runs but a null/absent risk defaults to L2 → the approval-package path
-   * (finalState stays REVIEWING), so existing single-task callers are unaffected.
+   * still runs but a null/absent risk defaults to L2 → the human approval package
+   * below (REQ-2/3), same as any other non-qualifying decision.
    */
   autoMerge?: { auditSampleRate: number; depManifestPatterns: string[] };
+  /**
+   * Approval-package tuning (REQ-2.4/3.4) for the path above when auto-merge does
+   * NOT fire. Both default when omitted: `maxDiffBudget` 400 (§11.2), `timeoutMs` 30
+   * minutes — past it the run escalates `approval_timeout` instead of waiting forever.
+   */
+  approval?: { maxDiffBudget?: number; timeoutMs?: number };
   /**
    * Console audit mirror (REQ-18.3): every approval, steering (pause/inject/resume),
    * kill, and governance decision is echoed here in addition to the durable core
@@ -301,11 +314,30 @@ export async function runSupervisedLoop(opts: {
     const audit = (entry: Record<string, unknown>): void => opts.auditSink?.({ at: clock.now(), ...entry });
     const currentState = (): TaskState =>
       (log.all({ type: 'TASK_STATE' }).at(-1)?.payload['state'] as TaskState) ?? 'PROPOSED';
+    // Approval decision wait (REQ-3.1/3.6): `onDecision`/`onKill` resolve this from the
+    // HTTP thread; `waitForApprovalDecision` races it against a real timeout (REQ-3.4).
+    // Single resolver in a closure var, same shape as `createLoopController`'s
+    // `resumeResolve` (control.ts) — at most one package is ever pending at a time in
+    // this single-task loop.
+    let pendingApprovalResolve: ((outcome: 'approve' | 'reject' | 'killed') => void) | null = null;
+    const waitForApprovalDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout' | 'killed'> =>
+      new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          pendingApprovalResolve = null;
+          resolve('timeout');
+        }, timeoutMs);
+        pendingApprovalResolve = (outcome) => {
+          clearTimeout(timer);
+          pendingApprovalResolve = null;
+          resolve(outcome);
+        };
+      });
     const onDecision: HandlerDeps['onDecision'] = (taskId, decision) => {
       const tr = transition(currentState(), decision === 'approve' ? 'human_approved' : 'changes_requested');
       if (!tr.ok) return { ok: false, detail: tr.reason };
       log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: tr.next, trigger: decision } });
       audit({ event: 'approval', taskId, decision, state: tr.next });
+      pendingApprovalResolve?.(decision);
       return { ok: true, state: tr.next };
     };
     const onInject: HandlerDeps['onInject'] = (guidance, opts) => {
@@ -334,15 +366,21 @@ export async function runSupervisedLoop(opts: {
         return res.ok ? { ok: true, kind: res.kind } : { ok: false, detail: res.reason };
       },
     };
+    // REQ-2.2: the same Map instance the Human Plane server reads GET /approvals from —
+    // populated below once a task actually needs a human decision.
+    const approvals = new Map<string, ApprovalPackage>();
     const server = await createHumanPlaneServer({
       runDir: stateDir,
       deps: {
         runId: RUN_ID,
-        approvals: new Map(),
+        approvals,
         log,
         onDecision,
         onKill: () => {
           audit({ event: 'kill' });
+          // REQ-3.6: a pending approval wait ends via the same kill path as a mid-loop
+          // kill (control.ts's `requestKill` — harmless no-op if the loop already ended).
+          pendingApprovalResolve?.('killed');
           controller.requestKill();
         },
         rateOk: () => true,
@@ -397,8 +435,7 @@ export async function runSupervisedLoop(opts: {
       // Post-REVIEWING auto-merge L0/L1 (REQ-7/8). The pure gate ignores the agent
       // claim by construction; risk comes from the frozen contract, gatesGreen from
       // the loop's own T1, ACs (golden flags) from the contract. L2+/non-golden/
-      // dep-touching → approval package (state unchanged) so single-task callers that
-      // pass no risk keep the Phase-1 REVIEWING terminal.
+      // dep-touching → the human approval package below (REQ-2/3).
       let finalState: string = result.finalState;
       if (reachedReviewing && result.lastGateReport !== undefined) {
         // Commit the work (review #6): the executor snapshots BEFORE each write for
@@ -411,6 +448,7 @@ export async function runSupervisedLoop(opts: {
           id: a.id,
           ...(a.golden !== undefined ? { golden: a.golden } : {}),
         }));
+        const gateReport = result.lastGateReport;
         const merge = await runAutoMerge({
           runId: RUN_ID,
           taskId: TASK_ID,
@@ -424,14 +462,87 @@ export async function runSupervisedLoop(opts: {
             acceptanceCriteria,
             depManifestPatterns: opts.autoMerge?.depManifestPatterns ?? [],
           },
-          originalReport: result.lastGateReport,
+          originalReport: gateReport,
           gateConfigRelPath: 'gate-ladder.json',
           auditSampleRate: opts.autoMerge?.auditSampleRate ?? 0,
           log,
           evidence,
           clock,
         });
-        finalState = merge.finalState;
+
+        if (merge.decision !== 'approval_package') {
+          finalState = merge.finalState;
+        } else {
+          // REQ-2: build a real package for a human to decide instead of leaving the
+          // run stuck at REVIEWING with nothing in the approvals Map (Phase-3 gap #1).
+          const diff = gitOut(fx.wt, 'diff', '--no-color', `main...${TASK_BRANCH}`);
+          const diffLineCount = diff.length === 0 ? 0 : diff.replace(/\n$/, '').split('\n').length;
+          const built = buildApprovalPackage({
+            id: TASK_ID,
+            taskId: TASK_ID,
+            runId: RUN_ID,
+            goalExcerpt: opts.contract.goal.objective,
+            acIds: opts.contract.acceptanceCriteria.map((a) => a.id),
+            diffRef: evidence.put(diff),
+            diffLineCount,
+            maxDiffBudget: opts.approval?.maxDiffBudget ?? 400,
+            gateReports: [evidence.put(JSON.stringify(gateReport))],
+            worktreeHash: gateReport.worktreeHash,
+            assumptions: [],
+            unresolvedRisks: [],
+            riskClass: merge.effectiveRisk,
+            createdAt: clock.now(),
+          });
+
+          const escalateTask = (why: string, extra?: Record<string, unknown>): void => {
+            const tr = transition(currentState(), 'escalate');
+            if (tr.ok) log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'escalate' } });
+            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'ESCALATED', payload: { why, ...extra } });
+          };
+
+          if (built.kind === 'escalate') {
+            // REQ-2.3: over the diff budget — split the task, no package.
+            escalateTask('split_required', { detail: built.detail });
+            finalState = 'ESCALATED';
+          } else {
+            approvals.set(built.package.id, built.package);
+            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'APPROVAL_PACKAGE_CREATED', payload: { approvalId: built.package.id } });
+            audit({ event: 'approval_package_created', taskId: TASK_ID, approvalId: built.package.id });
+
+            const timeoutMs = opts.approval?.timeoutMs ?? 30 * 60_000;
+            const outcome = await waitForApprovalDecision(timeoutMs);
+            if (outcome === 'approve') {
+              const approvedMerge = await runApprovedMerge({
+                runId: RUN_ID,
+                taskId: TASK_ID,
+                state: currentState(),
+                repoDir: fx.wt,
+                taskBranch: TASK_BRANCH,
+                mainBranch: 'main',
+                originalReport: gateReport,
+                gateConfigRelPath: 'gate-ladder.json',
+                auditSampleRate: opts.autoMerge?.auditSampleRate ?? 0,
+                log,
+                evidence,
+                clock,
+              });
+              finalState = approvedMerge.finalState;
+            } else if (outcome === 'reject') {
+              // REQ-3.3: terminal for this run — no silent retry.
+              finalState = 'CHANGES_REQUESTED';
+            } else if (outcome === 'timeout') {
+              approvals.delete(built.package.id);
+              escalateTask('approval_timeout', { approvalId: built.package.id });
+              finalState = 'ESCALATED';
+            } else {
+              // REQ-3.6: kill while pending — the same terminal state a mid-loop kill
+              // reaches (loop.ts's `move('cancel')`).
+              const tr = transition(currentState(), 'cancel');
+              if (tr.ok) log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'cancel' } });
+              finalState = 'CANCELLED';
+            }
+          }
+        }
       }
       return { finalState, iterations: result.iterations, calibration };
     } finally {
