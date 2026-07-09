@@ -67,10 +67,13 @@ import {
   type AdapterHealth,
   type AdapterInterface,
   type ConformanceRecord,
+  type createDispatcher,
+  type FusionProfile,
   type Registry,
   type RouteHints,
   type Router,
 } from 'aal';
+import { runPlannerFusion } from './fusion.ts';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -243,6 +246,25 @@ export async function runSupervisedLoop(opts: {
    */
   lessons?: { dir: string; maxLessons?: number; maxBytes?: number };
   /**
+   * Planner-role fusion auto-routing (REQ-16), before the task loop. BOTH switches
+   * must be on (REQ-16.3, "a test SHALL prove both offs"): `plannerRoleTrigger` is
+   * the governance-hashed policy flag (`triggers.plannerRole` in
+   * fusion-profiles.json — this composition never reads that file itself, same
+   * separation as `outcomeRouting`/`lessons`) and `enabled` is this composition's
+   * own option. `profile`/`dispatcher` are caller-supplied (mirrors `toolHandlers`'
+   * precedent — fusion wiring is entirely the caller's to assemble). Absent ->
+   * no dispatch (Phase-3 parity: role stays hardcoded 'implementer' for the task
+   * loop below regardless). A resolved plan is injected into the SAME source's
+   * context every round as MARKed data; an escalated/invalid resolution never
+   * blocks the task loop — it simply proceeds without a plan piece.
+   */
+  planning?: {
+    enabled: boolean;
+    plannerRoleTrigger: boolean;
+    profile: FusionProfile;
+    dispatcher: ReturnType<typeof createDispatcher>;
+  };
+  /**
    * Console audit mirror (REQ-18.3): every approval, steering (pause/inject/resume),
    * kill, and governance decision is echoed here in addition to the durable core
    * event log. Absent → no mirror (the core event log remains authoritative).
@@ -311,6 +333,34 @@ export async function runSupervisedLoop(opts: {
     if (outcomeMode !== 'off') {
       router = wrapRouterForShadow(router, { registry: reg, log, runId: RUN_ID, taskId: TASK_ID });
     }
+    const taskContractExcerpt = {
+      goalId: opts.contract.goal.id,
+      title: opts.contract.goal.title,
+      objective: opts.contract.goal.objective,
+      acceptanceCriteria: opts.contract.acceptanceCriteria.map((a) => ({ id: a.id, description: a.description })),
+    };
+    const ids = { requestId: () => `req-${randomUUID()}`, canary: () => `CANARY-${randomUUID()}` };
+    // Planner-role fusion auto-routing (REQ-16), BEFORE the task loop. BOTH the
+    // governance-hashed policy trigger and this composition's own option gate
+    // dispatch (REQ-16.3) — the caller assembles opts.planning from both; this
+    // composition never reads fusion-profiles.json itself (same separation as
+    // outcomeRouting/lessons). Dispatches role 'planner' through the SAME router
+    // instance the task loop uses below, whatever mode governance pinned (AZ-13).
+    let resolvedPlan: { id: string; content: string } | null = null;
+    if (opts.planning?.enabled === true && opts.planning.plannerRoleTrigger === true) {
+      const planned = await runPlannerFusion({
+        runId: RUN_ID,
+        taskId: TASK_ID,
+        router,
+        dispatcher: opts.planning.dispatcher,
+        profile: opts.planning.profile,
+        evidence,
+        log,
+        ids,
+        taskContract: taskContractExcerpt,
+      });
+      resolvedPlan = planned.plan;
+    }
     const source = createAALProposalSource({
       runId: 'RUN-LIVE',
       taskId: 'T-1',
@@ -319,19 +369,19 @@ export async function runSupervisedLoop(opts: {
       router,
       breaker,
       worktreeDir: fx.wt,
-      taskContract: {
-        goalId: opts.contract.goal.id,
-        title: opts.contract.goal.title,
-        objective: opts.contract.goal.objective,
-        acceptanceCriteria: opts.contract.acceptanceCriteria.map((a) => ({ id: a.id, description: a.description })),
-      },
+      taskContract: taskContractExcerpt,
       seedPaths: ['src/impl.txt'],
       evidence,
       log,
-      ids: { requestId: () => `req-${randomUUID()}`, canary: () => `CANARY-${randomUUID()}` },
+      ids,
       outputSchema: { type: 'object', required: ['claim', 'actionRequests'], properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } } },
       maxRepairRounds: 2,
       budgetRemaining: () => budget.remaining(),
+      // REQ-16.5: a resolved plan is injected into every implementer round's context
+      // as MARKed data, same treatment as lessons below. Absent (no trigger fired,
+      // or fusion escalated/produced a structurally invalid plan) -> byte-identical
+      // to pre-Phase-4 behavior.
+      ...(resolvedPlan !== null ? { plan: resolvedPlan } : {}),
       ...(opts.lessons !== undefined && opts.governanceLogPath !== undefined
         ? { lessons: { dir: opts.lessons.dir, governanceLogPath: opts.governanceLogPath, ...(opts.lessons.maxLessons !== undefined ? { maxLessons: opts.lessons.maxLessons } : {}), ...(opts.lessons.maxBytes !== undefined ? { maxBytes: opts.lessons.maxBytes } : {}) } }
         : {}),

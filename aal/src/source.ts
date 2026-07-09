@@ -69,6 +69,13 @@ export interface AALSourceDeps {
    * was live has its file moved here, on the next source that loads).
    */
   lessons?: { dir: string; governanceLogPath?: string; maxLessons?: number; maxBytes?: number };
+  /**
+   * REQ-16.5: the planner-fusion plan the composition resolved BEFORE this source
+   * was even constructed (a single pre-loop dispatch, not a per-round lookup —
+   * unlike lessons, there is no directory to load from here). Absent -> no
+   * planner-fusion trigger fired this run (Phase-3 parity, byte-identical).
+   */
+  plan?: { id: string; content: string };
 }
 
 function pathOf(a: Action): string | null {
@@ -120,6 +127,7 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
       let manifestRef: string;
       let lessonsInjected: { id: string; evidenceRefs: string[] }[] = [];
       let lessonsBlocked: { id: string; kind: string }[] = [];
+      let planBlocked = false;
       try {
         const built = buildContext({
           taskId: deps.taskId,
@@ -130,11 +138,13 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
           evidence: deps.evidence,
           ...(deps.excludePath ? { excludePath: deps.excludePath } : {}),
           ...(approvedLessons.length > 0 ? { lessons: approvedLessons } : {}),
+          ...(deps.plan !== undefined ? { plan: deps.plan } : {}),
         });
         bundle = built.bundle;
         manifestRef = built.manifestRef;
         lessonsInjected = built.lessonsInjected;
         lessonsBlocked = built.lessonsBlocked;
+        planBlocked = built.planBlocked;
       } catch (err) {
         if (err instanceof SecretInContextError) {
           deps.log.append({
@@ -155,6 +165,16 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
           taskId: deps.taskId,
           type: 'ERROR',
           payload: { reason: 'lesson_secret_blocked', lessonId: b.id, kind: b.kind },
+        });
+      }
+      // REQ-16.5: a secret-bearing plan is blocked per-item, same as a lesson — never
+      // the whole-build abort a repo-file secret triggers above.
+      if (planBlocked) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'ERROR',
+          payload: { reason: 'plan_secret_blocked', planId: deps.plan?.id },
         });
       }
       // REQ-12.5: every injection (this round's bundle actually carrying lessons) is recorded.

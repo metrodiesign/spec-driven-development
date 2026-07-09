@@ -31,15 +31,49 @@ function valid(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 test('the shipped fusion-profiles.json loads and every resolve rule matches the fixed §7.5 mapping (REQ-8.1)', () => {
-  const map = loadFusionProfiles(SHIPPED);
+  const { profiles } = loadFusionProfiles(SHIPPED);
   const artifacts: FusionArtifact[] = ['plan', 'code_diff', 'tests', 'hypotheses', 'reviews'];
   for (const a of artifacts) {
-    const p = map.get(a);
+    const p = profiles.get(a);
     assert.ok(p !== undefined, `missing profile for ${a}`);
     assert.equal(p.resolve, RESOLVE_FOR[a], `${a} resolve must equal the fixed mapping`);
     assert.ok(p.panel.size >= 2, `${a} panel must seat >= 2`);
     assert.ok(p.estimateCostUnitsPerCandidate > 0, `${a} needs a positive estimate`);
   }
+});
+
+test('the shipped fusion-profiles.json reads triggers.plannerRole (REQ-16.1)', () => {
+  const { triggers } = loadFusionProfiles(SHIPPED);
+  assert.equal(triggers.plannerRole, true);
+});
+
+test('an absent triggers block defaults every trigger off (backward-compatible with pre-Phase-4 files)', () => {
+  const { triggers } = parseFusionProfiles({ profiles: [valid()] });
+  assert.deepEqual(triggers, { plannerRole: false });
+});
+
+test('triggers.plannerRole false round-trips (REQ-16.3: a test proves both offs at the policy-flag axis)', () => {
+  const { triggers } = parseFusionProfiles({ profiles: [valid()], triggers: { plannerRole: false } });
+  assert.equal(triggers.plannerRole, false);
+});
+
+test('triggers.plannerRole true round-trips', () => {
+  const { triggers } = parseFusionProfiles({ profiles: [valid()], triggers: { plannerRole: true } });
+  assert.equal(triggers.plannerRole, true);
+});
+
+test('a non-object triggers block is rejected at load', () => {
+  assert.throws(
+    () => parseFusionProfiles({ profiles: [valid()], triggers: 'yes' }),
+    (err: unknown) => err instanceof FusionProfileError && err.reason === 'bad_triggers',
+  );
+});
+
+test('a non-boolean triggers.plannerRole is rejected at load', () => {
+  assert.throws(
+    () => parseFusionProfiles({ profiles: [valid()], triggers: { plannerRole: 'yes' } }),
+    (err: unknown) => err instanceof FusionProfileError && err.reason === 'bad_triggers',
+  );
 });
 
 test('a resolve rule that contradicts the §7.5 mapping is rejected at load (REQ-8.4)', () => {

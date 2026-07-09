@@ -38,6 +38,11 @@ export interface FusionProfile {
   estimateCostUnitsPerCandidate: number;
 }
 
+/** REQ-16.1: `triggers.plannerRole` — the ONLY trigger today; an extensible bag so a future trigger key never needs a shape migration. */
+export interface FusionTriggers {
+  plannerRole: boolean;
+}
+
 /** A profile the loader refused. `.reason` is machine-readable; the message is human-facing. */
 export class FusionProfileError extends Error {
   readonly reason:
@@ -46,7 +51,8 @@ export class FusionProfileError extends Error {
     | 'resolve_mismatch'
     | 'missing_estimate'
     | 'bad_panel'
-    | 'duplicate_artifact';
+    | 'duplicate_artifact'
+    | 'bad_triggers';
   readonly artifact: string | undefined;
   constructor(reason: FusionProfileError['reason'], message: string, artifact?: string) {
     super(message);
@@ -124,25 +130,48 @@ export function parseFusionProfile(raw: unknown): FusionProfile {
   };
 }
 
-/** Parse the whole file value into a validated map (pure — testable without fs). */
-export function parseFusionProfiles(raw: unknown): Map<FusionArtifact, FusionProfile> {
+/**
+ * `triggers` is an ADDITIVE bag (REQ-16.1) — absent entirely -> every trigger off
+ * (backward-compatible with every pre-Phase-4 fusion-profiles.json, which has no
+ * `triggers` key at all); present-but-malformed fails loud, same discipline as
+ * every other field in this file (a bad governance-hashed policy must never
+ * silently degrade).
+ */
+function parseTriggers(v: unknown): FusionTriggers {
+  if (v === undefined) return { plannerRole: false };
+  if (!isRecord(v)) throw new FusionProfileError('bad_triggers', 'fusion-profiles.json: triggers is not an object');
+  const plannerRole = v['plannerRole'];
+  if (plannerRole !== undefined && typeof plannerRole !== 'boolean') {
+    throw new FusionProfileError('bad_triggers', 'fusion-profiles.json: triggers.plannerRole must be a boolean');
+  }
+  return { plannerRole: plannerRole === true };
+}
+
+export interface FusionProfilesFile {
+  profiles: Map<FusionArtifact, FusionProfile>;
+  triggers: FusionTriggers;
+}
+
+/** Parse the whole file value into validated profiles + triggers (pure — testable without fs). */
+export function parseFusionProfiles(raw: unknown): FusionProfilesFile {
   const list = isRecord(raw) && Array.isArray(raw['profiles']) ? raw['profiles'] : Array.isArray(raw) ? raw : undefined;
   if (list === undefined) {
     throw new FusionProfileError('not_an_object', 'fusion-profiles.json must be an array or { profiles: [...] }');
   }
-  const map = new Map<FusionArtifact, FusionProfile>();
+  const profiles = new Map<FusionArtifact, FusionProfile>();
   for (const rawProfile of list) {
     const profile = parseFusionProfile(rawProfile);
-    if (map.has(profile.artifact)) {
+    if (profiles.has(profile.artifact)) {
       throw new FusionProfileError('duplicate_artifact', `duplicate fusion profile for artifact ${profile.artifact}`, profile.artifact);
     }
-    map.set(profile.artifact, profile);
+    profiles.set(profile.artifact, profile);
   }
-  return map;
+  const triggers = parseTriggers(isRecord(raw) ? raw['triggers'] : undefined);
+  return { profiles, triggers };
 }
 
 /** Load + validate fusion-profiles.json (REQ-8.1). Throws FusionProfileError; an unreadable file throws too (governance surface — never a silent empty map). */
-export function loadFusionProfiles(path: string): Map<FusionArtifact, FusionProfile> {
+export function loadFusionProfiles(path: string): FusionProfilesFile {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));

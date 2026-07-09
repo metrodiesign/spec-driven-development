@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { runSupervisedLoop, wrapRouterForShadow } from './loop-run.ts';
-import { FakeAdapter, type RegisteredAdapter, type Registry, type Router } from 'aal';
+import { createDispatcher, FakeAdapter, type FusionProfile, type RegisteredAdapter, type Registry, type Router } from 'aal';
 import {
   approveProposal,
   listPendingProposals,
@@ -237,6 +237,90 @@ test('outcomeRouting mode active wraps shadow OUTSIDE the outcome wrapper — bo
     }
   } finally {
     rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+// --- Planner-role fusion auto-routing (REQ-16) — runPlannerFusion itself is
+// unit-tested in fusion.test.ts (resolution, PLAN_SCHEMA validation, PLAN_RESOLVED
+// shape); these are composition-level wiring smoke tests proving the trigger
+// contract (REQ-16.3) over the SAME single-adapter fixture the outcomeRouting
+// tests above use — self-diversity (not cross_lineage) so the one registered
+// FakeAdapter can seat a full 2-candidate panel. ---
+
+const PLAN_PROFILE: FusionProfile = {
+  artifact: 'plan',
+  panel: { size: 2, diversity: { kind: 'self', seeds: [1, 2] } },
+  resolve: 'deliberate_synthesis',
+  budgetCapCostUnits: 40,
+  estimateCostUnitsPerCandidate: 8,
+};
+
+test('planning enabled+triggered dispatches role planner BEFORE the task loop -> PLAN_RESOLVED; a resolved plan is advisory and never changes the task loop\'s outcome (REQ-16.2/16.5)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    const result = await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      planning: { enabled: true, plannerRoleTrigger: true, profile: PLAN_PROFILE, dispatcher: createDispatcher({ buckets: new Map(), maxParallel: 2 }) },
+    });
+    // Same fixture/assertion as the plain-run test above (no autoMerge, L2 default
+    // risk, 100ms approval window) — a resolved plan changes NOTHING about this.
+    assert.equal(result.finalState, 'ESCALATED', 'REQ-3.4 timeout, byte-identical to the no-planning run');
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      const resolved = log.all({ type: 'PLAN_RESOLVED' });
+      assert.equal(resolved.length, 1, 'dispatched exactly once');
+      assert.equal(resolved[0]?.payload['winner'], true);
+      assert.equal(typeof resolved[0]?.payload['panelSize'], 'number');
+      assert.equal(typeof resolved[0]?.payload['costUnits'], 'number');
+      // REQ-16.2: BEFORE the task loop — its seq precedes the loop's first CONTEXT_BUILT.
+      const firstContextBuilt = log.all({ type: 'CONTEXT_BUILT' })[0];
+      assert.ok(firstContextBuilt !== undefined, 'the task loop still ran');
+      assert.ok((resolved[0]?.seq ?? Infinity) < (firstContextBuilt?.seq ?? -1), 'planner-fusion resolved before the task loop built its first context');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('planning never dispatches when EITHER axis is off, or the option is absent entirely (REQ-16.3: a test SHALL prove both offs)', async () => {
+  const cases: ({ enabled: boolean; plannerRoleTrigger: boolean } | undefined)[] = [
+    undefined, // absent entirely — Phase-3 parity, the default for every other test in this file
+    { enabled: false, plannerRoleTrigger: true }, // composition option off
+    { enabled: true, plannerRoleTrigger: false }, // governance policy flag off
+  ];
+  for (const planning of cases) {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+    try {
+      await runSupervisedLoop({
+        contract: CONTRACT,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        approval: { timeoutMs: 100 },
+        ...(planning !== undefined
+          ? { planning: { ...planning, profile: PLAN_PROFILE, dispatcher: createDispatcher({ buckets: new Map(), maxParallel: 2 }) } }
+          : {}),
+      });
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(
+          log.all({ type: 'PLAN_RESOLVED' }).length,
+          0,
+          `planning=${JSON.stringify(planning)} must never dispatch the planner`,
+        );
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
   }
 });
 

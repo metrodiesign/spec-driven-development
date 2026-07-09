@@ -76,6 +76,8 @@ export {
   type ResolveRule,
   type FusionProfile,
   type PanelDiversity,
+  type FusionTriggers,
+  type FusionProfilesFile,
 } from './fusion/profiles.ts';
 export {
   DELIBERATION_ANALYSIS_SCHEMA,

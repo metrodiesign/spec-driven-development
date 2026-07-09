@@ -45,6 +45,7 @@ function harness(opts: {
   routeHints?: (input: ProposalInput) => RouteHints;
   susceptibility?: number;
   lessons?: { dir: string; governanceLogPath?: string; maxLessons?: number; maxBytes?: number };
+  plan?: { id: string; content: string };
 }) {
   const root = mkdtempSync(join(tmpdir(), 'src-'));
   const worktree = join(root, 'wt');
@@ -84,8 +85,9 @@ function harness(opts: {
     ...(opts.dataPolicyFor ? { dataPolicyFor: opts.dataPolicyFor } : {}),
     ...(opts.routeHints ? { routeHints: opts.routeHints } : {}),
     ...(opts.lessons ? { lessons: opts.lessons } : {}),
+    ...(opts.plan ? { plan: opts.plan } : {}),
   });
-  return { root, log, source, breaker, reg, cleanup: () => { log.close(); rmSync(root, { recursive: true, force: true }); } };
+  return { root, log, evidence, source, breaker, reg, cleanup: () => { log.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
 const INPUT: ProposalInput = { taskId: 'T-1', state: 'IMPLEMENTING', role: 'implementer', feedback: null };
@@ -198,6 +200,37 @@ test('REQ-12.3: a secret-bearing approved lesson is blocked + ERROR-logged, but 
   } finally {
     h.cleanup();
     rmSync(lessonsDir, { recursive: true, force: true });
+  }
+});
+
+test('REQ-16.5: a resolved plan is injected into the round\'s context bundle', async () => {
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, plan: { id: 'plan-T-1', content: 'do the fix carefully' } });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION', 'the round still succeeds with a plan injected');
+    const built = h.log.all({ type: 'CONTEXT_BUILT' })[0];
+    const manifest = JSON.parse(h.evidence.getText(built?.payload['manifestRef'] as string)) as {
+      rules: { pieceId: string; reason: string }[];
+    };
+    assert.ok(manifest.rules.some((r) => r.pieceId === 'plan-T-1' && r.reason === 'plan'), 'plan piece recorded in the context manifest');
+    assert.equal(h.log.all({ type: 'ERROR' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('a secret-bearing plan is blocked + ERROR-logged, but the round is NOT aborted', async () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, plan: { id: 'plan-T-1', content: `leaked: ${secret}` } });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.equal(p.claim, 'READY_FOR_VERIFICATION', 'unlike a repo-file secret, a blocked PLAN never aborts the round');
+    const errors = h.log.all({ type: 'ERROR' });
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0]?.payload['reason'], 'plan_secret_blocked');
+    assert.equal(errors[0]?.payload['planId'], 'plan-T-1');
+  } finally {
+    h.cleanup();
   }
 });
 

@@ -250,6 +250,56 @@ test('no lessons input -> lessonsInjected/lessonsBlocked are empty, byte-identic
   }
 });
 
+test('REQ-16.5: a resolved plan flows SEED->GOVERN->MARK as an excerpt piece, canaried like any other data', () => {
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts'], { plan: { id: 'plan-T-1', content: '{"approach":"x","steps":["y"]}' } }));
+    const piece = r.bundle.pieces.find((p) => p.id === 'plan-T-1');
+    assert.ok(piece, 'plan landed as a bundle piece');
+    assert.equal(piece?.kind, 'excerpt');
+    assert.equal(piece?.content, '{"approach":"x","steps":["y"]}');
+    assert.equal(r.planInjected, true);
+    assert.equal(r.planBlocked, false);
+
+    const wire = serializeBundle(r.bundle);
+    assert.match(wire, /CANARY-fixed-123/, 'plan piece carries the same injection canary as file pieces');
+    assert.match(wire, /UNTRUSTED/i, 'plan marked as untrusted data');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a secret-bearing plan is BLOCKED — never reaches pieces/prompt, but the REST of the build still succeeds', () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts'], { plan: { id: 'plan-T-1', content: `leaked key: ${secret}` } }));
+    // Unlike a repo-file secret (which throws and aborts the WHOLE build), a
+    // secret-bearing PLAN blocks only itself — the build still returns.
+    assert.equal(r.bundle.pieces.some((p) => p.id === 'plan-T-1'), false, 'blocked plan never became a piece');
+    assert.equal(r.bundle.pieces.some((p) => p.path === 'src/a.ts'), true, 'file pieces unaffected');
+    assert.equal(r.planInjected, false);
+    assert.equal(r.planBlocked, true);
+
+    const wire = serializeBundle(r.bundle);
+    assert.ok(!wire.includes(secret), 'blocked plan content never reaches the serialized bundle');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('no plan input -> planInjected/planBlocked are false, byte-identical to pre-Phase-4 behavior otherwise', () => {
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts']));
+    assert.equal(r.planInjected, false);
+    assert.equal(r.planBlocked, false);
+    assert.equal(r.bundle.pieces.length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('recall/waste: fraction of touched files that were in the bundle, and unused fraction', () => {
   const f = fixture({ 'src/a.ts': 'a\n', 'src/b.ts': 'b\n' });
   try {

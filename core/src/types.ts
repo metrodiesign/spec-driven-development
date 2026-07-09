@@ -185,7 +185,9 @@ export type EventType =
   | 'LESSON_INJECTED'
   // Phase 4 outcome-routing ACTIVE addition (append-only, INV-10; REQ-15.4/15.5).
   | 'OUTCOME_ROUTE'
-  | 'ROUTING_FROZEN';
+  | 'ROUTING_FROZEN'
+  // Phase 4 planner-role fusion auto-routing addition (append-only, INV-10; REQ-16.5).
+  | 'PLAN_RESOLVED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

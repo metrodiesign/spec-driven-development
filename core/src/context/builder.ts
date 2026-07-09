@@ -35,6 +35,14 @@ export interface ContextBuildInput {
    * them — never a free-text post-build append (architect finding #3).
    */
   lessons?: LessonRecord[];
+  /**
+   * REQ-16.5: the resolved planner-fusion plan (already schema-validated by the
+   * caller), injected as MARKed data alongside lessons — same GOVERN treatment
+   * (a secret-bearing plan is blocked, never the whole-build abort a repo-file
+   * secret triggers above). Absent -> no planner-fusion trigger fired this run
+   * (Phase-3 parity, byte-identical).
+   */
+  plan?: { id: string; content: string };
 }
 
 export interface ContextBuildResult {
@@ -45,6 +53,10 @@ export interface ContextBuildResult {
   lessonsInjected: { id: string; evidenceRefs: string[] }[];
   /** REQ-12.3: lessons GOVERN blocked (a secret hit) — never reached pieces/prompt; the caller records the block. */
   lessonsBlocked: { id: string; kind: string }[];
+  /** REQ-16.5: whether `input.plan` (if supplied) made it into this bundle (post-GOVERN). */
+  planInjected: boolean;
+  /** GOVERN blocked `input.plan` (a secret hit) — never reached pieces/prompt; the caller records the block. */
+  planBlocked: boolean;
 }
 
 export class SecretInContextError extends Error {
@@ -187,6 +199,25 @@ export function buildContext(input: ContextBuildInput): ContextBuildResult {
     lessonsInjected.push({ id: lesson.id, evidenceRefs: lesson.evidenceRefs });
   }
 
+  // Plan (REQ-16.5): SEED (the caller already resolved + schema-validated it) ->
+  // GOVERN (secret scan, same per-item block as a lesson — never the whole-build
+  // abort a repo-file secret triggers above) -> MARK (reuses the untrusted-data
+  // wrapping every piece gets below). Reuses ContextPiece.kind:'excerpt' — same
+  // choice lessons made; MARK/serialization treats every kind identically, so a
+  // new union member would be a distinction with no behavioral difference.
+  let planInjected = false;
+  let planBlocked = false;
+  if (input.plan !== undefined) {
+    const hit = scanForSecret(input.plan.content);
+    if (hit.hit) {
+      planBlocked = true;
+    } else {
+      pieces.push({ id: input.plan.id, kind: 'excerpt', content: input.plan.content, reason: 'plan' });
+      rules.push({ pieceId: input.plan.id, reason: 'plan' });
+      planInjected = true;
+    }
+  }
+
   const bytes = pieces.reduce((n, p) => n + p.content.length, 0);
   const bundle: ContextBundle = {
     pieces,
@@ -202,7 +233,7 @@ export function buildContext(input: ContextBuildInput): ContextBuildResult {
     stats: bundle.stats,
   };
   const manifestRef = input.evidence.put(JSON.stringify(manifest));
-  return { bundle, manifestRef, rules, lessonsInjected, lessonsBlocked };
+  return { bundle, manifestRef, rules, lessonsInjected, lessonsBlocked, planInjected, planBlocked };
 }
 
 export function computeContextMetrics(
