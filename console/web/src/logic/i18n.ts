@@ -33,6 +33,7 @@ const en = {
   // common
   loading: 'loading…',
   fetchUnavailable: 'unavailable — try again later',
+  appErrorBoundaryFallback: 'Something went wrong — try reloading the page.',
   approve: 'Approve',
   deny: 'Deny',
   reject: 'Reject',
@@ -197,6 +198,7 @@ const th: Record<keyof typeof en, string> = {
   // common
   loading: 'กำลังโหลด…',
   fetchUnavailable: 'ใช้งานไม่ได้ตอนนี้ — ลองใหม่ภายหลัง',
+  appErrorBoundaryFallback: 'เกิดข้อผิดพลาด — ลองโหลดหน้านี้ใหม่',
   approve: 'อนุมัติ',
   deny: 'ปฏิเสธ',
   reject: 'ปฏิเสธ',

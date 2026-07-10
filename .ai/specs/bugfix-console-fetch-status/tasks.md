@@ -58,7 +58,7 @@
           rather than misleading content, a natural consequence of the same
           `.kind==='data'` guard applied everywhere, not a separate change.
 
-- [ ] 2. Root error boundary — add a minimal class-component error boundary
+- [x] 2. Root error boundary — add a minimal class-component error boundary
       (`getDerivedStateFromError`/`componentDidCatch`, logs via `console.error`,
       never re-throws) and wrap `<App/>` with it in `main.tsx`, placed so its
       fallback UI can still call `t()` from `I18nProvider`. Defense-in-depth for
@@ -74,3 +74,31 @@
       it is proven live per
       `.claude/skills/spec-implement/references/browser-verify.md` rather than by
       adding a new test dependency for one boundary component.
+      Evidence:
+        - test: n/a — no DOM/component test infra in this repo (see Verify);
+          `pnpm -C console/web test` -> 70 passed / 0 failed (unchanged from
+          task 1, confirming this task added no logic-level regression)
+        - test: `pnpm -r typecheck` -> 6/6 packages clean; `pnpm -r build` ->
+          `vite build` succeeded
+        - other: `pnpm lint` -> no issues
+        - viewports: n/a — no responsive/viewport claim
+        - browser: served the built SPA through the same real `buildApp`
+          fixture as task 1 (`http://127.0.0.1:9879/`, throwaway script,
+          deleted after use). Proved the boundary itself with a temporary,
+          reverted-after-use fault injection (task 1 already eliminated every
+          natural fetch-driven throw site, so a synthetic fault was the only
+          way to exercise F6/F7 directly): swapped `<ErrorBoundary><App/></ErrorBoundary>`
+          for `<ErrorBoundary><TEMP_Boom/></ErrorBoundary>` where `TEMP_Boom`
+          unconditionally threw, rebuilt, reloaded — chrome-devtools MCP
+          snapshot showed ONLY the `role="alert"` fallback
+          `"Something went wrong — try reloading the page."` (proving
+          `I18nProvider` -> `ErrorBoundary` -> `t()` all wired correctly, not
+          a blank page), and `console.error` recorded the caught error
+          (`Error: boundary-smoke-test`). Reverted `main.tsx` to
+          `<ErrorBoundary><App/></ErrorBoundary>`, rebuilt, reloaded again —
+          confirmed byte-identical to task 1's verified real-app snapshot
+          (same sections, same `"unavailable — try again later"` states, same
+          4 expected 404s + 1 pre-existing a11y advisory, zero new console
+          errors) — the boundary is inert on every currently-passing path
+          (B6).
+        - deviations: none.
