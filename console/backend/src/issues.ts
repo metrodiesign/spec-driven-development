@@ -30,7 +30,12 @@ function draftPath(dir: string, id: string): string {
   return join(dir, `${id}.goal.yaml`);
 }
 
+/** iss-<16 hex> only (matches issueId()) — id arrives raw from the route param;
+ *  a decoded `..` segment could otherwise join outside dir (PR #50 review). */
+const ISSUE_ID_RE = /^iss-[0-9a-f]{16}$/;
+
 function readIssue(dir: string, id: string): IssueRecord | null {
+  if (!ISSUE_ID_RE.test(id)) return null;
   const p = issuePath(dir, id);
   if (!existsSync(p)) return null;
   return JSON.parse(readFileSync(p, 'utf8')) as IssueRecord;

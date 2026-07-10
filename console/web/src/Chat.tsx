@@ -52,6 +52,9 @@ export function Chat({ project }: { project: string }) {
     // Reentry guard (PR #50 review): the Start button used to stay enabled until
     // `connected` flips true on ws.onopen, so a double-click could create a second
     // WebSocket without ever closing the first (leak + duplicate event handling).
+    // `connecting` must stay true across the whole gap — including after the fetch
+    // resolves but before the socket itself opens — or that same window reopens
+    // (PR #50 review follow-up: a `finally` clearing it right after fetch did not).
     if (connecting || connected) return;
     setConnecting(true);
     try {
@@ -65,13 +68,20 @@ export function Chat({ project }: { project: string }) {
       });
       if (!r.ok) {
         setNote(t('chatSessionCreateFailed', { error: ((await r.json()) as { error?: string }).error ?? r.status }));
+        setConnecting(false);
         return;
       }
       const { wsTicket } = (await r.json()) as { sessionId: string; wsTicket: string };
       setState(initialChatUiState);
       const ws = new WebSocket(chatWsUrl(wsTicket));
-      ws.onopen = () => setConnected(true);
-      ws.onclose = () => setConnected(false);
+      ws.onopen = () => {
+        setConnected(true);
+        setConnecting(false);
+      };
+      ws.onclose = () => {
+        setConnected(false);
+        setConnecting(false);
+      };
       ws.onmessage = (ev) => {
         const event = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') as ChatServerEvent;
         setState((s) => applyServerEvent(s, event));
@@ -80,7 +90,6 @@ export function Chat({ project }: { project: string }) {
       setNote(null);
     } catch {
       setNote(t('fetchUnavailable'));
-    } finally {
       setConnecting(false);
     }
   }

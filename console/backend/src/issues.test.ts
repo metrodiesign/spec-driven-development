@@ -3,7 +3,7 @@
 // UNTRUSTED DATA (INV-3) — this module stores/echoes it, never interprets it.
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -106,6 +106,24 @@ test('convertIssue: refuses a non-open issue and an unknown id (REQ-9.2)', () =>
     assert.deepEqual(convertIssue(dir, created.issue.id), { ok: false, reason: 'not_open' });
     assert.deepEqual(convertIssue(dir, 'iss-doesnotexist'), { ok: false, reason: 'not_found' });
   });
+});
+
+test('convertIssue/rejectIssue: a traversal id can never join outside the issues dir (PR #50 review)', () => {
+  const outer = mkdtempSync(join(tmpdir(), 'issues-traversal-'));
+  try {
+    const dir = join(outer, 'issues');
+    mkdirSync(dir);
+    writeFileSync(
+      join(outer, 'secret.json'),
+      JSON.stringify({ id: 'secret', title: 't', body: 'b', createdAt: NOW, status: 'open' }),
+    );
+
+    assert.deepEqual(convertIssue(dir, '../secret'), { ok: false, reason: 'not_found' });
+    assert.deepEqual(rejectIssue(dir, '../secret'), { ok: false, reason: 'not_found' });
+    assert.deepEqual(readdirSync(outer).sort(), ['issues', 'secret.json'], 'no write escaped into the parent dir');
+  } finally {
+    rmSync(outer, { recursive: true, force: true });
+  }
 });
 
 test('rejectIssue: rejects an open issue, refuses non-open and unknown ids (REQ-8.6)', () => {
