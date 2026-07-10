@@ -32,6 +32,7 @@ export function toggleLocale(current: Locale): Locale {
 const en = {
   // common
   loading: 'loading…',
+  fetchUnavailable: 'unavailable — try again later',
   approve: 'Approve',
   deny: 'Deny',
   reject: 'Reject',
@@ -195,6 +196,7 @@ const en = {
 const th: Record<keyof typeof en, string> = {
   // common
   loading: 'กำลังโหลด…',
+  fetchUnavailable: 'ใช้งานไม่ได้ตอนนี้ — ลองใหม่ภายหลัง',
   approve: 'อนุมัติ',
   deny: 'ปฏิเสธ',
   reject: 'ปฏิเสธ',

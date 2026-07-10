@@ -7,6 +7,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
 import { termWsUrl } from './logic/term.ts';
+import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
 import { useI18n } from './I18nContext.tsx';
 
 interface SessionRow {
@@ -25,14 +26,13 @@ export function TerminalPanel({ project }: { project: string }) {
   const [ptyId, setPtyId] = useState<string | null>(null);
   const [attached, setAttached] = useState(false);
   const [resume, setResume] = useState('');
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [sessionsState, setSessionsState] = useState<FetchState<SessionRow[]>>(FETCH_LOADING);
   const [note, setNote] = useState<string | null>(null);
 
   const refreshSessions = () => {
     fetch('/api/term/sessions')
-      .then((r) => r.json())
-      .then((rows: SessionRow[]) => setSessions(rows))
-      .catch(() => setSessions([]));
+      .then((r) => r.json().then((rows: SessionRow[]) => setSessionsState(fetchStateFromResponse(r.ok, rows))))
+      .catch(() => setSessionsState(FETCH_ERROR));
   };
   useEffect(refreshSessions, []);
 
@@ -126,9 +126,10 @@ export function TerminalPanel({ project }: { project: string }) {
         {attached && <button onClick={detach}>{t('termDetachButton')}</button>}
       </p>
       {note !== null && <p role="status">{note}</p>}
-      {sessions.length > 0 && (
+      {sessionsState.kind === 'error' && <p role="status">{t('fetchUnavailable')}</p>}
+      {sessionsState.kind === 'data' && sessionsState.value.length > 0 && (
         <ul>
-          {sessions.map((s) => (
+          {sessionsState.value.map((s) => (
             <li key={s.ptyId}>
               <code>{s.ptyId}</code> · {s.mode}
               {s.alive ? '' : t('termExitedSuffix')}{' '}

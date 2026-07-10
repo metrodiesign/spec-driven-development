@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 
 import { canAct, overCap, TITLE_MAX, BODY_MAX, type IssueRecord } from './logic/issues.ts';
+import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
 import { useI18n } from './I18nContext.tsx';
 
 const box: React.CSSProperties = {
@@ -18,16 +19,15 @@ const box: React.CSSProperties = {
 
 export function Issues(): React.JSX.Element {
   const { t } = useI18n();
-  const [issues, setIssues] = useState<IssueRecord[]>([]);
+  const [issuesState, setIssuesState] = useState<FetchState<IssueRecord[]>>(FETCH_LOADING);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [note, setNote] = useState<string | null>(null);
 
   const refresh = (): void => {
     fetch('/api/issues')
-      .then((r) => r.json())
-      .then((d: { issues: IssueRecord[] }) => setIssues(d.issues))
-      .catch(() => setIssues([]));
+      .then((r) => r.json().then((d: { issues: IssueRecord[] }) => setIssuesState(fetchStateFromResponse(r.ok, d.issues))))
+      .catch(() => setIssuesState(FETCH_ERROR));
   };
   useEffect(() => {
     refresh();
@@ -94,10 +94,14 @@ export function Issues(): React.JSX.Element {
         </button>
       </div>
 
-      {issues.length === 0 ? (
+      {issuesState.kind === 'loading' ? (
+        <p>{t('loading')}</p>
+      ) : issuesState.kind === 'error' ? (
+        <p role="status">{t('fetchUnavailable')}</p>
+      ) : issuesState.value.length === 0 ? (
         <p>{t('issuesNoIssuesYet')}</p>
       ) : (
-        issues.map((issue) => (
+        issuesState.value.map((issue) => (
           <div key={issue.id} style={box} aria-label={t('issuesIssueAriaLabel', { id: issue.id })}>
             <p>
               <strong>{issue.title}</strong> · <code>{issue.status}</code>

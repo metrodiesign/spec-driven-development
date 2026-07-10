@@ -20,26 +20,11 @@ import {
   type LoopEvent,
 } from './logic/loop.ts';
 import { useI18n } from './I18nContext.tsx';
+import { useFetch } from './useFetch.ts';
 
 interface RunSummary {
   runId: string;
   ended: boolean;
-}
-
-function useFetch<T>(url: string | null): T | null {
-  const [data, setData] = useState<T | null>(null);
-  useEffect(() => {
-    if (url === null) return;
-    let alive = true;
-    fetch(url)
-      .then((r) => r.json())
-      .then((d: T) => alive && setData(d))
-      .catch(() => alive && setData(null));
-    return () => {
-      alive = false;
-    };
-  }, [url]);
-  return data;
 }
 
 const box: React.CSSProperties = {
@@ -105,7 +90,8 @@ export function Loop(): React.JSX.Element {
     };
   }, [selected]);
 
-  const run = selected === null ? null : runsRes?.runs.find((r) => r.runId === selected) ?? null;
+  const run =
+    selected === null || runsRes.kind !== 'data' ? null : (runsRes.value.runs.find((r) => r.runId === selected) ?? null);
   const ended = run?.ended ?? false;
   const state = latestTaskState(events);
   const controls = steeringControls(ended, state);
@@ -139,13 +125,15 @@ export function Loop(): React.JSX.Element {
 
       <div style={box} aria-label={t('loopRunsHeading')}>
         <h3>{t('loopRunsHeading')}</h3>
-        {runsRes === null ? (
+        {runsRes.kind === 'loading' ? (
           <p>{t('loading')}</p>
-        ) : runsRes.runs.length === 0 ? (
+        ) : runsRes.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
+        ) : runsRes.value.runs.length === 0 ? (
           <p>{t('loopNoRuns')}</p>
         ) : (
           <ul>
-            {runsRes.runs.map((r) => (
+            {runsRes.value.runs.map((r) => (
               <li key={r.runId}>
                 <button type="button" onClick={() => setSelected(r.runId)} aria-current={selected === r.runId}>
                   {r.runId}

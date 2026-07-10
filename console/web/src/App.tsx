@@ -8,6 +8,7 @@ import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo
 import { interpretAuthProbe, type AuthGateState } from './logic/auth.ts';
 import { isTheme, resolveInitialTheme, themeToggleLabel, toggleTheme, THEME_STORAGE_KEY, type Theme } from './logic/theme.ts';
 import { useI18n } from './I18nContext.tsx';
+import { useFetch } from './useFetch.ts';
 import { TerminalPanel } from './TerminalPanel.tsx';
 import { Surfaces } from './Surfaces.tsx';
 import { Loop } from './Loop.tsx';
@@ -86,26 +87,6 @@ function useTheme(): { theme: Theme; toggle: () => void } {
   return { theme, toggle };
 }
 
-function useFetch<T>(url: string | null): T | null {
-  const [data, setData] = useState<T | null>(null);
-  useEffect(() => {
-    if (url === null) return;
-    let alive = true;
-    fetch(url)
-      .then((r) => r.json())
-      .then((d: T) => {
-        if (alive) setData(d);
-      })
-      .catch(() => {
-        if (alive) setData(null);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [url]);
-  return data;
-}
-
 export function App() {
   const gate = useAuthGate();
   const ready = gate === 'authed';
@@ -126,7 +107,7 @@ export function App() {
   if (gate === 'checking') return null;
   if (gate === 'unauthed') return <Login />;
 
-  const banner = auth !== null ? authBanner(auth) : null;
+  const banner = auth.kind === 'data' ? authBanner(auth.value) : null;
 
   return (
     <main
@@ -147,7 +128,7 @@ export function App() {
           {locale === 'th' ? t('localeToggleToEnglish') : t('localeToggleToThai')}
         </button>
       </header>
-      <p role="note">{status?.disclaimer ?? t('appStatusDisclaimerFallback')}</p>
+      <p role="note">{(status.kind === 'data' ? status.value.disclaimer : undefined) ?? t('appStatusDisclaimerFallback')}</p>
 
       {banner !== null && (
         <section
@@ -167,38 +148,43 @@ export function App() {
 
       <section aria-label={t('appCliStatusAriaLabel')}>
         <h2>{t('appStatusHeading')}</h2>
-        {status === null ? (
+        {status.kind === 'loading' ? (
           <p>{t('loading')}</p>
-        ) : status.cli.available ? (
+        ) : status.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
+        ) : status.value.cli.available ? (
           <p>
-            {t('appCliVersionPrefix')} <code>{status.cli.version}</code> {t('appActiveRunsInfix')} {status.activeRuns.length}
+            {t('appCliVersionPrefix')} <code>{status.value.cli.version}</code> {t('appActiveRunsInfix')}{' '}
+            {status.value.activeRuns.length}
           </p>
         ) : (
-          <p>{status.cli.hint}</p>
+          <p>{status.value.cli.hint}</p>
         )}
       </section>
 
       <section aria-label={t('appUsageAriaLabel')}>
         <h2>{t('appUsageHeading')}</h2>
-        {usage === null ? (
+        {usage.kind === 'loading' ? (
           <p>{t('loading')}</p>
+        ) : usage.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
         ) : (
           <>
-            <p>{windowSummary(usage.currentWindow, Date.now())}</p>
-            <p>{t('appWindowsOpenedLine', { count: usage.windowsLast7Days })}</p>
-            {usage.weekly.available ? (
+            <p>{windowSummary(usage.value.currentWindow, Date.now())}</p>
+            <p>{t('appWindowsOpenedLine', { count: usage.value.windowsLast7Days })}</p>
+            {usage.value.weekly.available ? (
               <p>
-                {t('appWeeklySinceLine', { date: usage.weekly.sinceReset, count: usage.weekly.entryCount })}
-                {usage.weekly.calibratedPercent !== undefined
-                  ? t('appCalibratedSuffix', { percent: usage.weekly.calibratedPercent })
+                {t('appWeeklySinceLine', { date: usage.value.weekly.sinceReset, count: usage.value.weekly.entryCount })}
+                {usage.value.weekly.calibratedPercent !== undefined
+                  ? t('appCalibratedSuffix', { percent: usage.value.weekly.calibratedPercent })
                   : ''}
               </p>
             ) : (
-              <p>{usage.weekly.needed}</p>
+              <p>{usage.value.weekly.needed}</p>
             )}
             <p>
               <small>
-                {usage.disclaimer} · {usage.moneyDisclaimer}
+                {usage.value.disclaimer} · {usage.value.moneyDisclaimer}
               </small>
             </p>
           </>
@@ -207,13 +193,15 @@ export function App() {
 
       <section aria-label={t('appProjectsHeading')}>
         <h2>{t('appProjectsHeading')}</h2>
-        {projectsRes === null ? (
+        {projectsRes.kind === 'loading' ? (
           <p>{t('loading')}</p>
-        ) : projectsRes.projects.length === 0 ? (
-          <p>{projectsRes.guidance ?? t('appNoProjectsFallback')}</p>
+        ) : projectsRes.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
+        ) : projectsRes.value.projects.length === 0 ? (
+          <p>{projectsRes.value.guidance ?? t('appNoProjectsFallback')}</p>
         ) : (
           <ul>
-            {projectsRes.projects.map((p) => (
+            {projectsRes.value.projects.map((p) => (
               <li key={p.id}>
                 <a href={`?project=${encodeURIComponent(p.id)}`}>{projectLabel(p)}</a>{' '}
                 <small>{t('appSessionsCountSuffix', { count: p.sessionCount })}</small>
@@ -229,7 +217,7 @@ export function App() {
 
       <Issues />
 
-      <Surfaces project={selected} remote={auth?.remote ?? true} />
+      <Surfaces project={selected} remote={auth.kind === 'data' ? auth.value.remote : true} />
 
       {selected !== null && <TerminalPanel project={selected} />}
 
@@ -240,12 +228,14 @@ export function App() {
           <h2>
             {t('appSessionsHeadingPrefix')} <code>{selected}</code>
           </h2>
-          {sessionsRes === null ? (
+          {sessionsRes.kind === 'loading' ? (
             <p>{t('loading')}</p>
+          ) : sessionsRes.kind === 'error' ? (
+            <p role="status">{t('fetchUnavailable')}</p>
           ) : (
             <>
-              {sessionsRes.warnings.length > 0 && (
-                <p role="status">{sessionsRes.warnings.join(' · ')}</p>
+              {sessionsRes.value.warnings.length > 0 && (
+                <p role="status">{sessionsRes.value.warnings.join(' · ')}</p>
               )}
               <div style={{ overflowX: 'auto' }}>
                 <table>
@@ -259,7 +249,7 @@ export function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sessionsRes.sessions.map((s) => (
+                  {sessionsRes.value.sessions.map((s) => (
                     <tr key={s.sessionId}>
                       <td>
                         <code>{s.sessionId}</code>

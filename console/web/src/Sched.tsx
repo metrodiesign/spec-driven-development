@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 
 import { automationHint, interpretStartResponse, schedStatusLabel, type SchedStatus } from './logic/sched.ts';
+import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
 import { useI18n } from './I18nContext.tsx';
 
 const box: React.CSSProperties = {
@@ -18,7 +19,7 @@ const POLL_MS = 3000;
 
 export function Sched(): React.JSX.Element {
   const { t } = useI18n();
-  const [status, setStatus] = useState<SchedStatus | null>(null);
+  const [status, setStatus] = useState<FetchState<SchedStatus>>(FETCH_LOADING);
   const [goal, setGoal] = useState('');
   const [task, setTask] = useState('');
   const [live, setLive] = useState(false);
@@ -28,9 +29,8 @@ export function Sched(): React.JSX.Element {
 
   const refreshStatus = (): void => {
     fetch('/api/sched/status')
-      .then((r) => r.json())
-      .then((s: SchedStatus) => setStatus(s))
-      .catch(() => setStatus(null));
+      .then((r) => r.json().then((s: SchedStatus) => setStatus(fetchStateFromResponse(r.ok, s))))
+      .catch(() => setStatus(FETCH_ERROR));
   };
   useEffect(() => {
     refreshStatus();
@@ -78,12 +78,14 @@ export function Sched(): React.JSX.Element {
     refreshStatus();
   }
 
-  const running = status?.running ?? false;
+  const running = status.kind === 'data' ? status.value.running : false;
 
   return (
     <section aria-label="F-Sched">
       <h2>{t('schedHeading')}</h2>
-      <p role="status">{status === null ? t('loading') : schedStatusLabel(status)}</p>
+      <p role="status">
+        {status.kind === 'loading' ? t('loading') : status.kind === 'error' ? t('fetchUnavailable') : schedStatusLabel(status.value)}
+      </p>
       {note !== null && <p role="status">{note}</p>}
 
       <div style={box} aria-label={t('schedLoopRunHeading')}>

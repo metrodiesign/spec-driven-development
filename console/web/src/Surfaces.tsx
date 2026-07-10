@@ -3,26 +3,9 @@
 // governed by the backend (consent gate + writeSafe) and covered by API tests;
 // these pages surface the current state and the operator's entry points.
 
-import { useEffect, useState } from 'react';
-
 import { statsRows, listOrEmpty, mcpAuthenticateState, type SysStats } from './logic/surfaces.ts';
 import { useI18n } from './I18nContext.tsx';
-
-function useFetch<T>(url: string | null): T | null {
-  const [data, setData] = useState<T | null>(null);
-  useEffect(() => {
-    if (url === null) return;
-    let alive = true;
-    fetch(url)
-      .then((r) => r.json())
-      .then((d: T) => alive && setData(d))
-      .catch(() => alive && setData(null));
-    return () => {
-      alive = false;
-    };
-  }, [url]);
-  return data;
-}
+import { useFetch } from './useFetch.ts';
 
 const box: React.CSSProperties = {
   border: '1px solid var(--color-border)',
@@ -57,10 +40,17 @@ export function Surfaces({ project, remote }: { project: string | null; remote: 
 
       <div style={box} aria-label={t('surfacesSystemHeading')}>
         <h3>{t('surfacesSystemHeading')}</h3>
-        {stats === null ? <p>{t('loading')}</p> : <ul>{statsRows(stats).map((r) => <li key={r}>{r}</li>)}</ul>}
-        {doctor !== null && (
-          <p role={doctor.degraded === true ? 'status' : undefined}>
-            {t('surfacesDoctorPrefix')} {doctor.available ? t('surfacesDoctorOk') : (doctor.hint ?? t('surfacesDoctorUnavailable'))}
+        {stats.kind === 'loading' ? (
+          <p>{t('loading')}</p>
+        ) : stats.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
+        ) : (
+          <ul>{statsRows(stats.value).map((r) => <li key={r}>{r}</li>)}</ul>
+        )}
+        {doctor.kind === 'data' && (
+          <p role={doctor.value.degraded === true ? 'status' : undefined}>
+            {t('surfacesDoctorPrefix')}{' '}
+            {doctor.value.available ? t('surfacesDoctorOk') : (doctor.value.hint ?? t('surfacesDoctorUnavailable'))}
           </p>
         )}
       </div>
@@ -71,10 +61,12 @@ export function Surfaces({ project, remote }: { project: string | null; remote: 
           <p>
             {t('surfacesSelectProjectHint')} <code>.mcp.json</code>
           </p>
-        ) : mcp === null ? (
+        ) : mcp.kind === 'loading' ? (
           <p>{t('loading')}</p>
+        ) : mcp.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
         ) : (
-          <pre style={pre}>{mcp.content === '' ? t('surfacesNoMcpYet') : mcp.content}</pre>
+          <pre style={pre}>{mcp.value.content === '' ? t('surfacesNoMcpYet') : mcp.value.content}</pre>
         )}
         {project !== null && (
           <p>
@@ -100,17 +92,27 @@ export function Surfaces({ project, remote }: { project: string | null; remote: 
       <div style={box} aria-label={t('surfacesHooksAriaLabel')}>
         <h3>{t('surfacesHooksHeading')}</h3>
         <p><small>{t('surfacesHooksConsentNote')}</small></p>
-        {hooks === null ? <p>{t('loading')}</p> : <pre style={pre}>{hooks.content === '' ? t('surfacesNoUserSettings') : hooks.content}</pre>}
+        {hooks.kind === 'loading' ? (
+          <p>{t('loading')}</p>
+        ) : hooks.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
+        ) : (
+          <pre style={pre}>{hooks.value.content === '' ? t('surfacesNoUserSettings') : hooks.value.content}</pre>
+        )}
       </div>
 
       <div style={box} aria-label={t('surfacesSubagentsAriaLabel')}>
         <h3>{t('surfacesSubagentsHeading')}</h3>
-        <p>{subs === null ? t('loading') : listOrEmpty(subs.subagents, 'subagents')}</p>
+        <p>
+          {subs.kind === 'loading' ? t('loading') : subs.kind === 'error' ? t('fetchUnavailable') : listOrEmpty(subs.value.subagents, 'subagents')}
+        </p>
       </div>
 
       <div style={box} aria-label={t('surfacesSkillsAriaLabel')}>
         <h3>{t('surfacesSkillsHeading')}</h3>
-        <p>{skills === null ? t('loading') : listOrEmpty(skills.skills, 'skills')}</p>
+        <p>
+          {skills.kind === 'loading' ? t('loading') : skills.kind === 'error' ? t('fetchUnavailable') : listOrEmpty(skills.value.skills, 'skills')}
+        </p>
       </div>
     </section>
   );

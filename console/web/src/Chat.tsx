@@ -15,6 +15,7 @@ import {
   type ChatUiState,
 } from './logic/chat.ts';
 import { windowSummary, type WindowInfo } from './logic/format.ts';
+import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
 import { useI18n } from './I18nContext.tsx';
 
 const box: React.CSSProperties = {
@@ -34,13 +35,14 @@ export function Chat({ project }: { project: string }) {
   const [resume, setResume] = useState('');
   const [fork, setFork] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [quota, setQuota] = useState<WindowInfo | null>(null);
+  const [quota, setQuota] = useState<FetchState<WindowInfo | null>>(FETCH_LOADING);
 
   useEffect(() => {
     fetch('/api/usage/estimate')
-      .then((r) => r.json())
-      .then((d: { currentWindow: WindowInfo | null }) => setQuota(d.currentWindow))
-      .catch(() => setQuota(null));
+      .then((r) =>
+        r.json().then((d: { currentWindow: WindowInfo | null }) => setQuota(fetchStateFromResponse(r.ok, d.currentWindow))),
+      )
+      .catch(() => setQuota(FETCH_ERROR));
   }, []);
 
   useEffect(() => () => wsRef.current?.close(), []);
@@ -95,7 +97,8 @@ export function Chat({ project }: { project: string }) {
       </p>
       <p role="status">
         <small>
-          {t('chatQuotaLabel')} {windowSummary(quota, Date.now())}
+          {t('chatQuotaLabel')}{' '}
+          {quota.kind === 'error' ? t('fetchUnavailable') : windowSummary(quota.kind === 'data' ? quota.value : null, Date.now())}
         </small>
       </p>
       {note !== null && <p role="alert">{note}</p>}
