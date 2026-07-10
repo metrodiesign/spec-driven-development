@@ -496,16 +496,24 @@ export async function runSupervisedLoop(opts: {
     // architect finding #1). `deployState` derives from the log so it stays correct
     // across the async gap between a decision and the stage's first recorded event.
     let currentDeployApproval: ApprovalPackage | null = null;
-    let pendingDeployResolve: ((outcome: 'approve' | 'reject') => void) | null = null;
+    let pendingDeployResolve: ((outcome: 'approve' | 'reject' | 'killed') => void) | null = null;
     let deployDeps: DeployStageDeps | null = null;
     let manualRollback: Promise<unknown> | null = null;
+    // REQ-3.5/3.6 + design.md "kill switch covers interruption": kill must end the
+    // deploy-approval wait AND the post-EXPANDED window wait, not just the task-approval
+    // wait (Phase-4 review gap — onKill previously only resolved pendingApprovalResolve).
+    const deployKillResolvers: Array<() => void> = [];
+    const killDeployWaits = (): void => {
+      pendingDeployResolve?.('killed');
+      for (const r of deployKillResolvers.splice(0)) r();
+    };
     const deployState = (): DeployState | null => {
       if (opts.contract.deploy === undefined) return null;
       const last = log.all({ type: 'DEPLOY_STATE' }).at(-1);
       if (last !== undefined) return last.payload['state'] as DeployState;
       return currentDeployApproval !== null ? 'PENDING_APPROVAL' : null;
     };
-    const waitForDeployDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout'> =>
+    const waitForDeployDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout' | 'killed'> =>
       new Promise((resolve) => {
         const timer = setTimeout(() => {
           pendingDeployResolve = null;
@@ -526,6 +534,11 @@ export async function runSupervisedLoop(opts: {
       if (deployDeps === null) return { ok: false, detail: 'not_expanded' };
       audit({ event: 'deploy_manual_rollback', taskId: TASK_ID });
       manualRollback = runManualRollback(deployDeps);
+      // Mark handled immediately: a rollback can be triggered mid-EXPANDED-window and
+      // reject before the `await manualRollback` below observes it, which would
+      // otherwise be an unhandledRejection (Phase-4 review finding). The real outcome
+      // still surfaces at that later await.
+      manualRollback.catch(() => {});
       return { ok: true };
     };
 
@@ -545,6 +558,7 @@ export async function runSupervisedLoop(opts: {
           // kill (control.ts's `requestKill` — harmless no-op if the loop already ended).
           pendingApprovalResolve?.('killed');
           controller.requestKill();
+          killDeployWaits();
         },
         rateOk: () => true,
         steeringState: currentState,
@@ -742,11 +756,11 @@ export async function runSupervisedLoop(opts: {
           // REQ-6: deploy decision shares the task approval's timeout knob.
           const deployTimeoutMs = opts.approval?.timeoutMs ?? 30 * 60_000;
           const deployDecision = await waitForDeployDecision(deployTimeoutMs);
-          if (deployDecision === 'timeout') {
+          if (deployDecision === 'timeout' || deployDecision === 'killed') {
             // No HTTP call happened, so (unlike approve/reject, recorded by api.ts) the
-            // timeout event + audit is composition's own job (mirrors escalateTask above).
-            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'DEPLOY_DECISION', payload: { approvalId: currentDeployApproval.id, decision: 'timeout' } });
-            audit({ event: 'deploy_decision', taskId: TASK_ID, decision: 'timeout' });
+            // timeout/kill event + audit is composition's own job (mirrors escalateTask above).
+            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'DEPLOY_DECISION', payload: { approvalId: currentDeployApproval.id, decision: deployDecision } });
+            audit({ event: 'deploy_decision', taskId: TASK_ID, decision: deployDecision });
           }
           currentDeployApproval = null;
 
@@ -758,7 +772,12 @@ export async function runSupervisedLoop(opts: {
             const deployOutcome = await runDeployStage(deployDeps);
             if (deployOutcome.finalState === 'EXPANDED') {
               const expandedWindowMs = opts.deploy?.expandedWindowMs ?? 10 * 60_000;
-              await deployClock.wait(expandedWindowMs);
+              // REQ-3.5/3.6: kill must also end this wait, not just the elapsed timer
+              // (design.md "kill switch covers interruption").
+              await Promise.race([
+                deployClock.wait(expandedWindowMs),
+                new Promise<void>((resolve) => { deployKillResolvers.push(resolve); }),
+              ]);
               // A manual rollback triggered during the window must finish before the
               // server (and this run) tears down — REQ-6.12's "remain open" scope.
               await manualRollback;

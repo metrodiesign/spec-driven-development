@@ -16,7 +16,7 @@ function ErrorFallback(): React.JSX.Element {
   return <p role="alert">{t('appErrorBoundaryFallback')}</p>;
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+class ErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { hasError: boolean }> {
   override state = { hasError: false };
   static getDerivedStateFromError(): { hasError: boolean } {
     return { hasError: true };
@@ -25,7 +25,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     console.error(error);
   }
   override render(): ReactNode {
-    return this.state.hasError ? <ErrorFallback /> : this.props.children;
+    return this.state.hasError ? this.props.fallback : this.props.children;
   }
 }
 
@@ -33,10 +33,16 @@ const root = document.getElementById('root');
 if (root === null) throw new Error('missing #root element');
 createRoot(root).render(
   <StrictMode>
-    <I18nProvider>
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    </I18nProvider>
+    {/* Outer boundary has no i18n dependency: it is the only thing that can
+        catch a throw from I18nProvider's OWN initialization (e.g. localStorage
+        access denied in Safari private mode / a storage-partitioned iframe) —
+        the inner boundary can't, since it's I18nProvider's descendant. */}
+    <ErrorBoundary fallback={<p role="alert">Something went wrong. Please reload the page.</p>}>
+      <I18nProvider>
+        <ErrorBoundary fallback={<ErrorFallback />}>
+          <App />
+        </ErrorBoundary>
+      </I18nProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

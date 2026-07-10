@@ -97,7 +97,7 @@ export function createChatRuntime(opts: {
 }): ChatRuntime {
   const audit = (entry: unknown): void => {
     mkdirSync(dirname(opts.auditPath), { recursive: true });
-    appendFileSync(opts.auditPath, JSON.stringify(entry) + '\n');
+    appendFileSync(opts.auditPath, redactText(JSON.stringify(entry), opts.homeDir) + '\n');
   };
   const manager = createChatManager({
     now: () => Date.now(),
