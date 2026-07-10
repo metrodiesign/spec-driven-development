@@ -2,43 +2,33 @@
 // autonomous supervision does not require a terminal on the host. Thin view —
 // display shaping + control gating live in logic/loop.ts.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   attestationChecklist,
   canApprove,
+  canRollbackDeploy,
+  deployCardVisible,
+  deployProbeSummary,
   latestTaskState,
   nextSince,
   stateBadge,
   steeringControls,
   taskApprovalPackages,
+  type DeployStatus,
   type LoopApprovalPackage,
   type LoopEvent,
 } from './logic/loop.ts';
+import { useI18n } from './I18nContext.tsx';
+import { useFetch } from './useFetch.ts';
 
 interface RunSummary {
   runId: string;
   ended: boolean;
 }
 
-function useFetch<T>(url: string | null): T | null {
-  const [data, setData] = useState<T | null>(null);
-  useEffect(() => {
-    if (url === null) return;
-    let alive = true;
-    fetch(url)
-      .then((r) => r.json())
-      .then((d: T) => alive && setData(d))
-      .catch(() => alive && setData(null));
-    return () => {
-      alive = false;
-    };
-  }, [url]);
-  return data;
-}
-
 const box: React.CSSProperties = {
-  border: '1px solid #8884',
+  border: '1px solid var(--color-border)',
   borderRadius: 6,
   padding: '0.75rem',
   marginBottom: '0.75rem',
@@ -47,18 +37,31 @@ const box: React.CSSProperties = {
 const POLL_MS = 3000;
 
 export function Loop(): React.JSX.Element {
+  const { t } = useI18n();
   const runsRes = useFetch<{ runs: RunSummary[] }>('/api/loop/runs');
   const [selected, setSelected] = useState<string | null>(null);
   const [events, setEvents] = useState<LoopEvent[]>([]);
   const [approvals, setApprovals] = useState<object[]>([]);
+  const [deployStatus, setDeployStatus] = useState<DeployStatus | null>(null);
   const [checked, setChecked] = useState<Record<string, string[]>>({});
   const [guidance, setGuidance] = useState('');
   const [pollError, setPollError] = useState<string | null>(null);
+
+  // The polling effect below intentionally depends only on [selected] (re-running it
+  // on every locale change would reset events/approvals/deployStatus needlessly) — so
+  // poll() reads the translator through this ref instead of closing over `t` directly,
+  // else error messages would stay in whatever language was active when the run was
+  // selected, even after a later locale toggle (PR #50 review).
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   // Poll approvals + events since= the last seen seq (REQ-15.8) while a run is selected.
   useEffect(() => {
     setEvents([]);
     setApprovals([]);
+    setDeployStatus(null);
     setPollError(null);
     if (selected === null) return;
     let alive = true;
@@ -66,9 +69,10 @@ export function Loop(): React.JSX.Element {
     const run = encodeURIComponent(selected);
     const poll = async (): Promise<void> => {
       try {
-        const [evRes, apRes] = await Promise.all([
+        const [evRes, apRes, depRes] = await Promise.all([
           fetch(`/api/loop/${run}/events?since=${since}`),
           fetch(`/api/loop/${run}/approvals`),
+          fetch(`/api/loop/${run}/deploy`),
         ]);
         if (!alive) return;
         if (evRes.ok) {
@@ -77,9 +81,15 @@ export function Loop(): React.JSX.Element {
           if (fresh.length > 0) setEvents((prev) => [...prev, ...fresh]);
         }
         if (apRes.ok) setApprovals((await apRes.json()) as object[]);
-        setPollError(evRes.ok && apRes.ok ? null : `poll failed (events ${evRes.status}, approvals ${apRes.status})`);
+        // GET /deploy is 501 on a server without deploy composed (REQ-6.3 Phase-1
+        // pattern) — deployCardVisible(null) hides the card, same as a network failure;
+        // that is expected steady-state, not folded into the pollError banner below.
+        setDeployStatus(depRes.ok ? ((await depRes.json()) as DeployStatus) : null);
+        setPollError(
+          evRes.ok && apRes.ok ? null : tRef.current('loopPollFailed', { events: evRes.status, approvals: apRes.status }),
+        );
       } catch {
-        if (alive) setPollError('poll failed: network error');
+        if (alive) setPollError(tRef.current('loopPollFailedNetwork'));
       }
     };
     void poll();
@@ -90,11 +100,16 @@ export function Loop(): React.JSX.Element {
     };
   }, [selected]);
 
-  const run = selected === null ? null : runsRes?.runs.find((r) => r.runId === selected) ?? null;
+  const run =
+    selected === null || runsRes.kind !== 'data' ? null : (runsRes.value.runs.find((r) => r.runId === selected) ?? null);
   const ended = run?.ended ?? false;
   const state = latestTaskState(events);
   const controls = steeringControls(ended, state);
   const packages = taskApprovalPackages(approvals);
+  const deployVisible = deployCardVisible(deployStatus);
+  const deployPkg = deployStatus?.approval ?? null;
+  const deployProbes = deployProbeSummary(events);
+  const canRollback = canRollbackDeploy(deployStatus?.state ?? null);
 
   const mutate = async (path: string, body?: unknown): Promise<void> => {
     if (selected === null) return;
@@ -102,7 +117,7 @@ export function Loop(): React.JSX.Element {
       method: 'POST',
       ...(body !== undefined ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
     });
-    setPollError(res.ok ? null : `${path} failed: ${res.status}`);
+    setPollError(res.ok ? null : t('loopActionFailed', { path, status: res.status }));
   };
 
   const toggleAttestation = (pkgId: string, text: string): void => {
@@ -116,22 +131,24 @@ export function Loop(): React.JSX.Element {
 
   return (
     <section aria-label="F-Loop">
-      <h2>Loop</h2>
+      <h2>{t('loopHeading')}</h2>
 
-      <div style={box} aria-label="Runs">
-        <h3>Runs</h3>
-        {runsRes === null ? (
-          <p>loading…</p>
-        ) : runsRes.runs.length === 0 ? (
-          <p>no discovered runs — start one with `platform loop run --live`</p>
+      <div style={box} aria-label={t('loopRunsHeading')}>
+        <h3>{t('loopRunsHeading')}</h3>
+        {runsRes.kind === 'loading' ? (
+          <p>{t('loading')}</p>
+        ) : runsRes.kind === 'error' ? (
+          <p role="status">{t('fetchUnavailable')}</p>
+        ) : runsRes.value.runs.length === 0 ? (
+          <p>{t('loopNoRuns')}</p>
         ) : (
           <ul>
-            {runsRes.runs.map((r) => (
+            {runsRes.value.runs.map((r) => (
               <li key={r.runId}>
                 <button type="button" onClick={() => setSelected(r.runId)} aria-current={selected === r.runId}>
                   {r.runId}
                 </button>{' '}
-                <small>({r.ended ? 'ended' : 'live'})</small>
+                <small>({r.ended ? t('loopStateEnded') : t('loopStateLive')})</small>
               </li>
             ))}
           </ul>
@@ -139,7 +156,7 @@ export function Loop(): React.JSX.Element {
       </div>
 
       {selected !== null && (
-        <div style={box} aria-label="Selected run">
+        <div style={box} aria-label={t('loopSelectedRunAriaLabel')}>
           <h3>
             <code>{selected}</code> — <span role="status">{stateBadge(ended, state)}</span>
           </h3>
@@ -147,20 +164,20 @@ export function Loop(): React.JSX.Element {
 
           <div>
             <button type="button" disabled={!controls.canPause} onClick={() => void mutate('/steering/pause')}>
-              Pause
+              {t('loopPause')}
             </button>{' '}
             <button type="button" disabled={!controls.canResume} onClick={() => void mutate('/steering/resume')}>
-              Resume
+              {t('loopResume')}
             </button>{' '}
             {/* Kill has no state gate server-side (unlike pause/resume/inject) — only "is this run live" applies. */}
             <button type="button" disabled={ended} onClick={() => void mutate('/kill')}>
-              Kill
+              {t('loopKill')}
             </button>
           </div>
 
           <div>
             <label>
-              Steering guidance{' '}
+              {t('loopSteeringGuidanceLabel')}{' '}
               <input value={guidance} onChange={(e) => setGuidance(e.target.value)} disabled={!controls.canInject} />
             </label>{' '}
             <button
@@ -171,13 +188,13 @@ export function Loop(): React.JSX.Element {
                 setGuidance('');
               }}
             >
-              {controls.injectAtNextBoundary ? 'Queue at next boundary' : 'Inject now'}
+              {controls.injectAtNextBoundary ? t('loopQueueAtNextBoundary') : t('loopInjectNow')}
             </button>
           </div>
 
-          <h4>Approval packages</h4>
+          <h4>{t('loopApprovalPackagesHeading')}</h4>
           {packages.length === 0 ? (
-            <p>none pending</p>
+            <p>{t('loopNonePending')}</p>
           ) : (
             packages.map((p) => (
               <ApprovalCard
@@ -190,6 +207,38 @@ export function Loop(): React.JSX.Element {
                 }
               />
             ))
+          )}
+        </div>
+      )}
+
+      {selected !== null && deployVisible && (
+        <div style={box} aria-label={t('loopDeployHeading')}>
+          <h4>
+            {t('loopDeployHeading')} <small>{t('loopDeploySimulationNote')}</small>
+          </h4>
+          <p>
+            {t('loopDeployStateLabel')} <strong>{deployStatus?.state ?? t('loopDeployStatePending')}</strong>
+            {deployProbes !== null && (
+              <>
+                {' '}
+                {t('loopProbesSummary', { pass: deployProbes.pass, fail: deployProbes.fail })}
+              </>
+            )}
+          </p>
+          {deployPkg !== null && (
+            <ApprovalCard
+              pkg={deployPkg}
+              checkedIds={checked[deployPkg.id] ?? []}
+              onToggle={(text) => toggleAttestation(deployPkg.id, text)}
+              onDecide={(decision) =>
+                void mutate('/deploy/decision', { decision, attestations: checked[deployPkg.id] ?? [] })
+              }
+            />
+          )}
+          {canRollback && (
+            <button type="button" onClick={() => void mutate('/deploy/rollback')}>
+              {t('loopRollBackButton')}
+            </button>
           )}
         </div>
       )}
@@ -208,16 +257,22 @@ function ApprovalCard({
   onToggle: (text: string) => void;
   onDecide: (decision: 'approve' | 'reject') => void;
 }): React.JSX.Element {
+  const { t } = useI18n();
   const rows = attestationChecklist(pkg, checkedIds);
   return (
-    <div style={box} aria-label={`Approval ${pkg.id}`}>
+    <div style={box} aria-label={t('loopApprovalAriaLabel', { id: pkg.id })}>
       <p>
-        task <code>{pkg.taskId}</code> · risk <strong>{pkg.riskClass}</strong> · ACs {pkg.acIds.join(', ')}
+        {t('loopTaskPrefix')} <code>{pkg.taskId}</code> {t('loopRiskInfix')} <strong>{pkg.riskClass}</strong>{' '}
+        {t('loopAcsInfix')} {pkg.acIds.join(', ')}
       </p>
       <p>{pkg.goalExcerpt}</p>
-      {pkg.unresolvedRisks.length > 0 && <p role="status">unresolved: {pkg.unresolvedRisks.join('; ')}</p>}
+      {pkg.unresolvedRisks.length > 0 && (
+        <p role="status">
+          {t('loopUnresolvedPrefix')} {pkg.unresolvedRisks.join('; ')}
+        </p>
+      )}
       <fieldset>
-        <legend>Attestations</legend>
+        <legend>{t('loopAttestationsLegend')}</legend>
         {rows.map((row) => (
           <label key={row.text} style={{ display: 'block' }}>
             <input type="checkbox" checked={row.checked} onChange={() => onToggle(row.text)} />
@@ -226,10 +281,10 @@ function ApprovalCard({
         ))}
       </fieldset>
       <button type="button" disabled={!canApprove(pkg, checkedIds)} onClick={() => onDecide('approve')}>
-        Approve
+        {t('approve')}
       </button>{' '}
       <button type="button" onClick={() => onDecide('reject')}>
-        Reject
+        {t('reject')}
       </button>
     </div>
   );

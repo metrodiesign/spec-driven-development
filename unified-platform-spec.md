@@ -1,6 +1,6 @@
 # Autonomous Engineering Platform on Claude — Unified Implementation Spec
 
-> **v1.2 (Unified) — สเปกเดียวและ source of truth สำหรับ implement** (ไม่มีเอกสารสเปกอื่นใน repo นี้) · v1.1 = interactive surface เป็น 100% CLI parity ผ่าน PTY (INV-17, §4.1) · v1.2 = sync สถานะส่งมอบ Phase 0–2 + rescope Phase 3 (second lineage = Codex เท่านั้น; GLM-5.2 เลื่อนแบบมีเงื่อนไข access — ดู §14, §17)
+> **v1.3 (Unified) — source of truth หลักสำหรับ implement** (กฎเรื่องเอกสารสเปกอื่น/derived spec ดู §0.1) · v1.1 = interactive surface เป็น 100% CLI parity ผ่าน PTY (INV-17, §4.1) · v1.2 = sync สถานะส่งมอบ Phase 0–2 + rescope Phase 3 · v1.3 = sync สถานะส่งมอบ Phase 3 + rescope Phase 4 (ดูด backlog ค้างจาก Phase 3 เข้า scope + เพิ่ม DoD; GLM-5.2 ยังไม่มี access — เลื่อนต่อแบบมีเงื่อนไข ดู §14, §17)
 > **ภาษา:** prose อธิบายเป็นไทย · artifact ทุกชนิด (schema, YAML, code, prompt, ชื่อไฟล์, endpoint) เป็นอังกฤษ — ห้ามแปล artifact เป็นไทย
 > **บริบท:** แพลตฟอร์มรันบนเครื่องเจ้าของบัญชี **Claude Max 20x subscription** (auth ผ่าน `claude login` — ไม่ใช่ API plan) · single-operator
 
@@ -8,7 +8,7 @@
 
 ## §0 กติกาการ Implement (อ่านก่อนทุกอย่าง)
 
-1. **สเปกเดียว:** ไฟล์นี้เป็นสเปกและ source of truth เดียวสำหรับงานนี้ — **ไม่มีเอกสารสเปก/blueprint อื่นให้อ้างอิงใน repo นี้** ถ้าพบไฟล์สเปกอื่น ให้ถือว่าล้าสมัยและไม่นำมาใช้ (กันคำสั่งขัดกัน)
+1. **สเปกเดียว:** ไฟล์นี้เป็น source of truth หลักสำหรับภาพรวม/roadmap ของงานนี้ — **ข้อยกเว้นเดียว:** `.ai/specs/platform-phase*/{requirements,design,tasks}.md` เป็น derived spec ของแต่ละ phase (ผลิตตาม spec workflow ปกติของ repo นี้ ตาม CLAUDE.md — ดู pointer ที่ §17) ให้อ่านประกอบกัน ไม่ใช่แข่งกัน · ไฟล์สเปก/blueprint อื่นนอกเหนือจากสองแหล่งนี้ที่พบใน repo ให้ถือว่าล้าสมัยและไม่นำมาใช้ (กันคำสั่งขัดกัน)
 2. **Normative:** "ต้อง/ห้าม" = ข้อบังคับ · "ควร" = default ที่เปลี่ยนได้เมื่อมีเหตุผลและบันทึกใน `docs/DEVIATIONS.md` · คอลัมน์ "ข้อจำกัด/ห้าม claim" ในตาราง = สิ่งที่ห้ามอ้างเกินจริง ต้องสะท้อนใน docs/comments ของโค้ด
 3. **สร้างทีละ Phase ตาม §14 เท่านั้น** — ชื่อที่ปรากฏในเอกสาร ≠ ต้องสร้างตอนนี้ ทุกส่วนมี phase กำกับ · "เสร็จ" ของแต่ละเฟส = ผ่าน DoD (fault-injection + calibration + security checklist) ไม่ใช่ "เขียนโค้ดครบ"
 4. **เขียนเทสต์ก่อน implement** รวมถึงตัว core เอง (RED→GREEN ของ control plane)
@@ -291,10 +291,10 @@ P1 echo-schema · P2 propose-action · P3 repair-round · P4 budget-degrade · P
 
 | Role | ต้องการ | default preference (ปรับด้วยเลข calibration) |
 |------|---------|--------------------------------|
-| Planner/Architect | reasoning, largeContext | Claude — fusion เปิดเสมอ (Phase 3) |
+| Planner/Architect | reasoning, largeContext | Claude — fusion เปิดเสมอ (trigger อัตโนมัติของ role นี้ = §14 Phase 4; Phase 3 ส่งมอบเฉพาะ seam `fusion.deliberate` ที่ agent เรียกเอง) |
 | Implementer/Repair | codeProposal, structuredOutput | Codex |
-| Test Designer/Property | codeProposal | Claude — **ต้องต่าง lineage กับ implementer** (default เดิม GLM-5.2 — กลับมาเมื่อ adapter พร้อม, §14 Phase 4) |
-| Reviewer/Diagnostician | reasoning, largeContext | Claude + Codex ensemble (เดิม GLM-5.2 — กลับมาเมื่อ adapter พร้อม) |
+| Test Designer/Property | codeProposal | Claude — **ต้องต่าง lineage กับ implementer** (default เดิม GLM-5.2 — deferred ต่อ ยังไม่มี access (v1.3); กลับมาเมื่อ adapter พร้อมตามเงื่อนไข §14/§17) |
+| Reviewer/Diagnostician | reasoning, largeContext | Claude + Codex ensemble (เดิม GLM-5.2 — deferred ต่อ ยังไม่มี access, v1.3) |
 | Verifier/Controller | — (ไม่ใช่โมเดล) | Ring 0 deterministic |
 
 Routing: capability match → health-aware (ข้าม breaker-open + **quota-aware ผ่าน probe §5.4**) → injection-aware (low-trust content ห้ามไปโมเดล susceptibility สูง) → cost → outcome-weighted (shadow ก่อนเสมอ); `on_repeated_failure: switch_to_next_eligible`
@@ -313,7 +313,7 @@ Pipeline เดียวทุก artifact: **PANEL** (N ตัวอิสร�
 Entry: virtual `fusion:*` adapter / policy trigger (planning เสมอ, L2+, repeated failure) / agent เรียกเอง `fusion.deliberate` (budget cap + depth ≤1) — **~4–5× ต่อจุดเปิด** (กระทบโควตา §5.4): เปิดเฉพาะที่ calibration พิสูจน์ uplift + ลองความหลากหลายราคาถูก (self-panel ต่าง seed/temp) ก่อนจ่ายค่าโมเดลต่างค่าย
 
 ### 7.6 Adapters (Ring 2 — phase ตาม §14)
-`adapters/anthropic.ts` (Claude — primary, §5.2 — Phase 1, ส่งมอบแล้ว) · `adapters/codex.ts` (Codex — Phase 3; sandbox เป็น execution backend *ทางเลือก*) · `adapters/openai-compatible.ts` (GLM-5.2 + compat — **deferred จนกว่าจะมี access** (§14 Phase 4); aggregator เช่น OpenRouter = ผู้ประมวลผลข้อมูลอีกราย → `provider_data_policy` ต้องระบุ path ที่อนุญาต) · `adapters/_template.ts` — ทุกตัวบาง แปล wire format เท่านั้น
+`adapters/anthropic.ts` (Claude — primary, §5.2 — Phase 1, ส่งมอบแล้ว) · `adapters/codex.ts` (Codex — Phase 3; sandbox เป็น execution backend *ทางเลือก*) · `adapters/openai-compatible.ts` (GLM-5.2 + compat — **deferred จนกว่าจะมี access** (v1.3 ยังไม่มี — ดู §14/§17); aggregator เช่น OpenRouter = ผู้ประมวลผลข้อมูลอีกราย → `provider_data_policy` ต้องระบุ path ที่อนุญาต) · `adapters/_template.ts` — ทุกตัวบาง แปล wire format เท่านั้น
 
 ---
 
@@ -515,7 +515,7 @@ platform/
 │                #   learning/ (P3–4), fault-injection.test.ts (P0)
 ├── aal/         # RING 1 (P1): protocol, adapter-interface, registry, router, breaker (P2),
 │                #   fusion/ (P3), conformance/ (P1–P8)
-├── adapters/    # RING 2: anthropic.ts(primary — P1), codex.ts (P3), openai-compatible.ts (GLM — deferred, P4), _template.ts
+├── adapters/    # RING 2: anthropic.ts(primary — P1), codex.ts (P3), openai-compatible.ts (GLM — deferred, access-conditional v1.3), _template.ts
 ├── console/     # OPERATOR SURFACE (Claude-specific — รู้จัก Claude ได้, แต่ไม่อยู่ใน core/):
 │                #   backend (Fastify/Hono + Agent SDK), web (React SPA), F-* features §8
 ├── .ai/         # goal.yaml, models.yaml, task-graph.json, agents/, schemas/, policies/,
@@ -542,14 +542,17 @@ platform/
 - Console: F-MCP, F-Hook (consent gate), F-Sub, F-Skill, F-Sys + automation guards
 - **DoD:** loop รัน L0–L1 auto พร้อม sampling audit + breaker หลบเมื่อโควตา/provider ล้ม + สร้าง hook/MCP/subagent ผ่าน Console โดยไฟล์ valid
 
-**Phase 3 — Multi-model + Fusion + Loop Console + Remote**
+**Phase 3 — Multi-model + Fusion + Loop Console + Remote** — **ส่งมอบแล้ว** (PR #47; follow-up #48/#49 — backlog ค้าง 3 รายการถูกดูดเข้า Phase 4 ตาม v1.3)
 - adapter ที่สอง: **Codex เท่านั้น** (Claude+Codex = 2 lineages — เพียงพอต่อ fusion decorrelation; Codex CLI ติดตั้งแล้วบนเครื่องนี้) · **GLM-5.2 deferred ไป Phase 4 แบบมีเงื่อนไข access** (ยังไม่มี access — เลื่อนแบบบันทึกไว้ ไม่ตัดเงียบ) · fusion + วัด decorrelation/uplift — **gate ก่อนเปิด fusion: ทบทวนนโยบาย non-interactive usage ของ Anthropic ตาม §5.3 และบันทึกผล** · merge queue + เปิดใช้ gate T2 (§6.4) + out-of-band auditor · outcome routing shadow
 - Console: **F-Loop** (อ่าน loop + approve/steer/kill ผ่าน API), F-Sched (start/stop process เท่านั้น — B: ห้าม task scheduling), remote auth §13 (gate + Basic→OIDC + hardening)
 - **DoD:** fusion แสดง uplift จาก calibration + auditor จับ non-repro ได้ + F-Loop อนุมัติ approval package จากเว็บ + security checklist §13.3 ครบ + login/approve จากเครื่องอื่นจริง
 
-**Phase 4 — Continuous + Polish**
-- issue intake, canary deploy, automated rollback, lessons active, outcome routing active เมื่อ shadow พิสูจน์ · GLM-5.2 adapter (`adapters/openai-compatible.ts`) **เฉพาะเมื่อมี access จริง** — เพิ่มตาม INV-8 (adapter 1 ตัว + conformance P1–P8, ห้ามแตะ Ring 0/1) — deferred จาก Phase 3 (v1.2)
-- Console: F-Chat (SDK enhanced view — optional, non-parity), themes, responsive/mobile, i18n
+**Phase 4 — Continuous + Polish** *(rescope v1.3 — ดูด backlog ค้างจาก Phase 3 เข้า scope: บันทึกเดิมอยู่ที่ `.ai/specs/platform-phase3/tasks.md` + `docs/calibration/RUNBOOK-phase3.md`)*
+- Carried จาก Phase 3: **approval pipeline production wiring** (populate approvals เมื่อ auto-merge decline → รอ human decision, timeout → ESCALATED → approve แล้ว pipeline ต่อเอง merge_queued→audited→COMPLETED / reject → CHANGES_REQUESTED) · **planner-role fusion auto-routing** (§7.5 policy trigger "planning เสมอ" — CI พิสูจน์ trigger ด้วย fake, live คุมด้วย `fusionActive`) · **fusion uplift number จริง** (live `code_diff`/`tests` activation + single-model baseline — รายงานเป็นช่วง, n เล็ก ตาม §12)
+- Continuous: **issue intake → Goal Contract** (§11.1 — local-only: Console form + `.ai/issues/`; เนื้อ issue = untrusted data ทุกชั้น (INV-3); human approve ก่อนเป็น draft goal.yaml; ห้าม auto-start run; GitHub webhook = นอก scope เพราะเป็น unauthenticated remote ingress ขัด §13.3) · **canary deploy + automated rollback** (Loop 5 §9.1 — deploy เป็นคำสั่ง per-goal ใน contract: canary/observe/expand/rollback ที่ core executor รันเอง + จับ evidence; อยู่หลัง approval package `production_deployment` ตาม §11.1; observe รุ่นแรก = health probe ตาม exit code เทียบ threshold; **ทั้งหมดเป็น command-level บน target repo ไม่ใช่ production rollout จริง — ติดป้ายตรงตาม §16**) · **lessons active** (§10.4 — confirmed hypotheses + evidence → pending lesson → human approve ผ่าน governance เดิม → injectable โดย mark เป็น data + injection canary; เป็นคนละ artifact กับ process lessons ที่มนุษย์ดูแลนอก loop) · **outcome routing active** (§10.4 — เปิดเมื่อ shadow พิสูจน์: `shadowProven()` เป็น pure predicate บน SHADOW_ROUTE log ผลิต*หลักฐาน*ให้ **มนุษย์อนุมัติ activation ผ่าน governance** — INV-16 ห้าม auto-flip; ε-greedy แบบ deterministic hash ให้ replay ได้; freeze กลับ static เมื่อ drift canary เตือน)
+- GLM-5.2 adapter (`adapters/openai-compatible.ts`) — **ยังไม่มี access (v1.3) → deferred ต่อแบบมีเงื่อนไข ไม่อยู่ใน scope Phase 4** (เลื่อนแบบบันทึกไว้ ไม่ตัดเงียบ); เมื่อมี access จริงค่อยเพิ่มตาม INV-8 (adapter 1 ตัว + conformance P1–P8, ห้ามแตะ Ring 0/1)
+- Console: **F-Chat เต็ม** (SDK enhanced view — non-parity, ติดป้ายบังคับ: `query()` streaming + tool cards + web `canUseTool` approvals + fork; §15 ข้อ 3 อนุญาต path นี้โดยเจตนา — ไม่แตะ INV-17 ซึ่ง scope ที่ F-Term) · themes (dark/light) · responsive/mobile · **i18n TH/EN** (แปลเฉพาะ UI chrome — string ที่ backend/CLI ผลิตคงเดิม)
+- **DoD:** approval package จาก run จริง → approve จากเครื่องที่สอง (tailnet) → pipeline ต่อเองจน COMPLETED และเส้น reject → CHANGES_REQUESTED · fault-injection: canary observe fail → rollback + `ROLLED_BACK` + root-cause event / rollback fail → ESCALATED / lesson ที่ไม่ approve ไม่มีทางเข้า context + lesson ที่ inject ถูก mark เป็น data และมี canary / drift canary เตือน → routing freeze กลับ static / issue ที่มี injection payload ไม่กลายเป็น goal.yaml โดยไม่มี human approve · calibration: fusion uplift **interval** จาก ≥1 `code_diff`/`tests` activation + single-model baseline บน corpus task เดียวกัน + outcome-routing activation ตัดสินโดยมนุษย์พร้อมเลข shadow (n, agreement, divergence outcomes) · security checklist §13.3 ครบรวม endpoint ใหม่ (issues/chat/deploy) · F-Chat แสดงป้าย non-parity · Console ผ่าน mobile viewport + สลับ TH/EN ครบ UI chrome
 
 ---
 
@@ -580,9 +583,10 @@ platform/
 
 ## §17 Changelog + จุดเริ่มงาน
 
-**จุดเริ่ม (v1.2):** Phase 0–2 ส่งมอบแล้ว (spikes §15 ผ่านครบตั้งแต่ Phase 0) → งานถัดไป = **Phase 3 ตาม §14** · เมื่อพบความไม่ตรงกับพฤติกรรมจริงของ Claude Code/SDK: บันทึก `docs/DEVIATIONS.md` ตาม §0.6
+**จุดเริ่ม (v1.3):** Phase 0–3 ส่งมอบแล้ว (Phase 3 = PR #47 + follow-up #48/#49; spikes §15 ผ่านครบตั้งแต่ Phase 0) → งานถัดไป = **Phase 4 ตาม §14** (spec: `.ai/specs/platform-phase4/`) · เมื่อพบความไม่ตรงกับพฤติกรรมจริงของ Claude Code/SDK: บันทึก `docs/DEVIATIONS.md` ตาม §0.6
 
 **Changelog:**
+- **v1.3** — sync สถานะส่งมอบ + rescope Phase 4: Phase 3 ส่งมอบแล้ว (merged เข้า develop, PR #47 + follow-up #48/#49) · ดูด backlog ค้าง 3 รายการจาก Phase 3 เข้า scope Phase 4 (approval pipeline production wiring · planner-role fusion auto-routing · fusion uplift number จริง) · เพิ่ม **DoD ของ Phase 4** ที่เดิมไม่มี · GLM-5.2 **ยังไม่มี access → deferred ต่อแบบมีเงื่อนไข ไม่อยู่ใน scope Phase 4** (ไม่ตัดเงียบ — แก้ cell ล้าสมัยใน §7.4 ที่เขียนว่า "กลับมา Phase 4" ให้ตรงจริง) · กำหนดขอบ Phase 4: issue intake เป็น local-only (ไม่มี GitHub webhook — ขัด §13.3), canary deploy เป็น command-level บน target repo ติดป้ายตาม §16, outcome-routing activation เป็นการตัดสินของมนุษย์ผ่าน governance (INV-16), F-Chat เข้าแบบเต็ม + i18n TH/EN
 - **v1.2** — sync สถานะส่งมอบ + rescope Phase 3: Phase 0–2 ส่งมอบแล้ว (Phase 2 merged เข้า develop, PR #45) · แก้ Phase column §8 ให้ตรงจริง (F-MCP/F-Hook/F-Sub/F-Skill/F-Sys = Phase 2, F-Sched = Phase 3 — §14 เป็น authoritative ตาม §0.3, column เดิมล้าสมัยก่อน re-plan) · Phase 3 = §14 เต็ม (multi-model + fusion + merge queue/T2 + auditor + outcome routing shadow + F-Loop + F-Sched + remote auth §13) โดย second lineage = **Codex เท่านั้น**; GLM-5.2 เลื่อนไป Phase 4 แบบมีเงื่อนไข access (บันทึกไว้ ไม่ตัดเงียบ) · ปรับ default §7.4/§7.6 ให้สอดคล้อง · ย้ำ gate §5.3 (ทบทวนนโยบาย non-interactive usage) ก่อนเปิด fusion ใน §14 Phase 3
 - **v1.1** — interactive surface เปลี่ยนเป็น **binary `claude` ตัวจริงผ่าน PTY = 100% CLI parity** (เพิ่ม INV-17 + §4.1; F-Term เป็น P0/Phase 1 = interactive หลัก; F-Chat/SDK ลดเป็น optional non-parity Phase 4; เพิ่ม PTY parity spike §15.2; interactive approval เป็น CLI-native ไม่ใช่ web dialog)
 - **v1.0** — หลอมรวมเป็นแพลตฟอร์มเดียว สองโหมด (Interactive + Autonomous) บน substrate Claude Max 20x

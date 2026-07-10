@@ -91,3 +91,41 @@ export function steeringControls(ended: boolean, state: string | null): Steering
   const paused = state === 'PAUSED';
   return { canPause: !paused, canResume: paused, canInject: true, injectAtNextBoundary: !paused };
 }
+
+// --- Deploy plane (REQ-6/7): GET /deploy's shape — the deploy package reuses
+// LoopApprovalPackage as-is (same fields), so attestationChecklist/canApprove above
+// already work for it unchanged. ---
+
+export interface DeployStatus {
+  state: string | null;
+  approval: LoopApprovalPackage | null;
+}
+
+/** Hidden while no deploy is configured or composed (REQ-7.4) — a fetch failure and the
+ * idle {state:null, approval:null} shape (no `deploy:` in this task's contract) both hide it. */
+export function deployCardVisible(status: DeployStatus | null): boolean {
+  return status !== null && (status.state !== null || status.approval !== null);
+}
+
+/** WHEN DEPLOY_STATE is EXPANDED, F-Loop shows the manual-rollback control (REQ-7.2). */
+export function canRollbackDeploy(state: string | null): boolean {
+  return state === 'EXPANDED';
+}
+
+/**
+ * Probe results summary (REQ-7.1) from PROBE_RUN events after the stage's own CANARY
+ * start. PROBE_RUN is shared with the hypothesis engine's repair probes (same payload
+ * shape, core/src/repair/hypothesis.ts) — scoping to events after CANARY is safe because
+ * deploy only ever starts once the task is already COMPLETED, strictly after any repair
+ * round's own probes (REQ-6.1). null while the stage hasn't started yet.
+ */
+export function deployProbeSummary(events: readonly LoopEvent[]): { pass: number; fail: number } | null {
+  const canaryStart = events.find((e) => e.type === 'DEPLOY_STATE' && e.payload['state'] === 'CANARY');
+  if (canaryStart === undefined) return null;
+  const probes = events.filter((e) => e.type === 'PROBE_RUN' && e.seq > canaryStart.seq);
+  if (probes.length === 0) return null;
+  return {
+    pass: probes.filter((p) => p.payload['exit'] === 0).length,
+    fail: probes.filter((p) => p.payload['exit'] !== 0).length,
+  };
+}

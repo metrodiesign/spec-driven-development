@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 import { FakeAdapter } from './fake-adapter.ts';
 import { createRegistry } from './registry.ts';
-import { compareShadow, shadowFrozen, shadowWouldChoose } from './shadow.ts';
+import { compareShadow, computeShadowOutcomeStats, shadowFrozen, shadowProven, shadowWouldChoose } from './shadow.ts';
 import { PASS_FAIL_PROBES, type ConformanceRecord } from './protocol.ts';
 import type { PlatformEvent } from 'core/types';
 
@@ -148,4 +148,69 @@ test('non-SHADOW_ROUTE events in the array are ignored (REQ-7.6)', () => {
   const out = compareShadow(events);
   assert.equal(out.n, 1);
   assert.equal(out.agreementRate, 1);
+});
+
+// --- computeShadowOutcomeStats (REQ-13.2) — relocated from loop-run.ts verbatim ---
+
+function routeEvent(seq: number, taskId: string, live: string): PlatformEvent {
+  return {
+    seq,
+    ts: `t${seq}`,
+    runId: 'RUN-1',
+    taskId,
+    type: 'SHADOW_ROUTE',
+    payload: { role: 'implementer', live, wouldChoose: live, basis: 'insufficient_data', frozen: false },
+  };
+}
+
+function reviewingEvent(seq: number, taskId: string): PlatformEvent {
+  return { seq, ts: `t${seq}`, runId: 'RUN-1', taskId, type: 'TASK_STATE', payload: { state: 'REVIEWING' } };
+}
+
+test('no SHADOW_ROUTE events -> empty stats (REQ-13.2)', () => {
+  assert.deepEqual(computeShadowOutcomeStats([]), {});
+});
+
+test('attempts count every live pick; reviewingReached counts only tasks that actually reached REVIEWING (REQ-13.2)', () => {
+  const events = [
+    routeEvent(1, 'T-a', 'a@v1'),
+    reviewingEvent(2, 'T-a'),
+    routeEvent(3, 'T-b', 'a@v1'), // T-b never reaches REVIEWING
+    routeEvent(4, 'T-c', 'b@v1'),
+    reviewingEvent(5, 'T-c'),
+  ];
+  assert.deepEqual(computeShadowOutcomeStats(events), {
+    'a@v1': { attempts: 2, reviewingReached: 1 },
+    'b@v1': { attempts: 1, reviewingReached: 1 },
+  });
+});
+
+test('a task still in flight (no REVIEWING yet) contributes 0 so far, not an error (REQ-13.2)', () => {
+  const events = [routeEvent(1, 'T-live', 'a@v1')];
+  assert.deepEqual(computeShadowOutcomeStats(events), { 'a@v1': { attempts: 1, reviewingReached: 0 } });
+});
+
+// --- shadowProven (REQ-13.1/13.3) ---
+
+test('proven requires BOTH n >= minSamples AND divergences >= minDivergences (REQ-13.3)', () => {
+  const events = [shadowRouteEvent(1, 'a@v1', 'b@v1'), shadowRouteEvent(2, 'a@v1', 'a@v1')];
+  assert.equal(shadowProven(events, { minSamples: 5, minDivergences: 1 }).proven, false, 'n=2 < minSamples 5, despite a real divergence');
+  assert.equal(shadowProven(events, { minSamples: 2, minDivergences: 1 }).proven, true);
+});
+
+test('minDivergences defaults to 1 when omitted (AZ-10)', () => {
+  const agreeing = [shadowRouteEvent(1, 'a@v1', 'a@v1'), shadowRouteEvent(2, 'a@v1', 'a@v1')];
+  assert.equal(shadowProven(agreeing, { minSamples: 2 }).proven, false, 'n met but zero divergences -> not proven under the default-1 floor');
+  const withOneDivergence = [shadowRouteEvent(1, 'a@v1', 'b@v1'), shadowRouteEvent(2, 'a@v1', 'a@v1')];
+  assert.equal(shadowProven(withOneDivergence, { minSamples: 2 }).proven, true);
+});
+
+test('shadowProven is built on compareShadow + computeShadowOutcomeStats verbatim — no duplicate fold (REQ-13.2)', () => {
+  const events = [routeEvent(1, 'T-a', 'a@v1'), reviewingEvent(2, 'T-a'), shadowRouteEvent(3, 'a@v1', 'b@v1')];
+  const report = shadowProven(events, { minSamples: 1, minDivergences: 1 });
+  const expectedCompare = compareShadow(events);
+  assert.equal(report.n, expectedCompare.n);
+  assert.equal(report.agreementRate, expectedCompare.agreementRate);
+  assert.deepEqual(report.divergences, expectedCompare.divergences);
+  assert.deepEqual(report.perAdapter, computeShadowOutcomeStats(events));
 });

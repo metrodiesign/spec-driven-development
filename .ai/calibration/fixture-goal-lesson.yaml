@@ -1,0 +1,16 @@
+# Phase-4 task-12 LIVE pass fixture (REQ-25.5): same underlying fixture repo as
+# every other calibration goal (loop-run.ts's makeFixtureRepo — run-tests.sh
+# always checks `grep -q correct src/impl.txt`), but unlike fixture-goal.yaml
+# this AC description deliberately never spells out the literal expected word.
+# The harness is propose-only (no read tool, confirmed RUNBOOK-phase3.md step 5)
+# so a blind first attempt plausibly fails the gate, entering DIAGNOSING — a
+# genuinely confirmed hypothesis is what the lessons pipeline (REQ-10.1) needs
+# to propose a real lesson from. Real model behavior is stochastic (may still
+# complete on the first attempt without ever diagnosing) — recorded honestly
+# either way in RUNBOOK-phase4.md, never forced or fabricated.
+goal: { id: CALIB-LESSON, title: Calibration fixture (lesson), objective: "fix src/impl.txt so the project's test suite (run-tests.sh) passes" }
+acceptance_criteria:
+  - { id: AC-1, description: "src/impl.txt satisfies run-tests.sh", verification: "sh run-tests.sh", golden: true }
+budget: { max_iterations_per_task: 4, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
+approval_policy: { require_human_approval: [auth_policy_change] }
+risk: L1

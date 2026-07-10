@@ -12,7 +12,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { createGateRunner, type Clock, type EventLog, type EvidenceStore, type ExecuteOutcome, type GateReport, type ToolHandler } from 'core';
-import type { CandidateEvidenceRunner, FusionOutcome } from 'aal';
+import {
+  runFusion,
+  validateAgainstSchema,
+  type AgentRequest,
+  type CandidateEvidenceRunner,
+  type createDispatcher,
+  type FusionDeps,
+  type FusionOutcome,
+  type FusionProfile,
+  type Router,
+} from 'aal';
 import type { LiveGuardDecision } from './loop-cli.ts';
 
 function git(cwd: string, ...args: string[]): void {
@@ -119,4 +129,107 @@ export function createFusionToolHandler(opts: FusionToolHandlerOptions): ToolHan
  */
 export function fusionActive(decision: LiveGuardDecision): boolean {
   return decision.action === 'confirm';
+}
+
+/**
+ * REQ-16.5: structural, validateAgainstSchema-compatible copy of
+ * `.ai/schemas/plan.schema.json` — a co-located test in fusion.test.ts asserts the
+ * required-property set stays byte-equivalent. validateAgainstSchema only
+ * understands type/required/properties/enum (no $ref/minItems/additionalProperties),
+ * so this copy is necessarily flatter than the governance artifact — the same split
+ * hypothesis.schema.json and deliberation-analysis.schema.json already establish.
+ */
+export const PLAN_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  required: ['approach', 'steps'],
+  properties: {
+    approach: { type: 'string' },
+    steps: { type: 'array' },
+    risks: { type: 'array' },
+  },
+};
+
+export interface PlannerFusionOptions {
+  runId: string;
+  taskId: string;
+  /** SAME router instance the task loop uses — whatever mode governance pinned (AZ-13). */
+  router: Router;
+  dispatcher: ReturnType<typeof createDispatcher>;
+  /** The `plan` artifact profile from fusion-profiles.json (deliberate_synthesis, REQ-16.2). */
+  profile: FusionProfile;
+  evidence: EvidenceStore;
+  log: EventLog;
+  ids: { requestId(): string; canary(): string };
+  /** Panel input is pinned to the frozen contract's goal + ACs — nothing else (REQ-16.2). */
+  taskContract: { goalId: string; title: string; objective: string; acceptanceCriteria: { id: string; description: string }[] };
+}
+
+export interface PlannerFusionResult {
+  /** null when fusion escalated (no winner) or the winner failed PLAN_SCHEMA — never blocks the task loop (structural validation only, REQ-16.5). */
+  plan: { id: string; content: string } | null;
+  outcome: FusionOutcome;
+}
+
+/**
+ * REQ-16.2/16.5: dispatch role 'planner' through fusion BEFORE the task loop. The
+ * CALLER gates whether this ever runs — REQ-16.3's two independent switches
+ * (`triggers.plannerRole` from the governance-hashed policy file AND the
+ * composition's own option) are the caller's job, same separation
+ * `createFusionToolHandler`/`fusionActive` already establish for the mid-task
+ * fusion.deliberate seam; this function itself unconditionally dispatches once
+ * called. PLAN_RESOLVED is appended regardless of outcome so the event log always
+ * records whether resolution produced a usable plan — a `winner:false` (escalate,
+ * or a structurally invalid winner) never blocks the task loop, it simply proceeds
+ * without a plan piece (the "structural validation only, no full planning gate"
+ * ceiling design.md draws around this whole mechanism).
+ */
+export async function runPlannerFusion(opts: PlannerFusionOptions): Promise<PlannerFusionResult> {
+  const canaryToken = opts.ids.canary();
+  const manifestRef = opts.evidence.put(JSON.stringify({ taskId: opts.taskId, canaryToken, rules: [] }));
+  const base: AgentRequest = {
+    requestId: opts.ids.requestId(),
+    agentRole: 'planner',
+    taskContract: opts.taskContract,
+    // Pinned to the frozen goal+ACs only (REQ-16.2) — an empty bundle, never repo/file
+    // context (a single-task composition has no task graph to plan over).
+    contextBundle: { pieces: [], canaryToken, stats: { bytes: 0, pieceCount: 0 } },
+    manifestRef,
+    outputSchema: PLAN_SCHEMA,
+    toolDefs: [],
+    // The fusion profile's OWN cap, not the task's remaining run budget — this
+    // dispatch happens BEFORE the task loop starts spending, so there is no task
+    // budget yet to reference (deviation from source.ts's budgetRemaining() pattern).
+    budget: { costUnits: opts.profile.budgetCapCostUnits },
+  };
+  const deps: FusionDeps = {
+    runId: opts.runId,
+    taskId: opts.taskId,
+    router: opts.router,
+    dispatcher: opts.dispatcher,
+    evidence: opts.evidence,
+    log: opts.log,
+    ids: { requestId: opts.ids.requestId },
+  };
+  const outcome = await runFusion(deps, opts.profile, base);
+
+  let plan: { id: string; content: string } | null = null;
+  if (outcome.winner !== null) {
+    const check = validateAgainstSchema(outcome.winner.structuredResult, PLAN_SCHEMA);
+    if (check.valid) {
+      const content = JSON.stringify(outcome.winner.structuredResult);
+      opts.evidence.put(content); // stored as evidence (REQ-16.5)
+      plan = { id: `plan-${opts.taskId}`, content };
+    }
+  }
+  // Best-effort panel size (REQ-16.5's PLAN_RESOLVED.panelSize): the FUSION_PANEL
+  // THIS call itself just appended, 0 when fusion escalated before a panel ever
+  // formed (budget_cap/panel_degraded pre-dispatch).
+  const panelSize = (opts.log.all({ taskId: opts.taskId, type: 'FUSION_PANEL' }).at(-1)?.payload['size'] as number | undefined) ?? 0;
+  opts.log.append({
+    runId: opts.runId,
+    taskId: opts.taskId,
+    type: 'PLAN_RESOLVED',
+    payload: { winner: plan !== null, panelSize, costUnits: outcome.usage.costUnits },
+  });
+  return { plan, outcome };
 }

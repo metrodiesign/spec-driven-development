@@ -7,6 +7,8 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
 import { termWsUrl } from './logic/term.ts';
+import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
+import { useI18n } from './I18nContext.tsx';
 
 interface SessionRow {
   ptyId: string;
@@ -16,6 +18,7 @@ interface SessionRow {
 }
 
 export function TerminalPanel({ project }: { project: string }) {
+  const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -23,14 +26,13 @@ export function TerminalPanel({ project }: { project: string }) {
   const [ptyId, setPtyId] = useState<string | null>(null);
   const [attached, setAttached] = useState(false);
   const [resume, setResume] = useState('');
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [sessionsState, setSessionsState] = useState<FetchState<SessionRow[]>>(FETCH_LOADING);
   const [note, setNote] = useState<string | null>(null);
 
   const refreshSessions = () => {
     fetch('/api/term/sessions')
-      .then((r) => r.json())
-      .then((rows: SessionRow[]) => setSessions(rows))
-      .catch(() => setSessions([]));
+      .then((r) => r.json().then((rows: SessionRow[]) => setSessionsState(fetchStateFromResponse(r.ok, rows))))
+      .catch(() => setSessionsState(FETCH_ERROR));
   };
   useEffect(refreshSessions, []);
 
@@ -72,7 +74,7 @@ export function TerminalPanel({ project }: { project: string }) {
       body: JSON.stringify(body),
     });
     if (!r.ok) {
-      setNote(`create failed: ${((await r.json()) as { error?: string }).error ?? r.status}`);
+      setNote(t('termCreateFailed', { error: ((await r.json()) as { error?: string }).error ?? r.status }));
       return;
     }
     const { ptyId: id, ticket } = (await r.json()) as { ptyId: string; ticket: string };
@@ -93,7 +95,7 @@ export function TerminalPanel({ project }: { project: string }) {
     wsRef.current?.close();
     const r = await fetch(`/api/term/sessions/${encodeURIComponent(id)}/attach`, { method: 'POST' });
     if (!r.ok) {
-      setNote(`attach failed: ${r.status}`);
+      setNote(t('termAttachFailed', { status: r.status }));
       return;
     }
     const { ticket } = (await r.json()) as { ticket: string; buffer: string };
@@ -106,39 +108,40 @@ export function TerminalPanel({ project }: { project: string }) {
     wsRef.current?.close();
     wsRef.current = null;
     setAttached(false);
-    setNote('detached — the PTY keeps running on the backend (re-attach to resume)');
+    setNote(t('termDetachedNote'));
   }
 
   return (
-    <section aria-label="Terminal">
-      <h2>Terminal</h2>
+    <section aria-label={t('termHeading')}>
+      <h2>{t('termHeading')}</h2>
       <p>
-        <button onClick={() => void create()}>Open Terminal (claude)</button>{' '}
+        <button onClick={() => void create()}>{t('termOpenButton')}</button>{' '}
         <input
-          aria-label="Resume session id"
-          placeholder="resume session id (optional)"
+          aria-label={t('termResumeAriaLabel')}
+          placeholder={t('termResumePlaceholder')}
           value={resume}
           onChange={(e) => setResume(e.target.value)}
           style={{ width: '24rem', maxWidth: '100%' }}
         />{' '}
-        {attached && <button onClick={detach}>Detach</button>}
+        {attached && <button onClick={detach}>{t('termDetachButton')}</button>}
       </p>
       {note !== null && <p role="status">{note}</p>}
-      {sessions.length > 0 && (
+      {sessionsState.kind === 'error' && <p role="status">{t('fetchUnavailable')}</p>}
+      {sessionsState.kind === 'data' && sessionsState.value.length > 0 && (
         <ul>
-          {sessions.map((s) => (
+          {sessionsState.value.map((s) => (
             <li key={s.ptyId}>
               <code>{s.ptyId}</code> · {s.mode}
-              {s.alive ? '' : ' (exited)'}{' '}
-              <button onClick={() => void reattach(s.ptyId)}>Re-attach</button>
+              {s.alive ? '' : t('termExitedSuffix')}{' '}
+              <button onClick={() => void reattach(s.ptyId)}>{t('termReattachButton')}</button>
             </li>
           ))}
         </ul>
       )}
-      <div ref={hostRef} style={{ overflowX: 'auto', border: '1px solid #444' }} />
+      <div ref={hostRef} style={{ overflowX: 'auto', border: '1px solid var(--color-border-strong)' }} />
       <p>
         <small>
-          PTY {ptyId ?? '—'} · {attached ? 'attached (single active writer)' : 'not attached'}
+          {t('termPtyPrefix')} {ptyId ?? '—'} · {attached ? t('termAttachedStatus') : t('termNotAttachedStatus')}
         </small>
       </p>
     </section>

@@ -38,6 +38,8 @@ import {
   validateMcpConfig,
   validateSubagentFrontmatter,
 } from './surfaces.ts';
+import { convertIssue, createIssue, listIssues, rejectIssue, TITLE_MAX, BODY_MAX } from './issues.ts';
+import type { ChatManager, CreateChatSessionInput } from './chat.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -73,6 +75,14 @@ export interface AppDeps {
   termRateOk?(): boolean;
   /** F-Loop (REQ-15): root dir whose subdirectories hold each run's human-plane.json. Absent = routes do not register (mirrors termManager). */
   loopRunsRoot?: string;
+  /** F-Issue (REQ-8/9): dir holding `.ai/issues/<id>.json` + `<id>.goal.yaml` drafts. Absent = routes do not register (mirrors termManager). */
+  issuesDir?: string;
+  /** Per-source rate limiter for POST /api/issues (REQ-8.5); default allows all (mirrors termRateOk). */
+  issuesRateOk?(): boolean;
+  /** F-Chat (REQ-17/18/19): ticket issuer. Absent = routes do not register (mirrors termManager/issuesDir). */
+  chat?: ChatManager;
+  /** Per-source rate limiter for POST /api/chat/sessions; default allows all (mirrors termRateOk/issuesRateOk). */
+  chatRateOk?(): boolean;
   /**
    * F-Sched (REQ-16): the thin runtime for the one registered child + where its
    * governed inputs live. Absent = routes do not register (mirrors termManager).
@@ -804,6 +814,114 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const res = await loopFetch(ref, { method: 'POST', path: '/kill' });
       if (res.status === 200) audit({ event: 'loop_kill', run: req.params.run, ...localOperator });
       return reply.code(res.status).send(res.body);
+    });
+
+    // REQ-6/7: F-Loop deploy card — a SEPARATE surface from /approvals (architect
+    // finding #1); same proxy + audit-on-success pattern as the routes above.
+    app.get<{ Params: { run: string } }>('/api/loop/:run/deploy', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'GET', path: '/deploy' });
+      return reply.code(res.status).send(res.body);
+    });
+
+    app.post<{ Params: { run: string }; Body: unknown }>('/api/loop/:run/deploy/decision', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'POST', path: '/deploy/decision', body: req.body });
+      if (res.status === 200) {
+        audit({ event: 'loop_deploy_decision', run: req.params.run, ...localOperator });
+      }
+      return reply.code(res.status).send(res.body);
+    });
+
+    app.post<{ Params: { run: string } }>('/api/loop/:run/deploy/rollback', async (req, reply) => {
+      const ref = await resolveRun(req.params.run, reply);
+      if (ref === null) return reply;
+      if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
+      const res = await loopFetch(ref, { method: 'POST', path: '/deploy/rollback' });
+      if (res.status === 200) {
+        audit({ event: 'loop_deploy_rollback', run: req.params.run, ...localOperator });
+      }
+      return reply.code(res.status).send(res.body);
+    });
+  }
+
+  // --- F-Issue (REQ-8/9): local issue intake -> human-gated draft goal.yaml.
+  // Body text is UNTRUSTED DATA (INV-3) end to end; this layer only stores and
+  // echoes it — the web renders it as plain text with a banner, never as
+  // HTML/markdown. Never starts, schedules, or enqueues a run (REQ-9.3). ---
+  const issuesDir = deps.issuesDir;
+  if (issuesDir !== undefined) {
+    const localOperator = { principal: 'local-operator', method: 'none' };
+
+    app.post<{ Body: { title?: string; body?: string } }>('/api/issues', async (req, reply) => {
+      if (deps.issuesRateOk !== undefined && !deps.issuesRateOk()) {
+        return reply.code(429).send({ error: 'too many issues filed; slow down' });
+      }
+      const b = req.body ?? {};
+      if (typeof b.title !== 'string' || typeof b.body !== 'string') {
+        return reply.code(400).send({ error: 'title and body are required' });
+      }
+      const res = createIssue(issuesDir, { title: b.title, body: b.body }, deps.now);
+      if (!res.ok) {
+        return reply.code(413).send({ error: `title <= ${TITLE_MAX} chars, body <= ${BODY_MAX} chars` });
+      }
+      audit({ event: 'issue_create', id: res.issue.id, ...localOperator });
+      return res.issue;
+    });
+
+    app.get('/api/issues', async () => ({ issues: listIssues(issuesDir) }));
+
+    app.post<{ Params: { id: string } }>('/api/issues/:id/convert', async (req, reply) => {
+      const res = convertIssue(issuesDir, req.params.id);
+      if (!res.ok) {
+        const status = res.reason === 'not_found' ? 404 : 409;
+        return reply.code(status).send({ error: res.reason === 'not_found' ? 'no such issue' : 'issue is not open' });
+      }
+      audit({ event: 'issue_convert', id: req.params.id, ...localOperator });
+      return { issue: res.value };
+    });
+
+    app.post<{ Params: { id: string } }>('/api/issues/:id/reject', async (req, reply) => {
+      const res = rejectIssue(issuesDir, req.params.id);
+      if (!res.ok) {
+        const status = res.reason === 'not_found' ? 404 : 409;
+        return reply.code(status).send({ error: res.reason === 'not_found' ? 'no such issue' : 'issue is not open' });
+      }
+      audit({ event: 'issue_reject', id: req.params.id, ...localOperator });
+      return { issue: res.value };
+    });
+  }
+
+  // --- F-Chat (REQ-17/18/19): ticketed session creation only — the WS bridge
+  // itself attaches directly to the HTTP server outside fastify, mirroring
+  // F-Term's term-runtime.ts split (chat-runtime.ts, verified live not in CI).
+  // The wire body's `projectDir` is the SAME opaque project id the client
+  // already has (App.tsx's `?project=` selection, TerminalPanel's `project`
+  // prop) — resolved to a real cwd server-side via readProjects, mirroring
+  // F-Term's own cwdFor; never a raw client-supplied filesystem path.
+  const chat = deps.chat;
+  if (chat !== undefined) {
+    const localOperator = { principal: 'local-operator', method: 'none' };
+    app.post<{ Body: { projectDir?: string; resume?: string; fork?: boolean } }>('/api/chat/sessions', async (req, reply) => {
+      if (deps.chatRateOk !== undefined && !deps.chatRateOk()) {
+        return reply.code(429).send({ error: 'too many chat sessions; slow down' });
+      }
+      const b = req.body ?? {};
+      if (typeof b.projectDir !== 'string' || b.projectDir.length === 0) {
+        return reply.code(400).send({ error: 'projectDir is required' });
+      }
+      const cwd = readProjects(deps.homeDir).projects.find((p) => p.id === b.projectDir)?.cwd;
+      if (cwd === undefined || cwd === null) return reply.code(400).send({ error: 'unknown projectDir' });
+      const input: CreateChatSessionInput = { projectDir: cwd };
+      if (typeof b.resume === 'string') input.resume = b.resume;
+      if (b.fork === true) input.fork = true;
+      const { sessionId, ticket } = chat.create(input);
+      audit({ event: 'chat_session_create', sessionId, ...localOperator });
+      return { sessionId, wsTicket: ticket };
     });
   }
 

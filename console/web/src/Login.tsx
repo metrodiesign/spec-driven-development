@@ -7,8 +7,10 @@
 import { useEffect, useState } from 'react';
 
 import { interpretLoginResponse, interpretProviderProbe, type ProviderKind } from './logic/auth.ts';
+import { useI18n } from './I18nContext.tsx';
 
 export function Login(): React.JSX.Element {
+  const { t } = useI18n();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -46,7 +48,7 @@ export function Login(): React.JSX.Element {
       }
       setError(outcome.error);
     } catch {
-      setError('network error — try again');
+      setError(t('loginNetworkError'));
     } finally {
       setPending(false);
     }
@@ -55,9 +57,9 @@ export function Login(): React.JSX.Element {
   if (kind === 'oidc') {
     return (
       <main style={{ maxWidth: 360, margin: '4rem auto', padding: '1rem', fontFamily: 'system-ui' }}>
-        <h1>Platform Console</h1>
+        <h1>{t('appTitle')}</h1>
         <p>
-          <a href="/auth/oidc/start">Sign in with Google</a>
+          <a href="/auth/oidc/start">{t('loginSignInWithGoogle')}</a>
         </p>
       </main>
     );
@@ -65,11 +67,11 @@ export function Login(): React.JSX.Element {
 
   return (
     <main style={{ maxWidth: 360, margin: '4rem auto', padding: '1rem', fontFamily: 'system-ui' }}>
-      <h1>Platform Console</h1>
-      <form onSubmit={(e) => void submit(e)} aria-label="Login">
+      <h1>{t('appTitle')}</h1>
+      <form onSubmit={(e) => void submit(e)} aria-label={t('loginFormAriaLabel')}>
         <p>
           <label>
-            Password{' '}
+            {t('loginPasswordLabel')}{' '}
             <input
               type="password"
               value={password}
@@ -80,13 +82,13 @@ export function Login(): React.JSX.Element {
           </label>
         </p>
         {error !== null && (
-          <p role="alert" style={{ color: '#b30000' }}>
+          <p role="alert" style={{ color: 'var(--color-danger)' }}>
             {error}
           </p>
         )}
         <p>
           <button type="submit" disabled={pending || password.length === 0}>
-            {pending ? 'Signing in…' : 'Sign in'}
+            {pending ? t('loginSigningIn') : t('loginSignIn')}
           </button>
         </p>
       </form>

@@ -25,6 +25,7 @@ import {
   readConformanceRecord,
 } from '../src/loop-cli.ts';
 import { createTermRuntime } from '../src/term-runtime.ts';
+import { createChatRuntime } from '../src/chat-runtime.ts';
 import { runGovernanceCommand } from '../src/governance-cli.ts';
 import { runAuditorCommand } from '../src/auditor-cli.ts';
 import { createSchedRuntime, type ChildLike, type SpawnChild } from '../src/sched.ts';
@@ -414,6 +415,10 @@ async function runLoop(rest: string[]): Promise<void> {
       clock: { now: () => Date.now() },
       conformanceRecord,
       persistDir: runDir, // live evidence (events.db, transcripts) survives — the fixture root does not
+      // Task-12 LIVE pass wiring (REQ-25.5/25.6): tasks 5/6 built these composition
+      // options but no CLI entry point ever threaded them through until now.
+      governanceLogPath: join(aiDir(), 'governance', 'events.jsonl'),
+      lessons: { dir: join(aiDir(), 'lessons') },
       autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
       auditSink: auditAppend,
       adapterFactory: (put) =>
@@ -432,6 +437,9 @@ async function runLoop(rest: string[]): Promise<void> {
       `LIVE run complete: ${result.finalState} (${result.iterations} iterations); ` +
         `held-out pass-rate range [${result.calibration.range.map((x) => x.toFixed(2)).join(', ')}], ` +
         `reproducibility ${result.calibration.reproducibility.toFixed(2)}.\n` +
+        `lessons: ${result.lessonHitRate.injectionCount} injected, hit-rate proxy ${result.lessonHitRate.hitRateProxy.toFixed(2)}; ` +
+        `shadowProven: n=${result.shadowProven.n} proven=${result.shadowProven.proven}; ` +
+        `fusionUplift: ${result.fusionUplift.available ? 'available' : 'not available (task-12 side script only)'}.\n` +
         `Record /usage before/after in docs/calibration/ (billing proof, manual — §15.4).\n`,
     );
     return;
@@ -577,6 +585,17 @@ async function main(): Promise<void> {
         })
       : undefined;
 
+  // F-Chat (REQ-17/18/19): unlike F-Term, INV-17's "interactive approval =
+  // CLI-native" rule is scoped OFF for F-Chat (design.md G) — no loopback/
+  // behind-proxy gate; the single-use WS ticket (minted only from an authed
+  // POST) is the transport's own security boundary, same as F-Term's.
+  const chatRuntime = createChatRuntime({
+    auditPath: join(dataDir, 'chat-audit.jsonl'),
+    ticketTtlS: 30,
+    approvalTimeoutMs: 120_000,
+    homeDir: homedir(),
+  });
+
   const app = buildApp({
     homeDir: homedir(),
     env: process.env,
@@ -590,6 +609,13 @@ async function main(): Promise<void> {
     // wires the same appender the CLI uses — every governed write in app.ts (hook
     // install, retention prune, ...) starts recording too, not just F-Loop.
     loopRunsRoot: join(homedir(), '.ai', 'runs'),
+    // F-Issue (REQ-8/9): repo-anchored like policies/governance — issues feed
+    // draft goal.yaml files a human reviews as part of THIS project, not a
+    // per-machine runtime artifact (unlike loopRunsRoot above).
+    issuesDir: join(aiDir(), 'issues'),
+    issuesRateOk: createSpawnRateLimiter(10),
+    chat: chatRuntime.manager,
+    chatRateOk: createSpawnRateLimiter(10),
     audit: auditAppend,
     ...(behindProxyHost !== undefined ? { behindProxyHost } : {}),
     ...(authProvider ? { auth: authProvider } : {}),
@@ -607,6 +633,7 @@ async function main(): Promise<void> {
 
   await app.listen({ host, port });
   if (termRuntime !== undefined) termRuntime.attachWs(app.server);
+  chatRuntime.attachWs(app.server);
   const url = `http://${host === '::1' ? '[::1]' : host}:${port}`;
   process.stdout.write(`platform console listening on ${url}\n`);
   if (values['no-open'] !== true && process.platform === 'darwin') {

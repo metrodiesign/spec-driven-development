@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { buildContext, computeContextMetrics, serializeBundle, SecretInContextError } from './builder.ts';
 import { createEvidenceStore } from '../evidence/store.ts';
 import type { ContextBuildInput } from './builder.ts';
-import type { TaskContractExcerpt } from '../types.ts';
+import type { LessonRecord, TaskContractExcerpt } from '../types.ts';
 
 const CONTRACT: TaskContractExcerpt = {
   goalId: 'G-1',
@@ -180,6 +180,121 @@ test('machine config is excluded when the caller supplies an excludePath matcher
     assert.ok(paths.includes('src/a.ts'));
     assert.ok(!paths.includes(memoryFile), 'memory file excluded');
     assert.ok(!paths.includes(settingsPath), 'machine settings excluded');
+  } finally {
+    f.cleanup();
+  }
+});
+
+function lesson(overrides: Partial<LessonRecord> = {}): LessonRecord {
+  return {
+    id: 'lsn-fixed-1',
+    statement: 'the golden file must stay byte-identical across reruns',
+    sourceRunId: 'RUN-0',
+    sourceTaskId: 'T-0',
+    evidenceRefs: ['blob://probe-0'],
+    proposedAt: '2026-07-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+test('REQ-12.2/12.4: an approved lesson flows SEED->GOVERN->MARK as an excerpt piece, canaried like any other data', () => {
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts'], { lessons: [lesson()] }));
+    const piece = r.bundle.pieces.find((p) => p.id === 'lsn-fixed-1');
+    assert.ok(piece, 'lesson landed as a bundle piece');
+    assert.equal(piece?.kind, 'excerpt');
+    assert.equal(piece?.content, lesson().statement);
+    assert.deepEqual(r.lessonsInjected, [{ id: 'lsn-fixed-1', evidenceRefs: ['blob://probe-0'] }]);
+    assert.deepEqual(r.lessonsBlocked, []);
+
+    const wire = serializeBundle(r.bundle);
+    assert.match(wire, /CANARY-fixed-123/, 'lesson piece carries the same injection canary as file pieces');
+    assert.match(wire, /UNTRUSTED/i, 'lesson marked as untrusted data (REQ-12.4)');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('REQ-12.3: a secret-bearing lesson is BLOCKED per-lesson — never reaches pieces/prompt, but the REST of the build still succeeds', () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(
+      input(f, ['src/a.ts'], { lessons: [lesson({ id: 'lsn-secret', statement: `leaked key: ${secret}` }), lesson()] }),
+    );
+    // Unlike a repo-file secret (which throws and aborts the WHOLE build), a
+    // secret-bearing LESSON blocks only itself — the build still returns.
+    assert.equal(r.bundle.pieces.some((p) => p.id === 'lsn-secret'), false, 'blocked lesson never became a piece');
+    assert.equal(r.bundle.pieces.some((p) => p.id === 'lsn-fixed-1'), true, 'the clean lesson still made it in');
+    assert.equal(r.bundle.pieces.some((p) => p.path === 'src/a.ts'), true, 'file pieces unaffected');
+    assert.deepEqual(r.lessonsBlocked, [{ id: 'lsn-secret', kind: 'sk-key' }]);
+    assert.deepEqual(r.lessonsInjected, [{ id: 'lsn-fixed-1', evidenceRefs: ['blob://probe-0'] }]);
+
+    const wire = serializeBundle(r.bundle);
+    assert.ok(!wire.includes(secret), 'blocked lesson content never reaches the serialized bundle');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('no lessons input -> lessonsInjected/lessonsBlocked are empty, byte-identical to Phase-1 behavior otherwise', () => {
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts']));
+    assert.deepEqual(r.lessonsInjected, []);
+    assert.deepEqual(r.lessonsBlocked, []);
+    assert.equal(r.bundle.pieces.length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('REQ-16.5: a resolved plan flows SEED->GOVERN->MARK as an excerpt piece, canaried like any other data', () => {
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts'], { plan: { id: 'plan-T-1', content: '{"approach":"x","steps":["y"]}' } }));
+    const piece = r.bundle.pieces.find((p) => p.id === 'plan-T-1');
+    assert.ok(piece, 'plan landed as a bundle piece');
+    assert.equal(piece?.kind, 'excerpt');
+    assert.equal(piece?.content, '{"approach":"x","steps":["y"]}');
+    assert.equal(r.planInjected, true);
+    assert.equal(r.planBlocked, false);
+
+    const wire = serializeBundle(r.bundle);
+    assert.match(wire, /CANARY-fixed-123/, 'plan piece carries the same injection canary as file pieces');
+    assert.match(wire, /UNTRUSTED/i, 'plan marked as untrusted data');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a secret-bearing plan is BLOCKED — never reaches pieces/prompt, but the REST of the build still succeeds', () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts'], { plan: { id: 'plan-T-1', content: `leaked key: ${secret}` } }));
+    // Unlike a repo-file secret (which throws and aborts the WHOLE build), a
+    // secret-bearing PLAN blocks only itself — the build still returns.
+    assert.equal(r.bundle.pieces.some((p) => p.id === 'plan-T-1'), false, 'blocked plan never became a piece');
+    assert.equal(r.bundle.pieces.some((p) => p.path === 'src/a.ts'), true, 'file pieces unaffected');
+    assert.equal(r.planInjected, false);
+    assert.equal(r.planBlocked, true);
+
+    const wire = serializeBundle(r.bundle);
+    assert.ok(!wire.includes(secret), 'blocked plan content never reaches the serialized bundle');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('no plan input -> planInjected/planBlocked are false, byte-identical to pre-Phase-4 behavior otherwise', () => {
+  const f = fixture({ 'src/a.ts': 'export const a = 1;\n' });
+  try {
+    const r = buildContext(input(f, ['src/a.ts']));
+    assert.equal(r.planInjected, false);
+    assert.equal(r.planBlocked, false);
+    assert.equal(r.bundle.pieces.length, 1);
   } finally {
     f.cleanup();
   }

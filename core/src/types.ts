@@ -171,7 +171,23 @@ export type EventType =
   // Phase 3 out-of-band auditor addition (append-only, INV-10).
   | 'OOB_AUDIT_RESULT'
   // Phase 3 outcome-routing shadow addition (append-only, INV-10; REQ-7).
-  | 'SHADOW_ROUTE';
+  | 'SHADOW_ROUTE'
+  // Phase 4 approval-pipeline production wiring (append-only, INV-10; REQ-2.2).
+  | 'APPROVAL_PACKAGE_CREATED'
+  // Phase 4 deploy stage addition (append-only, INV-10; REQ-5.1).
+  | 'DEPLOY_STATE'
+  // Phase 4 deploy approval + Human Plane surface (append-only, INV-10; REQ-6.7/6.11/6.12).
+  | 'DEPLOY_DECISION'
+  | 'DEPLOY_WINDOW_CLOSED'
+  // Phase 4 lessons pipeline addition (append-only, INV-10; REQ-10.1/11.2/12.5).
+  | 'LESSON_PROPOSED'
+  | 'LESSON_APPROVED'
+  | 'LESSON_INJECTED'
+  // Phase 4 outcome-routing ACTIVE addition (append-only, INV-10; REQ-15.4/15.5).
+  | 'OUTCOME_ROUTE'
+  | 'ROUTING_FROZEN'
+  // Phase 4 planner-role fusion auto-routing addition (append-only, INV-10; REQ-16.5).
+  | 'PLAN_RESOLVED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context
@@ -201,6 +217,24 @@ export interface TaskContractExcerpt {
   title: string;
   objective: string;
   acceptanceCriteria: { id: string; description: string }[];
+}
+
+/**
+ * A confirmed repair hypothesis on its way to becoming reusable diagnostic
+ * knowledge (spec §10.4, REQ-10/11/12). `id` is content-addressed
+ * (`lsn-<sha256(statement+evidenceRefs)>`) so re-proposing the same lesson is
+ * idempotent. Lives as a JSON file under `.ai/lessons/{pending,approved}/`;
+ * `approvedAt` is set only once a human approves the paired `lesson_promote`
+ * governance proposal (INV-16 — the system cannot teach itself).
+ */
+export interface LessonRecord {
+  id: string;
+  statement: string;
+  sourceRunId: string;
+  sourceTaskId: string;
+  evidenceRefs: string[];
+  proposedAt: string;
+  approvedAt?: string;
 }
 
 /** Append-only event row (INV-10). `seq` is assigned by the log. */

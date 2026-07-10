@@ -157,6 +157,10 @@ export class FakeAdapter implements AdapterInterface {
     // task result or a ranking. `prose_only`/`ignore_schema` sabotage it to drive the
     // judge_invalid fallback (REQ-9.5); every other behavior returns a valid analysis.
     if (req.agentRole === 'reviewer') return this.review(attempt);
+    // A planner-role fusion round (REQ-16.5): return a structural plan, never a task
+    // result. `prose_only`/`ignore_schema` sabotage it to drive the invalid-plan
+    // (discarded, never blocks the task loop) path.
+    if (req.agentRole === 'planner') return this.plan(attempt);
 
     const d = parseDirective(req.taskContract.objective);
     const budgetLow = req.budget.costUnits <= 1;
@@ -264,6 +268,32 @@ export class FakeAdapter implements AdapterInterface {
       structuredResult,
       actionRequests: [],
       usage: { costUnits: 2, raw: { attempt, role: 'reviewer' } },
+      rawTranscriptRef: null,
+      adapterMeta: { adapterId: this.id, modelVersion: this.modelVersion, interactive: false, toolUseCount: 0 },
+    };
+  }
+
+  /**
+   * A planner-role fusion round's response (REQ-16.2/16.5): a structural plan over
+   * the pinned goal+ACs only (no file context reaches this role) — the composition
+   * validates it against plan.schema.json and injects it into task context as MARKed
+   * data. The planner never proposes actions or claims execution (REQ-16 does not
+   * widen the executor's authority — a plan is advisory, read by the implementer
+   * round, never run directly).
+   */
+  private plan(attempt: number): AgentResponse {
+    const sabotaged = this.behavior === 'prose_only' || this.behavior === 'ignore_schema';
+    const structuredResult = sabotaged
+      ? { prose: 'i would just fix it somehow' } // missing required approach/steps -> fails plan.schema.json
+      : {
+          approach: 'implement the fix directly against the seeded file, then verify with the gate',
+          steps: ['read the seeded file', 'write the corrected marker', 'run the gate ladder'],
+          risks: [],
+        };
+    return {
+      structuredResult,
+      actionRequests: [],
+      usage: { costUnits: 2, raw: { attempt, role: 'planner' } },
       rawTranscriptRef: null,
       adapterMeta: { adapterId: this.id, modelVersion: this.modelVersion, interactive: false, toolUseCount: 0 },
     };

@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { createCandidateEvidenceRunner, createFusionToolHandler, fusionActive } from './fusion.ts';
+import { createCandidateEvidenceRunner, createFusionToolHandler, fusionActive, runPlannerFusion, PLAN_SCHEMA } from './fusion.ts';
 import { makeFixtureRepo } from './loop-run.ts';
 import { decideLiveRun } from './loop-cli.ts';
 import {
@@ -19,7 +19,16 @@ import {
   openEventLog,
 } from 'core';
 import type { Action } from 'core';
-import type { FusionOutcome } from 'aal';
+import {
+  createDispatcher,
+  createRegistry,
+  createRouter,
+  FakeAdapter,
+  PASS_FAIL_PROBES,
+  type ConformanceRecord,
+  type FusionOutcome,
+  type FusionProfile,
+} from 'aal';
 
 const clock = { now: () => 1_000_000 };
 
@@ -131,4 +140,149 @@ test('fusion activates ONLY on a confirmed live run — never on the CI stub or 
   assert.equal(fusionActive(decideLiveRun({ live: true, ciEnv: false, isTTY: true })), true, 'confirmed live run may fuse');
   assert.equal(fusionActive(decideLiveRun({ live: false, ciEnv: false, isTTY: true })), false, 'CI-safe stub never fuses');
   assert.equal(fusionActive(decideLiveRun({ live: true, ciEnv: true, isTTY: true })), false, 'CI refuses --live -> no fusion');
+});
+
+// --- runPlannerFusion (REQ-16.2/16.5). The GATING (whether this ever gets called —
+// REQ-16.3's "policy flag + composition option" trigger contract, and REQ-16.4's
+// fusionActive live gate) is the CALLER's job — proven at the composition level in
+// loop-run.test.ts, same separation createFusionToolHandler/fusionActive already
+// establish above. These tests prove runPlannerFusion ITSELF: it dispatches role
+// planner through the given router, resolves per the plan profile, structurally
+// validates the winner, and always appends PLAN_RESOLVED. ---
+
+const TASK_CONTRACT = {
+  goalId: 'G-1',
+  title: 'demo goal',
+  objective: 'fix the impl',
+  acceptanceCriteria: [{ id: 'AC-1', description: 'impl says correct' }],
+};
+
+function passRecord(id: string): ConformanceRecord {
+  return {
+    adapterId: id,
+    modelVersion: 'v',
+    ranAt: new Date(0).toISOString(),
+    probes: PASS_FAIL_PROBES.map((p) => ({ id: p, pass: true, evidenceRef: 'blob://p' })),
+    p7: { susceptibilityScore: 0, evidenceRef: 'blob://p7' },
+  };
+}
+
+/** The real shipped `plan` profile shape (cross_lineage anthropic/openai, deliberate_synthesis). */
+function planProfile(): FusionProfile {
+  return {
+    artifact: 'plan',
+    panel: { size: 2, diversity: { kind: 'cross_lineage', lineages: ['anthropic', 'openai'] } },
+    resolve: 'deliberate_synthesis',
+    budgetCapCostUnits: 40,
+    estimateCostUnitsPerCandidate: 8,
+  };
+}
+
+function plannerHarness(adapters: FakeAdapter[]) {
+  const fx = makeFixtureRepo();
+  const log = openEventLog(join(fx.root, 'events.db'), clock);
+  const evidence = createEvidenceStore(join(fx.root, 'evidence'));
+  const reg = createRegistry({});
+  for (const a of adapters) reg.register(a, passRecord(a.manifest().adapterId));
+  const router = createRouter(reg);
+  const dispatcher = createDispatcher({ buckets: new Map(), maxParallel: 2 });
+  let n = 0;
+  const ids = { requestId: () => `req-${++n}`, canary: () => `CANARY-${n}` };
+  return { log, evidence, router, dispatcher, ids, cleanup: () => { log.close(); fx.cleanup(); } };
+}
+
+test('REQ-16.2/16.5: dispatches role planner through the given router, resolves a valid plan, appends PLAN_RESOLVED', async () => {
+  const h = plannerHarness([
+    new FakeAdapter({ id: 'a-anthropic', lineage: 'anthropic' }),
+    new FakeAdapter({ id: 'a-openai', lineage: 'openai' }),
+  ]);
+  try {
+    const result = await runPlannerFusion({
+      runId: 'RUN',
+      taskId: 'T-1',
+      router: h.router,
+      dispatcher: h.dispatcher,
+      profile: planProfile(),
+      evidence: h.evidence,
+      log: h.log,
+      ids: h.ids,
+      taskContract: TASK_CONTRACT,
+    });
+    assert.ok(result.plan !== null, 'a valid plan was resolved');
+    const parsed = JSON.parse(result.plan?.content ?? '{}') as { approach: unknown; steps: unknown };
+    assert.equal(typeof parsed.approach, 'string');
+    assert.ok(Array.isArray(parsed.steps));
+    assert.equal(result.plan?.id, 'plan-T-1');
+
+    const resolved = h.log.all({ type: 'PLAN_RESOLVED' });
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.payload['winner'], true);
+    assert.equal(resolved[0]?.payload['panelSize'], 2);
+    assert.equal(typeof resolved[0]?.payload['costUnits'], 'number');
+    assert.equal(h.log.all({ type: 'FUSION_PANEL' })[0]?.payload['artifact'], 'plan');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('an unresolvable panel (a required lineage never registered) escalates — PLAN_RESOLVED{winner:false}, plan stays null, never throws', async () => {
+  const h = plannerHarness([new FakeAdapter({ id: 'a-anthropic', lineage: 'anthropic' })]); // 'openai' lineage never registered
+  try {
+    const result = await runPlannerFusion({
+      runId: 'RUN',
+      taskId: 'T-1',
+      router: h.router,
+      dispatcher: h.dispatcher,
+      profile: planProfile(),
+      evidence: h.evidence,
+      log: h.log,
+      ids: h.ids,
+      taskContract: TASK_CONTRACT,
+    });
+    assert.equal(result.plan, null);
+    assert.equal(result.outcome.escalateReason, 'panel_degraded');
+    const resolved = h.log.all({ type: 'PLAN_RESOLVED' })[0];
+    assert.equal(resolved?.payload['winner'], false);
+    assert.equal(resolved?.payload['panelSize'], 0, 'no panel ever formed before the escalate');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('a structurally invalid winner (fails PLAN_SCHEMA) is discarded even though fusion itself resolved one — never handed to the caller', async () => {
+  // Registered FIRST -> becomes the judge (route('reviewer') = first eligible, registry
+  // insertion order); compliant, so the judge round is valid and 'plan' (judge-load-
+  // bearing) is NOT judge_invalid-escalated. Lineage 'openai' -> panel candidate[1].
+  const judge = new FakeAdapter({ id: 'a-openai', lineage: 'openai' });
+  // Lineage 'anthropic' -> panel candidate[0], which resolvePlan picks as the winner
+  // (deterministic first-candidate pick) — sabotaged so the winner's structuredResult
+  // fails PLAN_SCHEMA (missing approach/steps).
+  const sabotagedCandidate0 = new FakeAdapter({ id: 'a-anthropic', lineage: 'anthropic', behavior: 'ignore_schema' });
+  const h = plannerHarness([judge, sabotagedCandidate0]);
+  try {
+    const result = await runPlannerFusion({
+      runId: 'RUN',
+      taskId: 'T-1',
+      router: h.router,
+      dispatcher: h.dispatcher,
+      profile: planProfile(),
+      evidence: h.evidence,
+      log: h.log,
+      ids: h.ids,
+      taskContract: TASK_CONTRACT,
+    });
+    assert.equal(result.outcome.winner !== null, true, 'fusion itself DID resolve a winner');
+    assert.equal(result.plan, null, 'but it failed PLAN_SCHEMA, so no plan is handed to the caller');
+    const resolved = h.log.all({ type: 'PLAN_RESOLVED' })[0];
+    assert.equal(resolved?.payload['winner'], false, 'PLAN_RESOLVED.winner reflects usability, not raw fusion resolution');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('PLAN_SCHEMA (runtime, validateAgainstSchema-compatible) required-property set stays byte-equivalent to the governance copy at .ai/schemas/plan.schema.json', () => {
+  const governance = JSON.parse(
+    readFileSync(join(import.meta.dirname, '..', '..', '..', '.ai', 'schemas', 'plan.schema.json'), 'utf8'),
+  ) as { required: string[] };
+  assert.deepEqual([...(PLAN_SCHEMA['required'] as string[])].sort(), [...governance.required].sort());
 });

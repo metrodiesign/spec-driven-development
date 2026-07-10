@@ -26,17 +26,21 @@ export {
   type HealthChange,
   type AdapterHealth,
 } from './registry.ts';
-export { createRouter, NoCapacityError, type Router, type RouteHints } from './router.ts';
+export { createRouter, wrapRouterForOutcome, NoCapacityError, type Router, type RouteHints } from './router.ts';
 export { createTokenBucket, type TokenBucket, type TokenBucketOptions } from './ratelimit.ts';
 export {
   shadowWouldChoose,
   shadowFrozen,
   compareShadow,
+  computeShadowOutcomeStats,
+  shadowProven,
   type ShadowOutcomeStats,
   type ShadowChoiceInput,
   type ShadowChoice,
   type ShadowDivergence,
   type ShadowComparison,
+  type ShadowProofCriteria,
+  type ShadowProofReport,
 } from './shadow.ts';
 export {
   createDispatcher,
@@ -50,6 +54,7 @@ export {
   DEFAULT_ROUTING_CONFIG,
   type RoutingConfig,
   type RoutingBucketConfig,
+  type OutcomeRoutingConfig,
 } from './routing-config.ts';
 export { createAALProposalSource, type AALSourceDeps } from './source.ts';
 export {
@@ -71,6 +76,8 @@ export {
   type ResolveRule,
   type FusionProfile,
   type PanelDiversity,
+  type FusionTriggers,
+  type FusionProfilesFile,
 } from './fusion/profiles.ts';
 export {
   DELIBERATION_ANALYSIS_SCHEMA,

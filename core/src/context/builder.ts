@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import { scanForSecret } from './secret-scan.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
-import type { ContextBundle, ContextPiece, TaskContractExcerpt } from '../types.ts';
+import type { ContextBundle, ContextPiece, LessonRecord, TaskContractExcerpt } from '../types.ts';
 
 export interface ContextBuildInput {
   taskId: string;
@@ -29,12 +29,34 @@ export interface ContextBuildInput {
   depthBudget?: number;
   /** Caller-supplied machine-config matcher (REQ-7.7). Vendor-specific list lives OUTSIDE core. */
   excludePath?: (relPath: string) => boolean;
+  /**
+   * REQ-12: approved lessons to inject, already loaded + capped by the caller
+   * (`loadApprovedLessons`). buildContext only GOVERNs (secret-scan) and MARKs
+   * them — never a free-text post-build append (architect finding #3).
+   */
+  lessons?: LessonRecord[];
+  /**
+   * REQ-16.5: the resolved planner-fusion plan (already schema-validated by the
+   * caller), injected as MARKed data alongside lessons — same GOVERN treatment
+   * (a secret-bearing plan is blocked, never the whole-build abort a repo-file
+   * secret triggers above). Absent -> no planner-fusion trigger fired this run
+   * (Phase-3 parity, byte-identical).
+   */
+  plan?: { id: string; content: string };
 }
 
 export interface ContextBuildResult {
   bundle: ContextBundle;
   manifestRef: string;
   rules: { pieceId: string; reason: string }[];
+  /** REQ-12.5: lessons that made it into this bundle (post-GOVERN) — the caller logs LESSON_INJECTED. */
+  lessonsInjected: { id: string; evidenceRefs: string[] }[];
+  /** REQ-12.3: lessons GOVERN blocked (a secret hit) — never reached pieces/prompt; the caller records the block. */
+  lessonsBlocked: { id: string; kind: string }[];
+  /** REQ-16.5: whether `input.plan` (if supplied) made it into this bundle (post-GOVERN). */
+  planInjected: boolean;
+  /** GOVERN blocked `input.plan` (a secret hit) — never reached pieces/prompt; the caller records the block. */
+  planBlocked: boolean;
 }
 
 export class SecretInContextError extends Error {
@@ -161,6 +183,41 @@ export function buildContext(input: ContextBuildInput): ContextBuildResult {
     rules.push({ pieceId: id, reason });
   });
 
+  // Lessons (REQ-12): SEED (the caller already loaded+capped them) -> GOVERN (secret
+  // scan, per-lesson block — never the whole-build abort a repo-file secret triggers
+  // above) -> MARK (reuses the SAME untrusted-data wrapping every piece gets below).
+  const lessonsInjected: { id: string; evidenceRefs: string[] }[] = [];
+  const lessonsBlocked: { id: string; kind: string }[] = [];
+  for (const lesson of input.lessons ?? []) {
+    const hit = scanForSecret(lesson.statement);
+    if (hit.hit) {
+      lessonsBlocked.push({ id: lesson.id, kind: hit.kind ?? 'unknown' });
+      continue;
+    }
+    pieces.push({ id: lesson.id, kind: 'excerpt', content: lesson.statement, reason: 'lesson' });
+    rules.push({ pieceId: lesson.id, reason: 'lesson' });
+    lessonsInjected.push({ id: lesson.id, evidenceRefs: lesson.evidenceRefs });
+  }
+
+  // Plan (REQ-16.5): SEED (the caller already resolved + schema-validated it) ->
+  // GOVERN (secret scan, same per-item block as a lesson — never the whole-build
+  // abort a repo-file secret triggers above) -> MARK (reuses the untrusted-data
+  // wrapping every piece gets below). Reuses ContextPiece.kind:'excerpt' — same
+  // choice lessons made; MARK/serialization treats every kind identically, so a
+  // new union member would be a distinction with no behavioral difference.
+  let planInjected = false;
+  let planBlocked = false;
+  if (input.plan !== undefined) {
+    const hit = scanForSecret(input.plan.content);
+    if (hit.hit) {
+      planBlocked = true;
+    } else {
+      pieces.push({ id: input.plan.id, kind: 'excerpt', content: input.plan.content, reason: 'plan' });
+      rules.push({ pieceId: input.plan.id, reason: 'plan' });
+      planInjected = true;
+    }
+  }
+
   const bytes = pieces.reduce((n, p) => n + p.content.length, 0);
   const bundle: ContextBundle = {
     pieces,
@@ -176,7 +233,7 @@ export function buildContext(input: ContextBuildInput): ContextBuildResult {
     stats: bundle.stats,
   };
   const manifestRef = input.evidence.put(JSON.stringify(manifest));
-  return { bundle, manifestRef, rules };
+  return { bundle, manifestRef, rules, lessonsInjected, lessonsBlocked, planInjected, planBlocked };
 }
 
 export function computeContextMetrics(

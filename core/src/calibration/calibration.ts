@@ -7,6 +7,8 @@
 // passed. Small n -> reported as a range (Wilson-ish simple interval).
 // Reproducibility = fraction of clean-checkout re-runs that matched the original.
 
+import type { PlatformEvent } from '../types.ts';
+
 export interface CalibrationInput {
   heldOut: boolean[]; // per task: did the held-out/golden check pass?
   reruns: boolean[]; // per COMPLETED task: did a clean-checkout re-run reproduce the result?
@@ -92,4 +94,34 @@ export function computeFusionCalibration(input: FusionCalibrationInput): FusionC
     upliftRange: [clampRange(uplift - band), clampRange(uplift + band)],
     decorrelation,
   };
+}
+
+// Lesson hit-rate PROXY (REQ-24.1, spec §14 Phase 4 task 11). Same fold
+// convention as aal's computeShadowOutcomeStats (group by taskId, check whether
+// that task's log ever reached REVIEWING) — a proxy, not a quality claim; the
+// caller labels it as such (same convention as the shadow reviewing-reached
+// stat). Sharpens as a shared log accumulates across many real tasks; in CI a
+// single-task fixture log yields n<=1, proving only that the fold is correct.
+
+export interface LessonHitRateStats {
+  /** Distinct tasks that received >=1 LESSON_INJECTED event. */
+  injectionCount: number;
+  /** Of those, the fraction that reached REVIEWING. 0 when injectionCount is 0 (never fabricated). */
+  hitRateProxy: number;
+}
+
+export function computeLessonHitRate(events: PlatformEvent[]): LessonHitRateStats {
+  const injectedTasks = new Set<string>();
+  for (const e of events) {
+    if (e.type === 'LESSON_INJECTED' && e.taskId !== null) injectedTasks.add(e.taskId);
+  }
+  if (injectedTasks.size === 0) return { injectionCount: 0, hitRateProxy: 0 };
+  let hits = 0;
+  for (const taskId of injectedTasks) {
+    const reachedReviewing = events.some(
+      (e) => e.type === 'TASK_STATE' && e.taskId === taskId && e.payload['state'] === 'REVIEWING',
+    );
+    if (reachedReviewing) hits += 1;
+  }
+  return { injectionCount: injectedTasks.size, hitRateProxy: hits / injectedTasks.size };
 }

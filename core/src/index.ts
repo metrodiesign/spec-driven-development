@@ -69,6 +69,7 @@ export {
   listPendingProposals,
   pendingQuarantines,
   proposeFlakyQuarantine,
+  proposeLessonPromotion,
   readGovernanceLog,
   seedFixtureSnapshot,
   snapshotHash,
@@ -100,12 +101,25 @@ export {
   type HumanPlaneServer,
 } from './human/api.ts';
 export {
+  runDeployStage,
+  runManualRollback,
+  type DeployClock,
+  type DeployOutcome,
+  type DeployRootCause,
+  type DeployRootCauseTrigger,
+  type DeployStageDeps,
+  type DeployState,
+  type DeployTrigger,
+} from './deploy/stage.ts';
+export {
   computeCalibration,
   computeFusionCalibration,
+  computeLessonHitRate,
   type CalibrationInput,
   type CalibrationResult,
   type FusionCalibrationInput,
   type FusionCalibrationResult,
+  type LessonHitRateStats,
 } from './calibration/calibration.ts';
 export {
   loadCalibrationCorpus,
@@ -119,10 +133,13 @@ export {
   auditSampleValue,
   reproduces,
   runAutoMerge,
+  runApprovedMerge,
   type AutoApproveInput,
   type AutoApproveDecision,
   type AutoApproveReason,
   type AutoMergeOutcome,
+  type ApprovedMergeOptions,
+  type ApprovedMergeOutcome,
   type MappedAc,
   type RunAutoMergeOptions,
 } from './merge/auto-merge.ts';
@@ -139,3 +156,10 @@ export {
   type OobAuditorOptions,
   type OobVerdict,
 } from './audit/oob.ts';
+export {
+  foldConfirmedHypotheses,
+  loadApprovedLessons,
+  promoteLesson,
+  proposeLessonFromHypothesis,
+  type ConfirmedHypothesis,
+} from './lessons/lessons.ts';

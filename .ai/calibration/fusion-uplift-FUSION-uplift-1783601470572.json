@@ -1,0 +1,26 @@
+{
+  "ranAt": "2026-07-09T12:51:28.370Z",
+  "corpusTaskId": "task-01",
+  "golden": "token-01\n",
+  "baseline": {
+    "pass": false,
+    "usage": 1.084
+  },
+  "fused": {
+    "pass": false,
+    "resolved": "union_red_check",
+    "escalateReason": "panel_degraded",
+    "usage": 1.089
+  },
+  "calibration": {
+    "n": 1,
+    "uplift": 0,
+    "upliftRange": [
+      -1,
+      1
+    ],
+    "decorrelation": 0
+  },
+  "totalUsage": 2.173,
+  "note": "REQ-25.2 LIVE pass: uplift INTERVAL only (n=1) — never claimed as \"proven\"; panelDisagreements not instrumented (runFusion exposes no per-candidate gate result), recorded as [] honestly rather than fabricated."
+}

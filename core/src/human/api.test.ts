@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import { createHumanPlaneServer, handleHumanRequest, type HandlerDeps, type HttpLike } from './api.ts';
 import { openEventLog } from '../state/event-log.ts';
 import type { ApprovalPackage } from './approval.ts';
+import type { DeployState } from '../deploy/stage.ts';
 
 function pkg(): ApprovalPackage {
   return {
@@ -25,6 +26,29 @@ function pkg(): ApprovalPackage {
     unresolvedRisks: [],
     attestations: ['I reviewed the diff', 'Tests cover the change'],
     riskClass: 'L2',
+    createdAt: 1,
+  };
+}
+
+function deployPkg(): ApprovalPackage {
+  return {
+    id: 'deploy-T-1',
+    taskId: 'T-1',
+    runId: 'RUN-1',
+    goalExcerpt: 'g',
+    acIds: ['AC-1'],
+    diffRef: 'sha-merge-commit',
+    evidence: { gateReports: ['blob://g'], worktreeHash: 'h' },
+    assumptions: ['network: none (simulation)'],
+    unresolvedRisks: [],
+    attestations: [
+      'I reviewed the diff',
+      'Tests cover the change',
+      'I verified the security/permission impact',
+      'I confirmed no secret or credential change',
+      'I confirmed this is recoverable OR has an explicit rollback + backup',
+    ],
+    riskClass: 'L4',
     createdAt: 1,
   };
 }
@@ -286,6 +310,167 @@ test('rate limit -> 429', () => {
   const h = deps({ rateOk: () => false });
   try {
     assert.equal(handleHumanRequest(httpReq({ headers: auth() }), h.d).status, 429);
+  } finally { h.cleanup(); }
+});
+
+function deployHarness(over?: Partial<HandlerDeps>) {
+  const calls: string[] = [];
+  let state: DeployState | null = null;
+  let approval: ApprovalPackage | null = null;
+  const h = deps({
+    deployState: () => state,
+    deployApproval: () => approval,
+    onDeployDecision: (decision) => {
+      calls.push(`decision:${decision}`);
+      return { ok: true };
+    },
+    onDeployRollback: () => {
+      calls.push('rollback');
+      return { ok: true };
+    },
+    ...over,
+  });
+  return {
+    ...h,
+    calls,
+    setState: (s: DeployState | null) => {
+      state = s;
+    },
+    setApproval: (p: ApprovalPackage | null) => {
+      approval = p;
+    },
+  };
+}
+
+test('GET /deploy -> 501 when deploy is not composed (Phase-1 pattern, REQ-6.3)', () => {
+  const h = deps();
+  try {
+    const r = handleHumanRequest(httpReq({ path: '/deploy', headers: auth() }), h.d);
+    assert.equal(r.status, 501);
+  } finally { h.cleanup(); }
+});
+
+test('GET /deploy -> {state:null, approval:null} when composed but idle (REQ-6.3)', () => {
+  const h = deployHarness();
+  try {
+    const r = handleHumanRequest(httpReq({ path: '/deploy', headers: auth() }), h.d);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { state: null, approval: null });
+  } finally { h.cleanup(); }
+});
+
+test('GET /deploy -> {state, approval} once a deploy package is pending (REQ-6.3)', () => {
+  const h = deployHarness();
+  try {
+    h.setState('PENDING_APPROVAL');
+    h.setApproval(deployPkg());
+    const r = handleHumanRequest(httpReq({ path: '/deploy', headers: auth() }), h.d);
+    assert.equal(r.status, 200);
+    const body = r.body as { state: string; approval: ApprovalPackage };
+    assert.equal(body.state, 'PENDING_APPROVAL');
+    assert.equal(body.approval.id, 'deploy-T-1');
+    assert.equal(body.approval.riskClass, 'L4', 'deploy uses L4 attestations, never L2/L3 (architect finding #7)');
+  } finally { h.cleanup(); }
+});
+
+test('regression: the deploy package never enters GET /approvals, deciding it never calls onDecision (REQ-6.1/6.2, architect finding #1)', () => {
+  const h = deployHarness();
+  try {
+    h.setState('PENDING_APPROVAL');
+    h.setApproval(deployPkg());
+    const list = handleHumanRequest(httpReq({ path: '/approvals', headers: auth() }), h.d);
+    const ids = (list.body as ApprovalPackage[]).map((p) => p.id);
+    assert.ok(!ids.includes('deploy-T-1'), 'the deploy package is invisible to the task-approvals list');
+
+    const body = JSON.stringify({ decision: 'approve', attestations: deployPkg().attestations });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body }), h.d);
+    assert.equal(r.status, 200);
+    assert.deepEqual(h.decisions, [], 'deploy decision never routes through onDecision');
+    assert.equal(h.log.all({ type: 'APPROVAL_RECORDED' }).length, 0, 'deploy decision is DEPLOY_DECISION, never APPROVAL_RECORDED');
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/decision -> 501 when deploy is not composed', () => {
+  const h = deps();
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body: '{}' }), h.d);
+    assert.equal(r.status, 501);
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/decision -> 404 when no deploy package is pending (REQ-6.6)', () => {
+  const h = deployHarness();
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body: '{}' }), h.d);
+    assert.equal(r.status, 404);
+    assert.deepEqual(h.calls, []);
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/decision approve with incomplete attestations -> 400, callback never fires (REQ-6.5)', () => {
+  const h = deployHarness();
+  try {
+    h.setApproval(deployPkg());
+    const body = JSON.stringify({ decision: 'approve', attestations: ['I reviewed the diff'] });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body }), h.d);
+    assert.equal(r.status, 400);
+    assert.deepEqual(h.calls, []);
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/decision approve with complete attestations -> DEPLOY_DECISION event + onDeployDecision (REQ-6.4)', () => {
+  const h = deployHarness();
+  try {
+    h.setApproval(deployPkg());
+    const body = JSON.stringify({ decision: 'approve', attestations: deployPkg().attestations });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body }), h.d);
+    assert.equal(r.status, 200);
+    assert.deepEqual(h.calls, ['decision:approve']);
+    const event = h.log.all({ type: 'DEPLOY_DECISION' }).at(-1);
+    assert.equal(event?.payload['decision'], 'approve');
+    assert.equal(event?.payload['approvalId'], 'deploy-T-1');
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/decision reject -> DEPLOY_DECISION{decision:reject} + onDeployDecision, no attestation check (REQ-6.7)', () => {
+  const h = deployHarness();
+  try {
+    h.setApproval(deployPkg());
+    const body = JSON.stringify({ decision: 'reject' });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body }), h.d);
+    assert.equal(r.status, 200);
+    assert.deepEqual(h.calls, ['decision:reject']);
+    assert.equal(h.log.all({ type: 'DEPLOY_DECISION' }).at(-1)?.payload['decision'], 'reject');
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/rollback -> 501 when deploy is not composed', () => {
+  const h = deps();
+  try {
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/rollback', headers: auth() }), h.d);
+    assert.equal(r.status, 501);
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/rollback outside EXPANDED -> 409, callback never fires (REQ-6.9)', () => {
+  const h = deployHarness();
+  try {
+    for (const s of [null, 'CANARY', 'OBSERVING', 'ROLLED_BACK'] as const) {
+      h.setState(s);
+      const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/rollback', headers: auth() }), h.d);
+      assert.equal(r.status, 409, `rollback refused in state ${String(s)}`);
+    }
+    assert.deepEqual(h.calls, [], 'onDeployRollback never called outside EXPANDED');
+  } finally { h.cleanup(); }
+});
+
+test('POST /deploy/rollback at EXPANDED -> 200, runs the same rollback callback (REQ-6.8)', () => {
+  const h = deployHarness();
+  try {
+    h.setState('EXPANDED');
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/rollback', headers: auth() }), h.d);
+    assert.equal(r.status, 200);
+    assert.deepEqual(h.calls, ['rollback']);
   } finally { h.cleanup(); }
 });
 

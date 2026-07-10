@@ -1,0 +1,18 @@
+# Phase-4 task-12 LIVE pass fixture (REQ-25.4): reuses the Phase-1 calibration
+# objective (auto-merges L1, same precedent as fixture-goal-l0.yaml) but adds a
+# deploy: section whose single observe probe is forced to fail (failure_threshold
+# 0 < probes 1), exercising a real canary -> rollback path with root-cause
+# evidence. canary/expand commands never fail; rollback always succeeds -> a
+# clean ROLLED_BACK, not an escalation.
+goal: { id: CALIB-DEPLOY, title: Calibration fixture (deploy), objective: "edit src/impl.txt so the tests pass" }
+acceptance_criteria:
+  - { id: AC-1, description: "src/impl.txt contains correct", verification: "sh run-tests.sh", golden: true }
+budget: { max_iterations_per_task: 4, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
+approval_policy: { require_human_approval: [auth_policy_change] }
+risk: L1
+deploy:
+  canary_cmd: "exit 0"
+  observe_cmd: "exit 1"
+  expand_cmd: "exit 0"
+  rollback_cmd: "exit 0"
+  observe: { probes: 1, failure_threshold: 0, interval_ms: 500 }

@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 
 import type { Clock } from '../types.ts';
 
-export type GovernanceKind = 'policy_change' | 'flaky_quarantine';
+export type GovernanceKind = 'policy_change' | 'flaky_quarantine' | 'lesson_promote';
 export type DecidedBy = 'human' | 'ci-fixture';
 
 /** REQ-9.1 policy inputs, in a fixed order. A file absent from the dir hashes as a
@@ -46,6 +46,8 @@ export interface GovernanceProposal {
   afterHash: string;
   rationale: string;
   taskId?: string;
+  /** `lesson_promote` only — `taskId` alone cannot identify which lesson file to move. */
+  lessonId?: string;
 }
 
 interface GovernanceProposedRecord extends GovernanceProposal {
@@ -63,6 +65,7 @@ export interface GovernanceChangeRecord {
   rationale: string;
   decidedBy: DecidedBy;
   taskId?: string;
+  lessonId?: string;
 }
 
 export type GovernanceRecord = GovernanceProposedRecord | GovernanceChangeRecord;
@@ -171,6 +174,30 @@ export function ensureGovernanceApproved(input: EnsureInput): EnsureResult {
   return { ok: false, reason: 'policy_unapproved', proposal, approveCommand: `platform governance approve ${id}` };
 }
 
+/** REQ-11.1: a proposed lesson becomes a `lesson_promote` proposal — same idempotent shape as flaky_quarantine, never auto-approved. */
+export function proposeLessonPromotion(input: {
+  logPath: string;
+  lessonId: string;
+  clock: Clock;
+  rationale?: string;
+}): GovernanceProposal {
+  const afterHash = `lesson:${input.lessonId}`;
+  const id = proposalId('lesson_promote', null, afterHash, input.lessonId);
+  const proposal: GovernanceProposal = {
+    id,
+    kind: 'lesson_promote',
+    beforeHash: null,
+    afterHash,
+    rationale: input.rationale ?? `lesson ${input.lessonId} proposed for promotion`,
+    lessonId: input.lessonId,
+  };
+  const records = readGovernanceLog(input.logPath);
+  if (!records.some((r) => r.type === 'GOVERNANCE_PROPOSED' && r.id === id)) {
+    appendRecord(input.logPath, { type: 'GOVERNANCE_PROPOSED', ts: nowIso(input.clock), ...proposal });
+  }
+  return proposal;
+}
+
 /** REQ-9.5: a flakySuspect gate result becomes a proposal — quarantine NEVER auto-fires. */
 export function proposeFlakyQuarantine(input: {
   logPath: string;
@@ -219,24 +246,31 @@ export function approveProposal(input: {
     rationale: proposal.rationale,
     decidedBy: input.decidedBy,
     ...(proposal.taskId !== undefined ? { taskId: proposal.taskId } : {}),
+    ...(proposal.lessonId !== undefined ? { lessonId: proposal.lessonId } : {}),
   };
   appendRecord(input.logPath, change);
   return { ok: true, change };
 }
 
 /**
- * REQ-9.4 by-kind approval: `policy_change` is append-only (never fires a transition);
- * `flaky_quarantine` additionally fires the quarantine transition for its taskId. The
- * transition itself is a composition callback (the machine + live run wiring is Task 5).
+ * REQ-9.4/11.2 by-kind approval: `policy_change` is append-only (never fires a
+ * transition); `flaky_quarantine` fires the quarantine transition for its taskId;
+ * `lesson_promote` moves the lesson file pending/ -> approved/ + LESSON_APPROVED.
+ * Both transitions are composition callbacks (the machine/file move + live run
+ * wiring live in console/backend). `promoteLesson` is optional so a caller that
+ * predates the lessons pipeline (existing tests) keeps working unchanged.
  */
 export function applyGovernanceApproval(
   input: { logPath: string; id: string; clock: Clock },
-  hooks: { fireQuarantine(taskId: string): void },
+  hooks: { fireQuarantine(taskId: string): void; promoteLesson?(lessonId: string): void },
 ): { ok: true; kind: GovernanceKind } | { ok: false; reason: 'no_such_proposal' } {
   const res = approveProposal({ logPath: input.logPath, id: input.id, clock: input.clock, decidedBy: 'human' });
   if (!res.ok) return res;
   if (res.change.kind === 'flaky_quarantine' && res.change.taskId !== undefined) {
     hooks.fireQuarantine(res.change.taskId);
+  }
+  if (res.change.kind === 'lesson_promote' && res.change.lessonId !== undefined) {
+    hooks.promoteLesson?.(res.change.lessonId);
   }
   return { ok: true, kind: res.change.kind };
 }

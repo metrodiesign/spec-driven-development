@@ -7,6 +7,11 @@
 // Phase 2 (REQ-18.1): the run now starts a live Human Plane server (steering/kill/
 // governance wired) and takes an injected Clock; a governance-approved deferred
 // quarantine takes effect on load (REQ-9.5).
+//
+// Phase 4 (REQ-1/2/3): the approval-package tests below drive the SAME live Human
+// Plane server over real HTTP (the discovery file at persistDir/human-plane.json),
+// concurrently with the in-flight runSupervisedLoop promise — proving the actual
+// wire contract a real F-Loop client uses, not a hand-rolled stub.
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -15,11 +20,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { runSupervisedLoop, wrapRouterForShadow } from './loop-run.ts';
-import { FakeAdapter, type RegisteredAdapter, type Registry, type Router } from 'aal';
+import { createDispatcher, FakeAdapter, type FusionProfile, type RegisteredAdapter, type Registry, type Router } from 'aal';
 import {
   approveProposal,
+  listPendingProposals,
   openEventLog,
   proposeFlakyQuarantine,
+  readGovernanceLog,
   seedFixtureSnapshot,
   type EventLog,
   type EventType,
@@ -38,6 +45,101 @@ const CONTRACT: TaskContract = {
 
 const clock = { now: () => 1_000_000 };
 
+// Deploy commands run through the REAL sandboxed executor (RUN_COMMAND), same
+// requirement as core/src/deploy/stage.test.ts (D-003).
+const darwinOnly = { skip: process.platform !== 'darwin' ? 'darwin-only RUN_COMMAND sandbox (D-003)' : false };
+
+interface ApprovalPackageJSON {
+  id: string;
+  taskId: string;
+  riskClass: string;
+  goalExcerpt: string;
+  acIds: string[];
+  diffRef: string;
+  evidence: { gateReports: string[]; worktreeHash: string };
+  attestations: string[];
+}
+
+/** Poll `fn` until it returns non-null, or throw after `timeoutMs` (default 5s). */
+async function waitFor<T>(fn: () => Promise<T | null> | T | null, timeoutMs = 5000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v !== null) return v;
+    if (Date.now() >= deadline) throw new Error('waitFor: timed out');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** Poll persistDir/human-plane.json for a live (non-tombstoned) discovery record. */
+function waitForDiscovery(persistDir: string): Promise<{ url: string; token: string }> {
+  return waitFor(() => {
+    let meta: { url?: unknown; token?: unknown; tombstoned?: unknown };
+    try {
+      meta = JSON.parse(readFileSync(join(persistDir, 'human-plane.json'), 'utf8')) as typeof meta;
+    } catch {
+      return null;
+    }
+    return meta.tombstoned === true || typeof meta.url !== 'string' || typeof meta.token !== 'string'
+      ? null
+      : { url: meta.url, token: meta.token };
+  });
+}
+
+async function fetchApprovals(url: string, token: string): Promise<ApprovalPackageJSON[]> {
+  const res = await fetch(`${url}/approvals`, { headers: { authorization: `Bearer ${token}` } });
+  return (await res.json()) as ApprovalPackageJSON[];
+}
+
+/** Poll GET /approvals until a package is pending, then return it. */
+function waitForApprovalPackage(url: string, token: string): Promise<ApprovalPackageJSON> {
+  return waitFor(async () => {
+    const list = await fetchApprovals(url, token);
+    return list[0] ?? null;
+  });
+}
+
+function decide(url: string, token: string, id: string, decision: 'approve' | 'reject', attestations: string[] = []): Promise<number> {
+  return fetch(`${url}/approvals/${id}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ decision, attestations }),
+  }).then((res) => res.status);
+}
+
+interface DeployStatusJSON {
+  state: string | null;
+  approval: ApprovalPackageJSON | null;
+}
+
+function fetchDeploy(url: string, token: string): Promise<DeployStatusJSON> {
+  return fetch(`${url}/deploy`, { headers: { authorization: `Bearer ${token}` } }).then(
+    (res) => res.json() as Promise<DeployStatusJSON>,
+  );
+}
+
+/** Poll GET /deploy until `state` matches `want`, then return the full status. */
+function waitForDeployState(url: string, token: string, want: string): Promise<DeployStatusJSON> {
+  return waitFor(async () => {
+    const s = await fetchDeploy(url, token);
+    return s.state === want ? s : null;
+  });
+}
+
+function decideDeploy(url: string, token: string, decision: 'approve' | 'reject', attestations: string[] = []): Promise<number> {
+  return fetch(`${url}/deploy/decision`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ decision, attestations }),
+  }).then((res) => res.status);
+}
+
+function rollbackDeploy(url: string, token: string): Promise<number> {
+  return fetch(`${url}/deploy/rollback`, { method: 'POST', headers: { authorization: `Bearer ${token}` } }).then(
+    (res) => res.status,
+  );
+}
+
 test('supervised loop with the FakeAdapter reaches REVIEWING; calibration computed (harness math only)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
@@ -46,8 +148,13 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
       persistDir,
+      // L2 (no declared risk) never auto-merges; a short window resolves the
+      // resulting approval package to ESCALATED (REQ-3.4) instead of the default
+      // 30-minute wait — REVIEWING itself, this test's actual subject, is asserted
+      // below from the event log regardless of what happens to it afterward.
+      approval: { timeoutMs: 100 },
     });
-    assert.equal(out.finalState, 'REVIEWING');
+    assert.equal(out.finalState, 'ESCALATED', 'nothing decides the resulting package here — REQ-3.4 timeout');
     assert.equal(out.calibration.n, 1);
     assert.equal(out.calibration.heldOutPassRate, 1, 'held-out (golden) passed — SCRIPTED, not a §12 metric');
     assert.equal(out.calibration.reproducibility, 1);
@@ -56,6 +163,12 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
     // single registered adapter can never diverge from its own live choice.
     const log = openEventLog(join(persistDir, 'events.db'), clock);
     try {
+      assert.ok(
+        log.all({ type: 'TASK_STATE' }).some((e) => e.payload['state'] === 'REVIEWING'),
+        'the loop reached REVIEWING',
+      );
+      assert.equal(log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).length, 1, 'REQ-2: a real package was built');
+      assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'approval_timeout', 'REQ-3.4');
       const shadowRoutes = log.all({ type: 'SHADOW_ROUTE' });
       assert.ok(shadowRoutes.length >= 1, 'each live route decision records a SHADOW_ROUTE event');
       assert.equal(shadowRoutes[0]?.payload['live'], shadowRoutes[0]?.payload['wouldChoose']);
@@ -75,9 +188,156 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
   }
 });
 
+// --- outcomeRouting mode wiring (REQ-14.3) — the reorder/epsilon math itself is
+// unit-tested in aal/src/router.test.ts; these are composition-level wiring
+// smoke tests over the same single-adapter fixture. ---
+
+test('outcomeRouting mode off suppresses SHADOW_ROUTE entirely (REQ-14.3)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      outcomeRouting: { mode: 'off', epsilon: 0 },
+    });
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'SHADOW_ROUTE' }).length, 0, 'mode off -> plain router, no shadow recording either');
+      assert.equal(log.all({ type: 'OUTCOME_ROUTE' }).length, 0);
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('outcomeRouting mode active wraps shadow OUTSIDE the outcome wrapper — both record (REQ-14.3/15.4)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      outcomeRouting: { mode: 'active', epsilon: 0 },
+    });
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      const outcomeRoutes = log.all({ type: 'OUTCOME_ROUTE' });
+      assert.ok(outcomeRoutes.length >= 1, 'active mode reorders + records OUTCOME_ROUTE');
+      assert.equal(outcomeRoutes[0]?.payload['basis'], 'insufficient_data', 'a single fresh adapter has no outcome history yet');
+      assert.ok(log.all({ type: 'SHADOW_ROUTE' }).length >= 1, 'shadow still observes the (already-reordered) live choice');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+// --- Planner-role fusion auto-routing (REQ-16) — runPlannerFusion itself is
+// unit-tested in fusion.test.ts (resolution, PLAN_SCHEMA validation, PLAN_RESOLVED
+// shape); these are composition-level wiring smoke tests proving the trigger
+// contract (REQ-16.3) over the SAME single-adapter fixture the outcomeRouting
+// tests above use — self-diversity (not cross_lineage) so the one registered
+// FakeAdapter can seat a full 2-candidate panel. ---
+
+const PLAN_PROFILE: FusionProfile = {
+  artifact: 'plan',
+  panel: { size: 2, diversity: { kind: 'self', seeds: [1, 2] } },
+  resolve: 'deliberate_synthesis',
+  budgetCapCostUnits: 40,
+  estimateCostUnitsPerCandidate: 8,
+};
+
+test('planning enabled+triggered dispatches role planner BEFORE the task loop -> PLAN_RESOLVED; a resolved plan is advisory and never changes the task loop\'s outcome (REQ-16.2/16.5)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    const result = await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      planning: { enabled: true, plannerRoleTrigger: true, profile: PLAN_PROFILE, dispatcher: createDispatcher({ buckets: new Map(), maxParallel: 2 }) },
+    });
+    // Same fixture/assertion as the plain-run test above (no autoMerge, L2 default
+    // risk, 100ms approval window) — a resolved plan changes NOTHING about this.
+    assert.equal(result.finalState, 'ESCALATED', 'REQ-3.4 timeout, byte-identical to the no-planning run');
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      const resolved = log.all({ type: 'PLAN_RESOLVED' });
+      assert.equal(resolved.length, 1, 'dispatched exactly once');
+      assert.equal(resolved[0]?.payload['winner'], true);
+      assert.equal(typeof resolved[0]?.payload['panelSize'], 'number');
+      assert.equal(typeof resolved[0]?.payload['costUnits'], 'number');
+      // REQ-16.2: BEFORE the task loop — its seq precedes the loop's first CONTEXT_BUILT.
+      const firstContextBuilt = log.all({ type: 'CONTEXT_BUILT' })[0];
+      assert.ok(firstContextBuilt !== undefined, 'the task loop still ran');
+      assert.ok((resolved[0]?.seq ?? Infinity) < (firstContextBuilt?.seq ?? -1), 'planner-fusion resolved before the task loop built its first context');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('planning never dispatches when EITHER axis is off, or the option is absent entirely (REQ-16.3: a test SHALL prove both offs)', async () => {
+  const cases: ({ enabled: boolean; plannerRoleTrigger: boolean } | undefined)[] = [
+    undefined, // absent entirely — Phase-3 parity, the default for every other test in this file
+    { enabled: false, plannerRoleTrigger: true }, // composition option off
+    { enabled: true, plannerRoleTrigger: false }, // governance policy flag off
+  ];
+  for (const planning of cases) {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+    try {
+      await runSupervisedLoop({
+        contract: CONTRACT,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        approval: { timeoutMs: 100 },
+        ...(planning !== undefined
+          ? { planning: { ...planning, profile: PLAN_PROFILE, dispatcher: createDispatcher({ buckets: new Map(), maxParallel: 2 }) } }
+          : {}),
+      });
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(
+          log.all({ type: 'PLAN_RESOLVED' }).length,
+          0,
+          `planning=${JSON.stringify(planning)} must never dispatch the planner`,
+        );
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  }
+});
+
 // An L1 task (declared risk in the frozen contract) with a golden-backed AC — the
 // input the auto-merge gate needs to fire (REQ-7.2).
 const L1_CONTRACT: TaskContract = { ...CONTRACT, raw: { risk: 'L1' } };
+
+// Deploy config whose commands always succeed — reaches EXPANDED (REQ-6). Tiny
+// probes/interval so the composition tests below stay fast.
+const DEPLOY_OK: NonNullable<TaskContract['deploy']> = {
+  canaryCmd: 'exit 0',
+  observeCmd: 'exit 0',
+  expandCmd: 'exit 0',
+  rollbackCmd: 'exit 0',
+  observe: { probes: 1, failureThreshold: 0, intervalMs: 5 },
+};
+const L1_CONTRACT_DEPLOY: TaskContract = { ...L1_CONTRACT, deploy: DEPLOY_OK };
 
 test('E2E (REQ-18.4): an L1 task auto-merges + the sampled audit reproduces -> COMPLETED', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-e2e-'));
@@ -104,6 +364,7 @@ test('E2E (REQ-18.4): an L1 task auto-merges + the sampled audit reproduces -> C
       assert.equal(result?.payload['sampled'], true);
       assert.equal(result?.payload['reproduced'], true, 'the clean-checkout T1 reproduced the loop T1');
       assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).length, 0, 'no human approval on the auto path');
+      assert.equal(log.all({ type: 'DEPLOY_STATE' }).length, 0, 'no deploy: configured -> the deploy gate never fires (REQ-6.3)');
     } finally {
       log.close();
     }
@@ -147,21 +408,379 @@ test(
   },
 );
 
-test('a non-golden / no-risk task routes to the approval package — finalState stays REVIEWING (REQ-7.6/7.7)', async () => {
+test(
+  'E2E (REQ-10/11/12): a confirmed hypothesis becomes a pending lesson post-run; offline governance approval + the NEXT run\'s reconciler inject it',
+  darwinOnly,
+  async () => {
+    const persistDir1 = mkdtempSync(join(tmpdir(), 'loop-lesson-1-'));
+    const persistDir2 = mkdtempSync(join(tmpdir(), 'loop-lesson-2-'));
+    const lessonsDir = mkdtempSync(join(tmpdir(), 'loop-lesson-dir-'));
+    const governanceLogPath = join(persistDir1, 'governance.jsonl');
+    try {
+      // Run 1: the SAME repair fixture as the test above confirms a hypothesis.
+      // REQ-10.1: post-run, folded into a pending lesson + a lesson_promote proposal.
+      const out1 = await runSupervisedLoop({
+        contract: L1_CONTRACT,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', behavior: 'repairable', putContent: put }),
+        clock,
+        persistDir: persistDir1,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        governanceLogPath,
+        lessons: { dir: lessonsDir },
+      });
+      assert.equal(out1.finalState, 'COMPLETED');
+      // REQ-24.1: no approved lesson exists yet at run 1's own injection point (it is
+      // PROPOSED post-run, from run 1's own log) -> zero injections this run.
+      assert.deepEqual(out1.lessonHitRate, { injectionCount: 0, hitRateProxy: 0 });
+      // REQ-24.3: never fabricated — this composition has no paired corpus to compute one from.
+      assert.deepEqual(out1.fusionUplift, { available: false });
+
+      const log1 = openEventLog(join(persistDir1, 'events.db'), clock);
+      let lessonId: string;
+      try {
+        const proposed = log1.all({ type: 'LESSON_PROPOSED' });
+        assert.equal(proposed.length, 1);
+        lessonId = String(proposed[0]?.payload['lessonId']);
+        assert.equal(proposed[0]?.payload['sourceRunId'], 'RUN-LIVE');
+      } finally {
+        log1.close();
+      }
+
+      const proposals = listPendingProposals(readGovernanceLog(governanceLogPath));
+      assert.equal(proposals.length, 1);
+      assert.equal(proposals[0]?.kind, 'lesson_promote');
+      assert.equal(proposals[0]?.lessonId, lessonId);
+
+      // "Approved via the CLI while no run is live" — REQ-11.3's offline case.
+      approveProposal({ logPath: governanceLogPath, id: proposals[0]?.id ?? '', clock, decidedBy: 'human' });
+
+      // Run 2: a plain (non-repairing) run against the SAME lessons/governance state.
+      // REQ-11.3: the reconciler moves pending/ -> approved/ on load. REQ-12: the
+      // approved lesson is then injected into this run's own context bundle.
+      const out2 = await runSupervisedLoop({
+        contract: CONTRACT,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir: persistDir2,
+        approval: { timeoutMs: 100 },
+        governanceLogPath,
+        lessons: { dir: lessonsDir },
+      });
+      assert.equal(out2.finalState, 'ESCALATED', 'REQ-3.4 timeout on the resulting L2 approval package — not this test\'s subject');
+      // REQ-24.1: the reconciled lesson WAS injected into run 2's own T-1 — which DID
+      // reach REVIEWING (a real, already-logged transition) before the approval
+      // package's timeout later escalated it. The proxy is a point-in-time fact
+      // ("reached REVIEWING", per REQ-24.1's literal text), not "eventually
+      // completed" — so this counts as a hit despite the run's finalState above.
+      assert.deepEqual(out2.lessonHitRate, { injectionCount: 1, hitRateProxy: 1 });
+      // REQ-24.2: a real (if tiny) shadowProven snapshot rides along — evidence only,
+      // never a gate (INV-16); n is far below the 20-sample default so honestly unproven.
+      assert.ok(out2.shadowProven.n >= 1, 'the default shadow mode recorded at least one round');
+      assert.equal(out2.shadowProven.proven, false, 'small-n fixture run never claims activation');
+      assert.deepEqual(out2.fusionUplift, { available: false });
+
+      const log2 = openEventLog(join(persistDir2, 'events.db'), clock);
+      try {
+        const approved = log2.all({ type: 'LESSON_APPROVED' });
+        assert.equal(approved.length, 1, 'the offline reconciler moved + logged it on THIS run\'s load');
+        assert.equal(approved[0]?.payload['lessonId'], lessonId);
+
+        const injected = log2.all({ type: 'LESSON_INJECTED' });
+        assert.ok(injected.length >= 1, 'the now-approved lesson was injected into at least one round');
+        assert.deepEqual(injected[0]?.payload['ids'], [lessonId]);
+      } finally {
+        log2.close();
+      }
+    } finally {
+      rmSync(persistDir1, { recursive: true, force: true });
+      rmSync(persistDir2, { recursive: true, force: true });
+      rmSync(lessonsDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test('a non-golden / no-risk task builds a real approval package with the core-computed fields (REQ-2.1/2.2/2.4/2.5, REQ-7.6/7.7)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-appkg-'));
   try {
-    // CONTRACT has no `risk` -> defaults to L2 -> approval package, not auto-merge.
+    // CONTRACT has no `risk` -> defaults to L2 -> the approval package, not auto-merge.
+    const resultPromise = runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 5000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    const pkg = await waitForApprovalPackage(url, token); // REQ-2.5: listed at GET /approvals while pending
+    assert.equal(pkg.taskId, 'T-1');
+    assert.equal(pkg.riskClass, 'L2', 'no declared risk defaults to L2 (REQ-7.6) — carried as effectiveRisk (REQ-2.1)');
+    assert.equal(pkg.goalExcerpt, CONTRACT.goal.objective);
+    assert.deepEqual(pkg.acIds, ['AC-1']);
+    assert.ok(pkg.diffRef.length > 0, 'the task diff was evidence-stored (REQ-2.1)');
+    assert.ok(pkg.evidence.worktreeHash.length > 0);
+    assert.ok(pkg.evidence.gateReports.length > 0);
+
+    const status = await decide(url, token, pkg.id, 'approve', pkg.attestations);
+    assert.equal(status, 200, 'attestations generated from riskClass satisfy the completeness check');
+
+    const out = await resultPromise;
+    assert.equal(out.finalState, 'COMPLETED', 'REQ-3.2: approve -> APPROVED -> runApprovedMerge -> COMPLETED');
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'AUTO_APPROVED' }).length, 0, 'a human decision, never a policy one (REQ-1.3)');
+      assert.equal(log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).length, 1);
+      assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).at(-1)?.payload['decision'], 'approve');
+      assert.ok(
+        log.all({ type: 'TASK_STATE' }).some((e) => e.payload['state'] === 'APPROVED' && e.payload['trigger'] === 'approve'),
+        'onDecision logs the HTTP decision string as trigger, not the state-machine trigger name',
+      );
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('a human reject ends the run CHANGES_REQUESTED — terminal, no retry (REQ-3.3)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-reject-'));
+  try {
+    const resultPromise = runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 5000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    const pkg = await waitForApprovalPackage(url, token);
+    const status = await decide(url, token, pkg.id, 'reject');
+    assert.equal(status, 200);
+
+    const out = await resultPromise;
+    assert.equal(out.finalState, 'CHANGES_REQUESTED');
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).at(-1)?.payload['decision'], 'reject');
+      assert.equal(log.all({ type: 'AUTO_APPROVED' }).length, 0);
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('kill while a package is pending ends the wait -> CANCELLED, the same terminal a mid-loop kill reaches (REQ-3.6)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-killpkg-'));
+  try {
+    const resultPromise = runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 5000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    await waitForApprovalPackage(url, token);
+    const res = await fetch(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
+
+    const out = await resultPromise;
+    assert.equal(out.finalState, 'CANCELLED');
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+// --- Deploy gate (REQ-6): built ALWAYS post-COMPLETED when deploy: is configured,
+// on a SEPARATE surface from the task approvals Map/onDecision (architect finding
+// #1) — guard-path unit coverage (400/404/409/501) lives in core/src/human/api.test.ts;
+// these prove the real composition wiring end-to-end. ---
+
+test(
+  'deploy approval package built ALWAYS after COMPLETED; approve -> EXPANDED; never touches the task Map/onDecision (REQ-6.1/6.2/6.4/6.12)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-approve-'));
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+        deploy: { expandedWindowMs: 50 },
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      assert.equal(pending.approval?.id, 'deploy-T-1');
+      assert.equal(pending.approval?.riskClass, 'L4', 'architect finding #7: deploy uses L4 attestations');
+
+      // Regression (architect finding #1): the deploy package never enters GET /approvals.
+      const taskApprovals = await fetchApprovals(url, token);
+      assert.ok(!taskApprovals.some((p) => p.id === 'deploy-T-1'));
+
+      const decideStatus = await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      assert.equal(decideStatus, 200);
+
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED', 'deploy outcome never changes the task finalState');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.deepEqual(
+          log.all({ type: 'DEPLOY_STATE' }).map((e) => e.payload['state']),
+          ['CANARY', 'OBSERVING', 'EXPANDED'],
+        );
+        assert.equal(log.all({ type: 'DEPLOY_DECISION' }).at(-1)?.payload['decision'], 'approve');
+        assert.equal(log.all({ type: 'DEPLOY_WINDOW_CLOSED' }).length, 1, 'REQ-6.12: window closes after EXPANDED');
+        assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).length, 0, 'a deploy decision is never a task APPROVAL_RECORDED');
+        assert.equal(
+          log.all({ type: 'TASK_STATE' }).filter((e) => e.payload['trigger'] === 'approve').length,
+          0,
+          'deploy approve never fires a task transition (architect finding #1)',
+        );
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'deploy reject -> DEPLOY_DECISION{decision:reject}, stage skipped, task stays COMPLETED (REQ-6.7)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-reject-'));
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      const status = await decideDeploy(url, token, 'reject');
+      assert.equal(status, 200);
+
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(log.all({ type: 'DEPLOY_STATE' }).length, 0, 'a rejected deploy never starts the stage');
+        assert.equal(log.all({ type: 'DEPLOY_DECISION' }).at(-1)?.payload['decision'], 'reject');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'deploy decision timeout -> DEPLOY_DECISION{decision:timeout}, stage skipped, task stays COMPLETED (REQ-6.11)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-timeout-'));
+    try {
+      const out = await runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 50 },
+      });
+      assert.equal(out.finalState, 'COMPLETED', 'a skipped deploy never touches finalState');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(log.all({ type: 'DEPLOY_STATE' }).length, 0, 'a timed-out deploy decision never starts the stage');
+        assert.equal(log.all({ type: 'DEPLOY_DECISION' }).at(-1)?.payload['decision'], 'timeout');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'manual rollback at EXPANDED runs rollback_cmd -> ROLLED_BACK, audited (REQ-6.8/6.10)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-rollback-'));
+    const audited: Record<string, unknown>[] = [];
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+        deploy: { expandedWindowMs: 500 },
+        auditSink: (entry) => audited.push(entry),
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      await waitForDeployState(url, token, 'EXPANDED');
+
+      const status = await rollbackDeploy(url, token);
+      assert.equal(status, 200);
+
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED', 'a deploy rollback never touches the task finalState');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        const states = log.all({ type: 'DEPLOY_STATE' });
+        assert.deepEqual(
+          states.map((e) => e.payload['state']),
+          ['CANARY', 'OBSERVING', 'EXPANDED', 'ROLLING_BACK', 'ROLLED_BACK'],
+        );
+        assert.equal(states.find((e) => e.payload['state'] === 'ROLLING_BACK')?.payload['trigger'], 'manual_rollback');
+        assert.ok(audited.some((e) => e['event'] === 'deploy_manual_rollback'), 'REQ-6.10: manual rollback audited');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test('a diff over the budget escalates split_required — no package built (REQ-2.3)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-splitreq-'));
+  try {
     const out = await runSupervisedLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
       persistDir,
       autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { maxDiffBudget: 0 }, // any non-empty diff exceeds a budget of 0
     });
-    assert.equal(out.finalState, 'REVIEWING', 'L2 (default) never auto-merges');
+    assert.equal(out.finalState, 'ESCALATED');
     const log = openEventLog(join(persistDir, 'events.db'), clock);
     try {
-      assert.equal(log.all({ type: 'AUTO_APPROVED' }).length, 0);
+      assert.equal(log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).length, 0, 'over budget -> no package (REQ-2.3)');
+      assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'split_required');
     } finally {
       log.close();
     }
@@ -357,4 +976,35 @@ test('outcome stats accumulate across rounds sharing a log — a proven adapter 
   assert.equal(latest?.payload['live'], 'b@v1', 'live choice is still eligible[0] — the recorder never influences it');
   assert.equal(latest?.payload['wouldChoose'], 'a@v1', 'a has the only proven reviewing-reached history — a real divergence');
   assert.equal(latest?.payload['basis'], 'highest_reviewing_rate');
+});
+
+test('wrapRouterForShadow reuses an injected round stats cache instead of independently recomputing (PR #50 review)', () => {
+  // The log itself has NO history for 'a' — an independent computeShadowOutcomeStats(log.all())
+  // would say insufficient_data. The injected cache claims 'a' is already proven instead; if the
+  // wrapper truly reuses it (rather than recomputing its own fold from the log), the recorded
+  // basis must reflect THIS injected verdict, not the empty log's.
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')];
+  const log = fakeLog();
+  let calls = 0;
+  const stats = {
+    get: (): Record<string, { attempts: number; reviewingReached: number }> => {
+      calls += 1;
+      return { 'a@v1': { attempts: 5, reviewingReached: 5 } };
+    },
+    invalidate: (): void => undefined,
+  };
+  const wrapped = wrapRouterForShadow(fakeRouter(adapters), {
+    registry: fakeRegistry(adapters),
+    log,
+    runId: 'RUN-1',
+    taskId: 'T-1',
+    stats,
+  });
+  wrapped.eligibleAdapters('implementer');
+  assert.equal(calls, 1, 'the shared cache was actually used');
+  assert.equal(
+    log.appended[0]?.payload['basis'],
+    'highest_reviewing_rate',
+    'reflects the injected stats, not an independent (empty) log recompute',
+  );
 });

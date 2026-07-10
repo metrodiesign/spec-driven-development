@@ -104,19 +104,21 @@ export function decideAutoApprove(input: AutoApproveInput): AutoApproveDecision 
   return decide(true, 'auto_approved');
 }
 
-export interface RunAutoMergeOptions {
+export interface ApprovedMergeOptions {
   runId: string;
   taskId: string;
-  /** State on entry — REVIEWING in a real run (asserted). */
+  /** State on entry: REVIEWING for `runAutoMerge` (asserted); APPROVED for
+   * `runApprovedMerge` (post `auto_approved` or `human_approved` — REQ-1.1). */
   state: TaskState;
+  /** Which basis got this call here (REQ-1.2/1.3) — recorded on the queue's
+   * MERGE_ENQUEUED audit trail when `queue` is supplied; irrelevant otherwise. */
+  approvalBasis: 'auto_approved' | 'human_approved';
   /** The fixture/target repo root (its .git holds both branches). */
   repoDir: string;
   /** Branch carrying the task's work, e.g. `task/<taskId>`. */
   taskBranch: string;
   /** The branch to merge into, e.g. `main`. */
   mainBranch: string;
-  /** Inputs for the auto-approve gate (riskClass/acceptanceCriteria from the frozen contract). */
-  decision: Omit<AutoApproveInput, 'diffPaths' | 'gatesGreen'> & { gatesGreen: boolean };
   /** The T1 report the loop produced before the merge — the audit must reproduce it (REQ-8.2/8.6). */
   originalReport: GateReport;
   /** Gate-ladder config path RELATIVE to the repo tree (present in the clean checkout). */
@@ -130,14 +132,28 @@ export interface RunAutoMergeOptions {
   queue?: MergeQueue;
 }
 
-export interface AutoMergeOutcome {
-  decision: 'auto_approve' | 'approval_package';
-  reason: AutoApproveReason;
+// approvalBasis is omitted here: runAutoMerge decides it (always 'auto_approved') when
+// it calls runApprovedMerge internally — a caller of runAutoMerge never chooses it.
+export interface RunAutoMergeOptions extends Omit<ApprovedMergeOptions, 'approvalBasis'> {
+  /** Inputs for the auto-approve gate (riskClass/acceptanceCriteria from the frozen contract). */
+  decision: Omit<AutoApproveInput, 'diffPaths' | 'gatesGreen'> & { gatesGreen: boolean };
+}
+
+/** Shared merge/audit continuation result — same shape whichever approval basis produced it. */
+export interface ApprovedMergeOutcome {
   finalState: TaskState;
   mergeCommit: string | null;
   sampled: boolean;
   /** null when not auto-merged or not sampled. */
   reproduced: boolean | null;
+}
+
+export interface AutoMergeOutcome extends ApprovedMergeOutcome {
+  decision: 'auto_approve' | 'approval_package';
+  reason: AutoApproveReason;
+  /** Risk after the dependency-manifest floor (REQ-7.6) — carried on the approval_package
+   * path too (REQ-2.1), so the composition root can build the package without recomputing it. */
+  effectiveRisk: RiskClass;
 }
 
 function git(cwd: string, ...args: string[]): { code: number; stdout: string; stderr: string } {
@@ -201,16 +217,6 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     return true;
   };
 
-  const escalate = (why: string, extra?: Record<string, unknown>): void => {
-    move('escalate');
-    opts.log.append({
-      runId: opts.runId,
-      taskId: opts.taskId,
-      type: 'ESCALATED',
-      payload: { why, ...extra },
-    });
-  };
-
   // Diff the task introduced against main (three-dot: merge-base..task), for the
   // dependency-manifest floor (REQ-7.6).
   const diffPaths = gitOut(opts.repoDir, 'diff', '--name-only', `${opts.mainBranch}...${opts.taskBranch}`)
@@ -219,11 +225,12 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
 
   const decision = decideAutoApprove({ ...opts.decision, diffPaths });
   if (!decision.autoApprove) {
-    // Phase-1 path: the human approval package. Left to the composition root; core
+    // The human approval package (REQ-2/3). Left to the composition root; core
     // records nothing here (no state change) — the loop routes to the package.
     return {
       decision: 'approval_package',
       reason: decision.reason,
+      effectiveRisk: decision.effectiveRisk,
       finalState: state,
       mergeCommit: null,
       sampled: false,
@@ -239,6 +246,70 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     type: 'AUTO_APPROVED',
     payload: { by: 'auto_merge_policy', riskClass: decision.effectiveRisk, reason: decision.reason },
   });
+
+  // Shared merge/audit engine (REQ-1.1) — identical continuation whether this state
+  // came from an auto-approval (here) or a human approval (runApprovedMerge called
+  // directly by the composition root).
+  const merged = await runApprovedMerge({
+    runId: opts.runId,
+    taskId: opts.taskId,
+    state,
+    approvalBasis: 'auto_approved',
+    repoDir: opts.repoDir,
+    taskBranch: opts.taskBranch,
+    mainBranch: opts.mainBranch,
+    originalReport: opts.originalReport,
+    gateConfigRelPath: opts.gateConfigRelPath,
+    auditSampleRate: opts.auditSampleRate,
+    log: opts.log,
+    evidence: opts.evidence,
+    clock: opts.clock,
+    ...(opts.queue !== undefined ? { queue: opts.queue } : {}),
+  });
+
+  return { decision: 'auto_approve', reason: decision.reason, effectiveRisk: decision.effectiveRisk, ...merged };
+}
+
+/**
+ * Merge continuation from state APPROVED (REQ-1.1): merge_queued -> merge (direct or
+ * T2-gated queue) -> deterministic sampling -> clean-checkout audit -> audited ->
+ * completed, or escalate on any failure. Shared by both approval bases (REQ-1.2/1.3) —
+ * this function never fires AUTO_APPROVED and never knows which basis got it here.
+ */
+export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<ApprovedMergeOutcome> {
+  let state: TaskState = opts.state;
+
+  const move = (trigger: Trigger): boolean => {
+    const result = transition(state, trigger);
+    if (!result.ok) {
+      opts.log.append({
+        runId: opts.runId,
+        taskId: opts.taskId,
+        type: 'ERROR',
+        payload: { reason: result.reason, detail: result.detail, from: state, trigger },
+      });
+      return false;
+    }
+    state = result.next;
+    opts.log.append({
+      runId: opts.runId,
+      taskId: opts.taskId,
+      type: 'TASK_STATE',
+      payload: { state, trigger },
+    });
+    return true;
+  };
+
+  const escalate = (why: string, extra?: Record<string, unknown>): void => {
+    move('escalate');
+    opts.log.append({
+      runId: opts.runId,
+      taskId: opts.taskId,
+      type: 'ESCALATED',
+      payload: { why, ...extra },
+    });
+  };
+
   move('merge_queued');
 
   let mergeCommit: string;
@@ -248,30 +319,16 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     const result = await opts.queue.process({
       taskId: opts.taskId,
       taskBranch: opts.taskBranch,
-      approvalBasis: 'auto_approved',
+      approvalBasis: opts.approvalBasis,
       originalReport: opts.originalReport,
     });
     if (result.outcome === 'merge_conflict') {
       escalate('merge_conflict', { taskBranch: opts.taskBranch });
-      return {
-        decision: 'auto_approve',
-        reason: decision.reason,
-        finalState: state,
-        mergeCommit: null,
-        sampled: false,
-        reproduced: null,
-      };
+      return { finalState: state, mergeCommit: null, sampled: false, reproduced: null };
     }
     if (result.outcome === 'rejected_t2') {
       escalate('t2_failed', { taskBranch: opts.taskBranch, attribution: result.attribution });
-      return {
-        decision: 'auto_approve',
-        reason: decision.reason,
-        finalState: state,
-        mergeCommit: null,
-        sampled: false,
-        reproduced: null,
-      };
+      return { finalState: state, mergeCommit: null, sampled: false, reproduced: null };
     }
     mergeCommit = result.mergeCommit as string;
   } else {
@@ -281,14 +338,7 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     if (merge.code !== 0) {
       git(opts.repoDir, 'merge', '--abort'); // no automatic resolution (REQ-7.5)
       escalate('merge_conflict', { taskBranch: opts.taskBranch });
-      return {
-        decision: 'auto_approve',
-        reason: decision.reason,
-        finalState: state,
-        mergeCommit: null,
-        sampled: false,
-        reproduced: null,
-      };
+      return { finalState: state, mergeCommit: null, sampled: false, reproduced: null };
     }
     mergeCommit = gitOut(opts.repoDir, 'rev-parse', 'HEAD');
   }
@@ -304,14 +354,7 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     });
     move('audited');
     move('completed');
-    return {
-      decision: 'auto_approve',
-      reason: decision.reason,
-      finalState: state,
-      mergeCommit,
-      sampled: false,
-      reproduced: null,
-    };
+    return { finalState: state, mergeCommit, sampled: false, reproduced: null };
   }
 
   opts.log.append({
@@ -356,26 +399,18 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
   if (!reproduced) {
     // Single escalate(audit_mismatch) whose handling reverts the merge commit as a
     // side effect — no separate roll_back transition on this path (REQ-8.3, AZ-5).
+    // The MergeQueue path only ever advances main via a plain `update-ref` in its OWN
+    // worktree (queue.ts) — it never checks out main in opts.repoDir — so opts.repoDir's
+    // working tree could still be sitting on the task branch here; check out main first
+    // so the revert always lands on the branch that was actually advanced (PR #50
+    // review; a no-op on the direct path, which already checked out main above).
+    git(opts.repoDir, 'checkout', '-q', opts.mainBranch);
     git(opts.repoDir, 'revert', '-m', '1', '--no-edit', mergeCommit);
     escalate('audit_mismatch', { mergeCommit });
-    return {
-      decision: 'auto_approve',
-      reason: decision.reason,
-      finalState: state,
-      mergeCommit,
-      sampled: true,
-      reproduced: false,
-    };
+    return { finalState: state, mergeCommit, sampled: true, reproduced: false };
   }
 
   move('audited');
   move('completed');
-  return {
-    decision: 'auto_approve',
-    reason: decision.reason,
-    finalState: state,
-    mergeCommit,
-    sampled: true,
-    reproduced: true,
-  };
+  return { finalState: state, mergeCommit, sampled: true, reproduced: true };
 }

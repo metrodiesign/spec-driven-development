@@ -17,6 +17,7 @@ import {
   listPendingProposals,
   pendingQuarantines,
   proposeFlakyQuarantine,
+  proposeLessonPromotion,
   readGovernanceLog,
   seedFixtureSnapshot,
   snapshotHash,
@@ -162,6 +163,33 @@ test('routing.json / fusion-profiles.json joining POLICY_FILES makes creating th
   }
 });
 
+test('adding/changing the outcomeRouting block in an already-approved routing.json requires re-approval (REQ-14.2)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    writeFileSync(join(dir, 'routing.json'), JSON.stringify({ maxSusceptibility: 0.5 }));
+    const initial = ensureGovernanceApproved({ policyDir: dir, logPath, clock });
+    if (initial.ok) throw new Error('unreachable');
+    approveProposal({ logPath, id: initial.proposal.id, clock, decidedBy: 'human' });
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, true);
+
+    // Adding the outcomeRouting block (REQ-14.1) is itself a routing.json byte
+    // change -> refuse until re-approved, same mechanism as any other policy edit.
+    writeFileSync(join(dir, 'routing.json'), JSON.stringify({ maxSusceptibility: 0.5, outcomeRouting: { mode: 'shadow', epsilon: 10, minSamples: 20, minDivergences: 1 } }));
+    const afterAdd = ensureGovernanceApproved({ policyDir: dir, logPath, clock });
+    assert.equal(afterAdd.ok, false, 'adding the outcomeRouting block requires re-approval');
+    if (afterAdd.ok) throw new Error('unreachable');
+
+    // Flipping mode shadow -> active (activation, REQ-14.3) is ALSO a byte change -> refuse again.
+    approveProposal({ logPath, id: afterAdd.proposal.id, clock, decidedBy: 'human' });
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, true);
+    writeFileSync(join(dir, 'routing.json'), JSON.stringify({ maxSusceptibility: 0.5, outcomeRouting: { mode: 'active', epsilon: 10, minSamples: 20, minDivergences: 1 } }));
+    assert.equal(ensureGovernanceApproved({ policyDir: dir, logPath, clock }).ok, false, 'shadow -> active activation requires re-approval too');
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('flakySuspect -> flaky_quarantine proposal, never auto; approval is required for quarantine (REQ-9.5)', () => {
   const dir = policyDir();
   const logPath = logPathIn(dir);
@@ -221,6 +249,74 @@ test('applyGovernanceApproval fires quarantine for flaky_quarantine, never for p
     const r2 = applyGovernanceApproval({ logPath, id: flaky.id, clock }, { fireQuarantine });
     assert.equal(r2.ok, true);
     assert.deepEqual(fired, ['T-3']);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('lesson_promote proposal carries lessonId through to the approved change record (REQ-11.1)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    const proposal = proposeLessonPromotion({ logPath, lessonId: 'lsn-abc123', clock });
+    assert.equal(proposal.kind, 'lesson_promote');
+    assert.equal(proposal.lessonId, 'lsn-abc123');
+
+    const approved = approveProposal({ logPath, id: proposal.id, clock, decidedBy: 'human' });
+    assert.equal(approved.ok, true);
+    if (!approved.ok) throw new Error('unreachable');
+    assert.equal(approved.change.kind, 'lesson_promote');
+    assert.equal(approved.change.lessonId, 'lsn-abc123');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('re-proposing the same lesson does not pile up duplicate proposals (idempotent, mirrors flaky_quarantine)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    proposeLessonPromotion({ logPath, lessonId: 'lsn-dup', clock });
+    proposeLessonPromotion({ logPath, lessonId: 'lsn-dup', clock });
+    const proposed = readGovernanceLog(logPath).filter((r) => r.type === 'GOVERNANCE_PROPOSED' && r.kind === 'lesson_promote');
+    assert.equal(proposed.length, 1);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('lesson_promote approval never fires quarantine; flaky_quarantine approval never calls promoteLesson (REQ-9.4/11.2 dispatch is kind-exclusive)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    const fired: string[] = [];
+    const promoted: string[] = [];
+    const hooks = { fireQuarantine: (taskId: string) => fired.push(taskId), promoteLesson: (lessonId: string) => promoted.push(lessonId) };
+
+    const lesson = proposeLessonPromotion({ logPath, lessonId: 'lsn-9', clock });
+    const r1 = applyGovernanceApproval({ logPath, id: lesson.id, clock }, hooks);
+    assert.equal(r1.ok, true);
+    if (r1.ok) assert.equal(r1.kind, 'lesson_promote');
+    assert.deepEqual(promoted, ['lsn-9']);
+    assert.deepEqual(fired, []);
+
+    const flaky = proposeFlakyQuarantine({ logPath, taskId: 'T-5', clock });
+    applyGovernanceApproval({ logPath, id: flaky.id, clock }, hooks);
+    assert.deepEqual(fired, ['T-5']);
+    assert.deepEqual(promoted, ['lsn-9'], 'flaky approval never re-triggers promoteLesson');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('applyGovernanceApproval without a promoteLesson hook still approves lesson_promote (hook is optional, REQ-11.2)', () => {
+  const dir = policyDir();
+  const logPath = logPathIn(dir);
+  try {
+    const lesson = proposeLessonPromotion({ logPath, lessonId: 'lsn-no-hook', clock });
+    const res = applyGovernanceApproval({ logPath, id: lesson.id, clock }, { fireQuarantine: () => {} });
+    assert.equal(res.ok, true);
+    if (res.ok) assert.equal(res.kind, 'lesson_promote');
   } finally {
     cleanup(dir);
   }
