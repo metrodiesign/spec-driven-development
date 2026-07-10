@@ -155,11 +155,13 @@ export function wrapRouterForShadow(
 ): Router {
   return {
     ...router,
-    eligibleAdapters(role: Role, hints?: RouteHints) {
+    eligibleAdapters(role: Role, hints?: RouteHints, opts?: { record?: boolean }) {
       deps.stats?.invalidate();
-      const eligible = router.eligibleAdapters(role, hints);
+      const eligible = router.eligibleAdapters(role, hints, opts);
       const live = eligible[0];
-      if (live !== undefined && !shadowFrozen(deps.registry.all())) {
+      // record:false is a non-recording peek (fusion panel fan-out) — same order, no
+      // SHADOW_ROUTE (REQ-16.2 same-router without stats pollution, PR #64 review).
+      if (opts?.record !== false && live !== undefined && !shadowFrozen(deps.registry.all())) {
         const liveKey = breakerKey(live.record.adapterId, live.record.modelVersion);
         const { wouldChoose, basis } = shadowWouldChoose({
           role,
@@ -421,12 +423,7 @@ export async function runSupervisedLoop(opts: {
     // caller. 'active' wraps the outcome reorder FIRST, then shadow OUTSIDE it,
     // so shadow observes the already-reordered live choice.
     const outcomeMode = opts.outcomeRouting?.mode ?? 'shadow';
-    // Base (non-recording) router. The task loop routes through the wrapped `router`
-    // below; fusion panel planning routes through THIS one, so a panel build never
-    // appends SHADOW_ROUTE/OUTCOME_ROUTE and pollutes adapter-ranking stats — the
-    // recorder wrappers exist for the live task pick, not fan-out panel builds (PR #50 review).
-    const baseRouter = createRouter(reg);
-    let router: Router = baseRouter;
+    let router: Router = createRouter(reg);
     const roundStats = createRoundStatsCache(log);
     if (outcomeMode === 'active') {
       router = wrapRouterForOutcome(router, {
@@ -455,16 +452,17 @@ export async function runSupervisedLoop(opts: {
     // governance-hashed policy trigger and this composition's own option gate
     // dispatch (REQ-16.3) — the caller assembles opts.planning from both; this
     // composition never reads fusion-profiles.json itself (same separation as
-    // outcomeRouting/lessons). Dispatches role 'planner' through the BASE router
-    // (whatever mode governance pinned still filters/orders the eligible set the same
-    // way) so panel fan-out never records routing attempts against the live pick's
-    // stats (AZ-13, corrected — PR #50 review finding 6).
+    // outcomeRouting/lessons). Dispatches role 'planner' through the SAME router
+    // instance the task loop uses below, whatever mode governance pinned (REQ-16.2/
+    // AZ-13). Panel fan-out reads it with a non-recording peek (eligibleAdapters
+    // record:false) so the governed reorder still applies but no SHADOW_ROUTE/
+    // OUTCOME_ROUTE is recorded against the panel (PR #64 review).
     let resolvedPlan: { id: string; content: string } | null = null;
     if (opts.planning?.enabled === true && opts.planning.plannerRoleTrigger === true) {
       const planned = await runPlannerFusion({
         runId: RUN_ID,
         taskId: TASK_ID,
-        router: baseRouter,
+        router,
         dispatcher: opts.planning.dispatcher,
         profile: opts.planning.profile,
         evidence,

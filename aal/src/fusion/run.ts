@@ -76,7 +76,10 @@ function escalate(deps: FusionDeps, profile: FusionProfile, reason: FusionEscala
 /** Build the N panel slots per the profile diversity, or null when a required lineage is unavailable (REQ-9.7). */
 function planPanel(deps: FusionDeps, profile: FusionProfile, base: AgentRequest, size: number): PanelSlot[] | null {
   const role = base.agentRole;
-  const eligible = deps.router.eligibleAdapters(role);
+  // Peek the SAME governed order the task loop routes through (REQ-16.2 same
+  // router/mode), but a panel build must not record a routing attempt or advance the
+  // epsilon round — record:false suppresses SHADOW_ROUTE/OUTCOME_ROUTE (PR #64 review).
+  const eligible = deps.router.eligibleAdapters(role, undefined, { record: false });
   const slot = (adapter: RegisteredAdapter, i: number, seed?: number): PanelSlot => ({
     adapter: adapter.adapter,
     lineage: adapter.lineage,

@@ -53,11 +53,22 @@ function filterHints(list: RegisteredAdapter[], hints?: RouteHints): RegisteredA
   return out;
 }
 
+/**
+ * Peek option for `eligibleAdapters`. `record: false` applies the SAME reorder/
+ * exploration decision the task loop would get (REQ-16.2 — the planner routes through
+ * the same router instance/mode) but appends NO SHADOW_ROUTE/OUTCOME_ROUTE and never
+ * advances the epsilon round, so fusion panel fan-out can read the governed order
+ * without polluting adapter-ranking stats (PR #64 review). Omitted/true = record.
+ */
+export interface EligibleOpts {
+  record?: boolean;
+}
+
 export interface Router {
   /** Returns the first eligible adapter, or throws NoCapacityError when none matches. */
   route(role: Role, hints?: RouteHints): AdapterInterface;
   /** The ordered eligible set (breaker-, health-, and hint-filtered) for degraded re-routing. */
-  eligibleAdapters(role: Role, hints?: RouteHints): RegisteredAdapter[];
+  eligibleAdapters(role: Role, hints?: RouteHints, opts?: EligibleOpts): RegisteredAdapter[];
   /** Refresh cached health once per round before routing (REQ-2.2); returns changes to emit. */
   refreshHealth(): Promise<HealthChange[]>;
 }
@@ -199,25 +210,31 @@ export function wrapRouterForOutcome(
   };
   return {
     ...router,
-    eligibleAdapters(role: Role, hints?: RouteHints) {
-      const eligible = router.eligibleAdapters(role, hints);
+    eligibleAdapters(role: Role, hints?: RouteHints, opts?: EligibleOpts) {
+      const record = opts?.record !== false;
+      const eligible = router.eligibleAdapters(role, hints, opts);
       if (shadowFrozen(deps.registry.all())) {
-        safeAppend('ROUTING_FROZEN', { role });
+        if (record) safeAppend('ROUTING_FROZEN', { role });
         return eligible;
       }
       const { order, reordered, rated } = reorderByOutcome(eligible, deps.stats());
       let finalOrder = order;
       let explored = false;
+      // exploreKey is derived from the OUTCOME_ROUTE count in the log; a peek
+      // (record:false) appends nothing, so it never advances the epsilon round — it
+      // reuses the current round's decision rather than rolling a fresh one (PR #64 review).
       if (reordered && rated.length >= 2 && hashPercent(deps.exploreKey()) < deps.epsilonPercent) {
         finalOrder = swapWithRatedRunnerUp(finalOrder, rated);
         explored = true;
       }
-      safeAppend('OUTCOME_ROUTE', {
-        role,
-        order: finalOrder.map(keyOf),
-        explored,
-        basis: reordered ? 'reorder' : 'insufficient_data',
-      });
+      if (record) {
+        safeAppend('OUTCOME_ROUTE', {
+          role,
+          order: finalOrder.map(keyOf),
+          explored,
+          basis: reordered ? 'reorder' : 'insufficient_data',
+        });
+      }
       return finalOrder;
     },
   };

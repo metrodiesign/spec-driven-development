@@ -385,12 +385,13 @@ test('planning never dispatches when EITHER axis is off, or the option is absent
   }
 });
 
-test('planner-fusion panel builds route through the BASE router — no SHADOW_ROUTE/OUTCOME_ROUTE recorded against the planner role (PR #50 review, finding 6)', async () => {
+test('planner-fusion panel builds peek the SAME wrapped router (REQ-16.2) but record nothing — no SHADOW_ROUTE/OUTCOME_ROUTE against the planner role (PR #50 finding 6 / PR #64 P2-1)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
-    // Active mode wraps the task-loop router with BOTH recorders; if the planner panel
-    // fan-out went through that wrapped router, each planPanel eligibleAdapters call
-    // would append role:'planner' SHADOW_ROUTE + OUTCOME_ROUTE and pollute the stats.
+    // Active mode wraps the task-loop router with BOTH recorders; the planner panel
+    // routes through that SAME wrapped router (REQ-16.2/AZ-13) but via a non-recording
+    // peek (eligibleAdapters record:false), so each planPanel call applies the governed
+    // reorder yet appends no role:'planner' SHADOW_ROUTE/OUTCOME_ROUTE to pollute stats.
     await runSupervisedLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),

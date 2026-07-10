@@ -110,11 +110,20 @@ export function computeShadowOutcomeStats(events: PlatformEvent[]): Record<strin
   // 5x and credited reviewingReached once per round — flipping rankings a 1-round
   // task never could (PR #50 review). One pass builds the set of REVIEWING taskIds
   // and the distinct-task set per adapter; a task counts once regardless of rounds.
-  const reviewingTasks = new Set<string | null>();
-  const tasksByAdapter = new Map<string, Set<string | null>>();
+  // Identify a task INSTANCE by (runId, taskId), not taskId alone: the loop
+  // composition reuses the constant taskId 'T-1' every run, so taskId-only keying
+  // would collapse distinct runs' tasks together and cross-credit REVIEWING if a
+  // multi-run log were ever folded (PR #64 review). Today the fold is always
+  // single-run (one events.db per run), so this hardens the general PlatformEvent[]
+  // contract. ponytail: a true cross-run corpus would ALSO need the composition to
+  // stamp distinct runIds (it emits a constant 'RUN-LIVE') — that's the corpus
+  // builder's job, out of scope here.
+  const key = (e: PlatformEvent): string => `${e.runId}\u0000${String(e.taskId)}`;
+  const reviewingTasks = new Set<string>();
+  const tasksByAdapter = new Map<string, Set<string>>();
   for (const e of events) {
     if (e.type === 'TASK_STATE' && e.payload['state'] === 'REVIEWING') {
-      reviewingTasks.add(e.taskId);
+      reviewingTasks.add(key(e));
     } else if (e.type === 'SHADOW_ROUTE') {
       const live = e.payload['live'] as string;
       let tasks = tasksByAdapter.get(live);
@@ -122,7 +131,7 @@ export function computeShadowOutcomeStats(events: PlatformEvent[]): Record<strin
         tasks = new Set();
         tasksByAdapter.set(live, tasks);
       }
-      tasks.add(e.taskId);
+      tasks.add(key(e));
     }
   }
   const stats: Record<string, ShadowOutcomeStats> = {};

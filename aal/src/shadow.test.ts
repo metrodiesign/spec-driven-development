@@ -205,6 +205,19 @@ test('counts per TASK, not per SHADOW_ROUTE round — a multi-round task is neve
   assert.deepEqual(computeShadowOutcomeStats(events), { 'a@v1': { attempts: 2, reviewingReached: 1 } });
 });
 
+test('keys instances by (runId, taskId): two runs sharing taskId T-1 count separately, never cross-credited (PR #64 review P2-2)', () => {
+  const events: PlatformEvent[] = [
+    { seq: 1, ts: 't1', runId: 'RUN-1', taskId: 'T-1', type: 'SHADOW_ROUTE', payload: { role: 'implementer', live: 'a@v1', wouldChoose: 'a@v1', basis: 'insufficient_data', frozen: false } },
+    { seq: 2, ts: 't2', runId: 'RUN-1', taskId: 'T-1', type: 'TASK_STATE', payload: { state: 'REVIEWING' } },
+    { seq: 3, ts: 't3', runId: 'RUN-2', taskId: 'T-1', type: 'SHADOW_ROUTE', payload: { role: 'implementer', live: 'a@v1', wouldChoose: 'a@v1', basis: 'insufficient_data', frozen: false } },
+    // RUN-2's T-1 never reaches REVIEWING.
+  ];
+  // Distinct instances (RUN-1:T-1, RUN-2:T-1) -> attempts 2; only RUN-1 reached REVIEWING
+  // -> reviewingReached 1. taskId-only keying would collapse to attempts 1 and cross-
+  // credit RUN-2 as reviewed from RUN-1's REVIEWING.
+  assert.deepEqual(computeShadowOutcomeStats(events), { 'a@v1': { attempts: 2, reviewingReached: 1 } });
+});
+
 // --- shadowProven (REQ-13.1/13.3) ---
 
 test('proven requires BOTH n >= minSamples AND divergences >= minDivergences (REQ-13.3)', () => {
