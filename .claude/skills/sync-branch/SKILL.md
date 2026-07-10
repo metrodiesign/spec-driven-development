@@ -8,8 +8,8 @@ argument-hint: [pr-number]
 
 Post-merge cleanup: sync the base branch locally, delete the feature branch (local +
 remote) once it's confirmed merged. This repo squash-merges every PR (one commit per
-PR on `develop`), so `git branch -d` always prints the benign warning below — that is
-expected, not a failure:
+PR on `develop`), so `git branch -d` in step 3 either succeeds with the benign warning
+below, or refuses outright — both expected, not failures (see step 3):
 
 ```
 warning: deleting branch '<name>' that has been merged to 'refs/remotes/origin/<name>',
@@ -47,9 +47,16 @@ env -u GH_TOKEN gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch-ur
    ```sh
    git checkout <base>
    git pull
-   git branch -d <branch>   # safe delete — never -D; if it refuses, the branch isn't
-                             # actually merged into <base>'s history, stop and report why
+   git branch -d <branch> || git branch -D <branch>
    ```
+   Try `-d` first. It can refuse a genuinely-merged squash branch: `-d` checks ancestry
+   against the branch's configured upstream ref (or `HEAD` if none), and a squash
+   commit has no ancestry relation to either — so once the upstream ref is gone or was
+   never fetched (pruned remote, fresh clone, a teammate already deleted the remote
+   branch), `-d` has nothing left to check against and refuses even though the content
+   is already on `<base>`. Only fall back to `-D` here because step 1 already proved
+   independently, via the GitHub API, that this exact branch's PR is merged — that's
+   the real safety gate, not `-d`.
 
 4. **Delete the remote branch** (skip quietly if already gone):
    ```sh
@@ -63,6 +70,9 @@ env -u GH_TOKEN gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch-ur
 
 ## Guardrails
 
-- Non-force local delete (`-d`) and the merged-PR check in step 1 are the safety net —
-  if either one balks, stop and surface the reason instead of forcing past it.
+- The merged-PR check in step 1 is the real safety gate, not `-d` — `-d`'s local
+  ancestry check gives false negatives on squash-merged branches (see step 3), so the
+  `-D` fallback there is only safe because step 1 already confirmed the merge via the
+  GitHub API. If step 1 itself fails to confirm a merge, stop and report why — do not
+  force-delete past that.
 - Never touch worktrees here — this skill assumes a normal (non-worktree) checkout.
