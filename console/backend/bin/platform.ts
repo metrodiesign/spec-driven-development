@@ -593,6 +593,7 @@ async function main(): Promise<void> {
     auditPath: join(dataDir, 'chat-audit.jsonl'),
     ticketTtlS: 30,
     approvalTimeoutMs: 120_000,
+    homeDir: homedir(),
   });
 
   const app = buildApp({
