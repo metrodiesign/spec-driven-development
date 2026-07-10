@@ -10,7 +10,9 @@ export const meta = {
 }
 
 // args: { target?: string, repo?: string } — target defaults to HEAD~1 (last commit)
-const target = (args && args.target) || 'HEAD~1'
+const rawTarget = (args && args.target) || 'HEAD~1'
+// a bare commit SHA diffs against the working tree, not that commit's own patch (git-diff docs) — normalize to its own patch
+const target = /^[0-9a-f]{7,40}$/i.test(rawTarget) ? `${rawTarget}^ ${rawTarget}` : rawTarget
 const repoLine = (args && args.repo) ? `Repo: ${args.repo}. ` : ''
 
 const FINDINGS_SCHEMA = {
@@ -65,7 +67,7 @@ const found = await parallel(ANGLES.map((a) => () =>
 const candidates = found.filter(Boolean).flatMap((r) => r.findings)
 const seen = new Map()
 for (const c of candidates) {
-  const k = `${c.file}:${c.line ?? 0}`
+  const k = c.line != null ? `${c.file}:${c.line}` : `${c.file}:${c.summary}`
   if (!seen.has(k) || (c.failure_scenario || '').length > (seen.get(k).failure_scenario || '').length) seen.set(k, c)
 }
 const deduped = [...seen.values()]
@@ -77,16 +79,27 @@ const verifyOne = (c) =>
     { label: `verify:${c.file}`, phase: 'Verify', schema: VERDICT_SCHEMA })
       .then((v) => ({ ...c, verdict: v?.verdict, verdict_reason: v?.reason }))
 
+// a dead/skipped verifier resolves to a truthy object with verdict undefined (agent() returns null on terminal
+// failure, not a rejection) — split it out as unverified instead of silently failing both the surviving and
+// refuted filters (same failure mode as .ai/shared/LESSONS.md:29)
 const verified = (await parallel(deduped.map((c) => () => verifyOne(c)))).filter(Boolean)
 const surviving = verified.filter((c) => c.verdict === 'CONFIRMED' || c.verdict === 'PLAUSIBLE')
-log(`${surviving.length}/${verified.length} survived verification`)
+const refuted = verified.filter((c) => c.verdict === 'REFUTED')
+const unverified = verified.filter((c) => !c.verdict)
+log(`${surviving.length}/${verified.length} survived verification${unverified.length ? `, ${unverified.length} unverified (verifier failed — undecided, not refuted)` : ''}`)
 
 phase('Sweep')
 const sweep = await agent(`${repoLine}Final gap-sweep of \`git diff ${target}\`. Here is the verified list — find ONLY defects not on it (moved code that dropped a guard, second-tier footguns, setup/teardown asymmetry, flipped config defaults, error-path resource cleanup):\n${surviving.map((c) => `- ${c.file}:${c.line} ${c.summary}`).join('\n')}\n\nUp to 8 new candidates; empty array if none — do not pad.`,
   { label: 'sweep', phase: 'Sweep', schema: FINDINGS_SCHEMA })
 const sweepVerified = (await parallel((sweep?.findings || []).map((c) => () => verifyOne(c)))).filter(Boolean)
 const sweepSurviving = sweepVerified.filter((c) => c.verdict === 'CONFIRMED' || c.verdict === 'PLAUSIBLE')
-log(`sweep added ${sweepSurviving.length}`)
+const sweepUnverified = sweepVerified.filter((c) => !c.verdict)
+log(`sweep added ${sweepSurviving.length}${sweepUnverified.length ? `, ${sweepUnverified.length} unverified` : ''}`)
 
 const all = [...surviving, ...sweepSurviving]
-return { target, findings: all, refuted: verified.filter((c) => c.verdict === 'REFUTED') }
+return {
+  target,
+  findings: all,
+  refuted: [...refuted, ...sweepVerified.filter((c) => c.verdict === 'REFUTED')],
+  unverified: [...unverified, ...sweepUnverified],
+}
