@@ -24,8 +24,8 @@ import {
   mungeProjectDir,
   readConformanceRecord,
 } from '../src/loop-cli.ts';
-import { createTermRuntime } from '../src/term-runtime.ts';
-import { createChatRuntime } from '../src/chat-runtime.ts';
+import { createTermRuntime, TERM_WS_PATH } from '../src/term-runtime.ts';
+import { attachUnknownUpgradeGuard, createChatRuntime, CHAT_WS_PATH } from '../src/chat-runtime.ts';
 import { runGovernanceCommand } from '../src/governance-cli.ts';
 import { runAuditorCommand } from '../src/auditor-cli.ts';
 import { createSchedRuntime, type ChildLike, type SpawnChild } from '../src/sched.ts';
@@ -420,6 +420,11 @@ async function runLoop(rest: string[]): Promise<void> {
       governanceLogPath: join(aiDir(), 'governance', 'events.jsonl'),
       lessons: { dir: join(aiDir(), 'lessons') },
       autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
+      // Opt IN to the human approval/deploy gate: a LIVE run holds the loop (and its
+      // Human Plane server) open so an operator can decide via the console. Passing
+      // timeoutMs is what enables the blocking wait — the stub path below omits it so
+      // CI never hangs on a human that isn't there (PR #50 review).
+      approval: { timeoutMs: 30 * 60_000 },
       auditSink: auditAppend,
       adapterFactory: (put) =>
         createLiveAnthropicAdapter({
@@ -634,6 +639,9 @@ async function main(): Promise<void> {
   await app.listen({ host, port });
   if (termRuntime !== undefined) termRuntime.attachWs(app.server);
   chatRuntime.attachWs(app.server);
+  // Registered LAST so the runtimes above claim their own paths first; this destroys
+  // any upgrade to a path no runtime owns (leaked raw socket otherwise — PR #50 review).
+  attachUnknownUpgradeGuard(app.server, [CHAT_WS_PATH, ...(termRuntime !== undefined ? [TERM_WS_PATH] : [])]);
   const url = `http://${host === '::1' ? '[::1]' : host}:${port}`;
   process.stdout.write(`platform console listening on ${url}\n`);
   if (values['no-open'] !== true && process.platform === 'darwin') {

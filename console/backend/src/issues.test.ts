@@ -126,6 +126,18 @@ test('convertIssue/rejectIssue: a traversal id can never join outside the issues
   }
 });
 
+test('convertIssue/rejectIssue: a corrupt issue record reads as not_found, never an unguarded throw -> 500 (PR #50 review)', () => {
+  withDir((dir) => {
+    const created = createIssue(dir, { title: 'corrupt me', body: 'b' }, () => NOW);
+    assert.ok(created.ok);
+    if (!created.ok) return;
+    // Overwrite the persisted record with invalid JSON (mirrors listIssues's per-file skip).
+    writeFileSync(join(dir, `${created.issue.id}.json`), '{ not valid json');
+    assert.deepEqual(convertIssue(dir, created.issue.id), { ok: false, reason: 'not_found' });
+    assert.deepEqual(rejectIssue(dir, created.issue.id), { ok: false, reason: 'not_found' });
+  });
+});
+
 test('rejectIssue: rejects an open issue, refuses non-open and unknown ids (REQ-8.6)', () => {
   withDir((dir) => {
     const created = createIssue(dir, { title: 't', body: 'b' }, () => NOW);

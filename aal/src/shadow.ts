@@ -105,16 +105,31 @@ export function compareShadow(events: PlatformEvent[]): ShadowComparison {
  * the shadow recorder and `shadowProven` fold it identically, no duplicate math).
  */
 export function computeShadowOutcomeStats(events: PlatformEvent[]): Record<string, ShadowOutcomeStats> {
-  const stats: Record<string, ShadowOutcomeStats> = {};
+  // Count PER TASK, not per SHADOW_ROUTE event: a multi-round task records one
+  // SHADOW_ROUTE per iteration, so counting events inflated a 5-round task's weight
+  // 5x and credited reviewingReached once per round — flipping rankings a 1-round
+  // task never could (PR #50 review). One pass builds the set of REVIEWING taskIds
+  // and the distinct-task set per adapter; a task counts once regardless of rounds.
+  const reviewingTasks = new Set<string | null>();
+  const tasksByAdapter = new Map<string, Set<string | null>>();
   for (const e of events) {
-    if (e.type !== 'SHADOW_ROUTE') continue;
-    const live = e.payload['live'] as string;
-    const s = (stats[live] ??= { attempts: 0, reviewingReached: 0 });
-    s.attempts += 1;
-    const reachedReviewing = events.some(
-      (e2) => e2.type === 'TASK_STATE' && e2.taskId === e.taskId && e2.payload['state'] === 'REVIEWING',
-    );
-    if (reachedReviewing) s.reviewingReached += 1;
+    if (e.type === 'TASK_STATE' && e.payload['state'] === 'REVIEWING') {
+      reviewingTasks.add(e.taskId);
+    } else if (e.type === 'SHADOW_ROUTE') {
+      const live = e.payload['live'] as string;
+      let tasks = tasksByAdapter.get(live);
+      if (tasks === undefined) {
+        tasks = new Set();
+        tasksByAdapter.set(live, tasks);
+      }
+      tasks.add(e.taskId);
+    }
+  }
+  const stats: Record<string, ShadowOutcomeStats> = {};
+  for (const [live, tasks] of tasksByAdapter) {
+    let reviewingReached = 0;
+    for (const t of tasks) if (reviewingTasks.has(t)) reviewingReached += 1;
+    stats[live] = { attempts: tasks.size, reviewingReached };
   }
   return stats;
 }

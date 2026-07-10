@@ -106,8 +106,15 @@ export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContr
     const failureThreshold = reqNum(observeRaw['failure_threshold'], 'deploy.observe.failure_threshold');
     const intervalMs = reqNum(observeRaw['interval_ms'], 'deploy.observe.interval_ms');
     // AZ-3: a threshold a rollback could never exceed is refused at freeze time,
-    // never mid-stage.
-    if (probes < 1) throw new ContractInvalidError('deploy.observe.probes must be >= 1');
+    // never mid-stage. probes/failure_threshold must be whole counts — a negative or
+    // fractional value slips past the `failedProbes > failureThreshold` compare and
+    // rolls a healthy deploy back (e.g. `0 > -1`), so reject both here (PR #50 review).
+    if (!Number.isInteger(probes) || probes < 1) {
+      throw new ContractInvalidError('deploy.observe.probes must be a positive integer');
+    }
+    if (!Number.isInteger(failureThreshold) || failureThreshold < 0) {
+      throw new ContractInvalidError('deploy.observe.failure_threshold must be a non-negative integer');
+    }
     if (failureThreshold >= probes) {
       throw new ContractInvalidError('deploy.observe.failure_threshold must be less than probes');
     }

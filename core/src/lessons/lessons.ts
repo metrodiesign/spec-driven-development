@@ -167,7 +167,15 @@ export function loadApprovedLessons(input: {
     for (const r of readGovernanceLog(input.governanceLogPath)) {
       if (r.type !== 'GOVERNANCE_CHANGE' || r.kind !== 'lesson_promote' || r.lessonId === undefined) continue;
       if (existsSync(approvedPath(input.dir, r.lessonId))) continue; // already reconciled
-      promoteLesson({ dir: input.dir, lessonId: r.lessonId, approvedAt: r.ts, log: input.log, runId: input.runId, taskId: input.taskId });
+      // promoteLesson reads (and JSON.parses) pending/<id>.json; a single corrupt
+      // pending file must not block reconciliation of every OTHER approved lesson,
+      // nor abort the run — skip it with the same corrupt_lesson_file ERROR the
+      // approved/ loop below already uses (REQ-12.6, PR #50 review).
+      try {
+        promoteLesson({ dir: input.dir, lessonId: r.lessonId, approvedAt: r.ts, log: input.log, runId: input.runId, taskId: input.taskId });
+      } catch {
+        input.log.append({ runId: input.runId, taskId: input.taskId, type: 'ERROR', payload: { reason: 'corrupt_lesson_file', file: `pending/${r.lessonId}.json` } });
+      }
     }
   }
 
@@ -189,6 +197,14 @@ export function loadApprovedLessons(input: {
   let bytes = 0;
   for (const r of byCount) {
     const size = Buffer.byteLength(r.statement, 'utf8');
+    // A single lesson larger than the whole byte budget must be skipped on its own,
+    // not `break` the loop — files are hash-sorted, so one oversized lesson sorting
+    // first would otherwise suppress EVERY lesson (return []) instead of just itself
+    // (PR #50 review). The cumulative break below still stops the rest at the budget.
+    if (size > input.cap.maxBytes) {
+      input.log.append({ runId: input.runId, taskId: input.taskId, type: 'ERROR', payload: { reason: 'oversized_lesson', lessonId: r.id } });
+      continue;
+    }
     if (bytes + size > input.cap.maxBytes) break;
     capped.push(r);
     bytes += size;

@@ -148,10 +148,11 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
       persistDir,
-      // L2 (no declared risk) never auto-merges; a short window resolves the
-      // resulting approval package to ESCALATED (REQ-3.4) instead of the default
-      // 30-minute wait — REVIEWING itself, this test's actual subject, is asserted
-      // below from the event log regardless of what happens to it afterward.
+      // L2 (no declared risk) never auto-merges; opting INTO the wait with a short
+      // window resolves the resulting approval package to ESCALATED (REQ-3.4) — REVIEWING
+      // itself, this test's actual subject, is asserted below from the event log
+      // regardless of what happens to it afterward. (Omitting approval entirely returns
+      // REVIEWING immediately — covered by the opt-in test above.)
       approval: { timeoutMs: 100 },
     });
     assert.equal(out.finalState, 'ESCALATED', 'nothing decides the resulting package here — REQ-3.4 timeout');
@@ -240,6 +241,66 @@ test('outcomeRouting mode active wraps shadow OUTSIDE the outcome wrapper — bo
   }
 });
 
+test('the human approval wait is OPT-IN: no approval option -> the package is left for a live client and the run returns REVIEWING immediately, never a 30-minute hang (PR #50 review, finding 1)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    // No `approval` option -> the CI/stub default: do NOT block on a human that isn't
+    // there. Before the fix this hung 30 minutes then ESCALATED (approval_timeout).
+    const out = await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+    });
+    assert.equal(out.finalState, 'REVIEWING', 'returns REVIEWING immediately, not ESCALATED-via-timeout');
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).length, 1, 'the package is still built + left in the approvals Map for a live client');
+      assert.equal(log.all({ type: 'ESCALATED' }).length, 0, 'no approval_timeout escalation');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('outcomeRouting minSamples/minDivergences are threaded into the shadowProven snapshot, not dropped at the composition seam (PR #50 review, finding 12)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    // A single-adapter fixture records n>=1 SHADOW_ROUTE and 0 divergences; with BOTH
+    // thresholds at 0, proven = n>=0 && divergences>=0 = true — only observable if the
+    // knobs actually reach shadowProven (the hard-coded minSamples 20 would be false).
+    const out = await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      outcomeRouting: { mode: 'shadow', epsilon: 0, minSamples: 0, minDivergences: 0 },
+    });
+    assert.equal(out.shadowProven.proven, true, 'minSamples 0 / minDivergences 0 threaded through -> proven');
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
+test('the shadowProven snapshot defaults to minSamples 20 when outcomeRouting omits the thresholds (finding 12 default preserved)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    const out = await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+    });
+    assert.equal(out.shadowProven.proven, false, 'default minSamples 20 -> a single-adapter run is never "proven"');
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
 // --- Planner-role fusion auto-routing (REQ-16) — runPlannerFusion itself is
 // unit-tested in fusion.test.ts (resolution, PLAN_SCHEMA validation, PLAN_RESOLVED
 // shape); these are composition-level wiring smoke tests proving the trigger
@@ -321,6 +382,46 @@ test('planning never dispatches when EITHER axis is off, or the option is absent
     } finally {
       rmSync(persistDir, { recursive: true, force: true });
     }
+  }
+});
+
+test('planner-fusion panel builds route through the BASE router — no SHADOW_ROUTE/OUTCOME_ROUTE recorded against the planner role (PR #50 review, finding 6)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
+  try {
+    // Active mode wraps the task-loop router with BOTH recorders; if the planner panel
+    // fan-out went through that wrapped router, each planPanel eligibleAdapters call
+    // would append role:'planner' SHADOW_ROUTE + OUTCOME_ROUTE and pollute the stats.
+    await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      outcomeRouting: { mode: 'active', epsilon: 0 },
+      planning: { enabled: true, plannerRoleTrigger: true, profile: PLAN_PROFILE, dispatcher: createDispatcher({ buckets: new Map(), maxParallel: 2 }) },
+    });
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'PLAN_RESOLVED' }).length, 1, 'the planner fusion still dispatched');
+      assert.equal(
+        log.all({ type: 'SHADOW_ROUTE' }).filter((e) => e.payload['role'] === 'planner').length,
+        0,
+        'a panel build never records a SHADOW_ROUTE for the planner role',
+      );
+      assert.equal(
+        log.all({ type: 'OUTCOME_ROUTE' }).filter((e) => e.payload['role'] === 'planner').length,
+        0,
+        'nor an OUTCOME_ROUTE',
+      );
+      assert.ok(
+        log.all({ type: 'SHADOW_ROUTE' }).some((e) => e.payload['role'] === 'implementer'),
+        'the task loop itself still shadows its live implementer pick',
+      );
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
   }
 });
 
@@ -756,6 +857,45 @@ test(
         );
         assert.equal(states.find((e) => e.payload['state'] === 'ROLLING_BACK')?.payload['trigger'], 'manual_rollback');
         assert.ok(audited.some((e) => e['event'] === 'deploy_manual_rollback'), 'REQ-6.10: manual rollback audited');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'manual rollback whose rollback_cmd FAILS still closes the window cleanly — terminal ESCALATED, run COMPLETED, no dangling ROLLING_BACK (PR #50 review, finding 2)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-rbfail-'));
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: { ...L1_CONTRACT, deploy: { ...DEPLOY_OK, rollbackCmd: 'exit 3' } },
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+        deploy: { expandedWindowMs: 500 },
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      await waitForDeployState(url, token, 'EXPANDED');
+      assert.equal(await rollbackDeploy(url, token), 200);
+
+      // The run must RESOLVE (not reject on a rejecting manualRollback) and close the window.
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED', 'a failed deploy rollback never touches the task finalState');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        const states = log.all({ type: 'DEPLOY_STATE' }).map((e) => e.payload['state']);
+        assert.equal(states.at(-1), 'ESCALATED', 'terminal deploy state is ESCALATED (rollback_failed), never a dangling ROLLING_BACK');
+        assert.equal(log.all({ type: 'DEPLOY_WINDOW_CLOSED' }).length, 1, 'the window still closed cleanly (REQ-6.12)');
       } finally {
         log.close();
       }

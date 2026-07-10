@@ -190,6 +190,21 @@ test('a task still in flight (no REVIEWING yet) contributes 0 so far, not an err
   assert.deepEqual(computeShadowOutcomeStats(events), { 'a@v1': { attempts: 1, reviewingReached: 0 } });
 });
 
+test('counts per TASK, not per SHADOW_ROUTE round — a multi-round task is never inflated (PR #50 review)', () => {
+  // T-multi routes to a@v1 across 3 rounds and reaches REVIEWING; T-single routes once
+  // and does not. Per task: attempts=2 (distinct tasks), reviewingReached=1. The old
+  // per-event fold said attempts=4 / reviewingReached=3 (crediting every round of the
+  // REVIEWING task) — a 3-round success outweighing a 1-round one, flipping rankings.
+  const events = [
+    routeEvent(1, 'T-multi', 'a@v1'),
+    routeEvent(2, 'T-multi', 'a@v1'),
+    routeEvent(3, 'T-multi', 'a@v1'),
+    reviewingEvent(4, 'T-multi'),
+    routeEvent(5, 'T-single', 'a@v1'),
+  ];
+  assert.deepEqual(computeShadowOutcomeStats(events), { 'a@v1': { attempts: 2, reviewingReached: 1 } });
+});
+
 // --- shadowProven (REQ-13.1/13.3) ---
 
 test('proven requires BOTH n >= minSamples AND divergences >= minDivergences (REQ-13.3)', () => {

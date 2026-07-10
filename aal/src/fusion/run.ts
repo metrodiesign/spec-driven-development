@@ -94,8 +94,10 @@ function planPanel(deps: FusionDeps, profile: FusionProfile, base: AgentRequest,
     // A panel this size needs a DISTINCT seed per slot — cycling short of that via
     // modulo used to silently reuse seeds (duplicate/degenerate candidates) instead
     // of the diversity the panel exists to produce; fail fast like cross_lineage's
-    // missing-lineage case instead (PR #50 review).
-    if (seeds.length < size) return null;
+    // missing-lineage case instead (PR #50 review). Length alone is not enough — the
+    // FIRST `size` seeds actually consumed must themselves be distinct (e.g. [2,2]
+    // has length 2 but seats two identical slots).
+    if (seeds.length < size || new Set(seeds.slice(0, size)).size < size) return null;
     return Array.from({ length: size }, (_, i) => slot(only, i, seeds[i]));
   }
 

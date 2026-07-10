@@ -175,12 +175,18 @@ export function wrapRouterForShadow(
             payload: { role, live: liveKey, wouldChoose, basis, frozen: false },
           });
         } catch (err) {
-          deps.log.append({
-            runId: deps.runId,
-            taskId: deps.taskId,
-            type: 'ERROR',
-            payload: { reason: 'shadow_append_failed', detail: (err as Error).message },
-          });
+          try {
+            deps.log.append({
+              runId: deps.runId,
+              taskId: deps.taskId,
+              type: 'ERROR',
+              payload: { reason: 'shadow_append_failed', detail: (err as Error).message },
+            });
+          } catch {
+            // A persistently-failing log must never escape and block the round — the
+            // recorder is a side channel, the route result is already returned below
+            // (REQ-7.5, same guard as router.ts's safeAppend — PR #50 review).
+          }
         }
       }
       return eligible;
@@ -247,13 +253,18 @@ export interface LoopRunResult {
 
 /** REQ-24.1/24.2: the calibration-report extras beyond computeCalibration's own
  *  shape (design.md "I. Security sweep + calibration wiring" — extend, not replace).
- *  minSamples 20 mirrors routing.json's own outcomeRouting default (design.md "Data
- *  Models" E); this snapshot is read by a human only, same as shadowProven itself. */
-function calibrationExtras(log: EventLog): Pick<LoopRunResult, 'lessonHitRate' | 'shadowProven' | 'fusionUplift'> {
+ *  `proof` carries the shadowProven thresholds threaded from opts.outcomeRouting
+ *  (minSamples/minDivergences from routing.json — previously parsed but dropped at the
+ *  composition seam, so shadowProven hard-coded minSamples 20; PR #50 review). This
+ *  snapshot is read by a human only, same as shadowProven itself. */
+function calibrationExtras(
+  log: EventLog,
+  proof: { minSamples: number; minDivergences: number },
+): Pick<LoopRunResult, 'lessonHitRate' | 'shadowProven' | 'fusionUplift'> {
   const events = log.all();
   return {
     lessonHitRate: computeLessonHitRate(events),
-    shadowProven: shadowProven(events, { minSamples: 20 }),
+    shadowProven: shadowProven(events, proof),
     fusionUplift: { available: false },
   };
 }
@@ -290,8 +301,13 @@ export async function runSupervisedLoop(opts: {
   autoMerge?: { auditSampleRate: number; depManifestPatterns: string[] };
   /**
    * Approval-package tuning (REQ-2.4/3.4) for the path above when auto-merge does
-   * NOT fire. Both default when omitted: `maxDiffBudget` 400 (§11.2), `timeoutMs` 30
-   * minutes — past it the run escalates `approval_timeout` instead of waiting forever.
+   * NOT fire. `maxDiffBudget` defaults to 400 (§11.2). `timeoutMs` is OPT-IN and gates
+   * the blocking human wait for BOTH the task-approval and deploy decisions: present ->
+   * the run holds open until a human decides or the timeout elapses (then
+   * `approval_timeout` -> ESCALATED); ABSENT (the default) -> no wait at all, the task
+   * package is left in the approvals Map and the run returns REVIEWING immediately, and
+   * a configured deploy stage is skipped. A non-interactive caller (CI/stub) omits it so
+   * it never hangs; the live CLI passes it to keep the human gate (PR #50 review).
    */
   approval?: { maxDiffBudget?: number; timeoutMs?: number };
   /**
@@ -307,7 +323,14 @@ export async function runSupervisedLoop(opts: {
    * eligible set by outcome BEFORE shadow observes the (now-reordered) live
    * choice — REQ-14.3's "recorder wrapped OUTSIDE the outcome wrapper".
    */
-  outcomeRouting?: { mode: 'off' | 'shadow' | 'active'; epsilon: number };
+  outcomeRouting?: {
+    mode: 'off' | 'shadow' | 'active';
+    epsilon: number;
+    /** shadowProven thresholds (REQ-13.3), threaded into the calibration snapshot.
+     *  From routing.json's outcomeRouting block; default minSamples 20 / minDivergences 1. */
+    minSamples?: number;
+    minDivergences?: number;
+  };
   /**
    * Lessons pipeline (REQ-10/11/12). Absent -> no lessons pipeline (Phase-1
    * parity, byte-identical): confirmed hypotheses are never folded into pending
@@ -358,6 +381,12 @@ export async function runSupervisedLoop(opts: {
   const RUN_ID = 'RUN-LIVE';
   const TASK_ID = 'T-1';
   const TASK_BRANCH = `task/${TASK_ID}`;
+  // shadowProven thresholds for the calibration snapshot (REQ-24.2) — threaded from
+  // routing.json's outcomeRouting block via opts, not hard-coded (PR #50 review).
+  const shadowProof = {
+    minSamples: opts.outcomeRouting?.minSamples ?? 20,
+    minDivergences: opts.outcomeRouting?.minDivergences ?? 1,
+  };
   try {
     // Deferred quarantine (REQ-9.5): a flaky_quarantine approved via the CLI while no
     // run was live takes effect when the next run LOADS that task — never runs it.
@@ -369,7 +398,7 @@ export async function runSupervisedLoop(opts: {
           finalState: 'QUARANTINED',
           iterations: 0,
           calibration: computeCalibration({ heldOut: [false], reruns: [] }),
-          ...calibrationExtras(log),
+          ...calibrationExtras(log, shadowProof),
         };
       }
     }
@@ -392,7 +421,12 @@ export async function runSupervisedLoop(opts: {
     // caller. 'active' wraps the outcome reorder FIRST, then shadow OUTSIDE it,
     // so shadow observes the already-reordered live choice.
     const outcomeMode = opts.outcomeRouting?.mode ?? 'shadow';
-    let router: Router = createRouter(reg);
+    // Base (non-recording) router. The task loop routes through the wrapped `router`
+    // below; fusion panel planning routes through THIS one, so a panel build never
+    // appends SHADOW_ROUTE/OUTCOME_ROUTE and pollutes adapter-ranking stats — the
+    // recorder wrappers exist for the live task pick, not fan-out panel builds (PR #50 review).
+    const baseRouter = createRouter(reg);
+    let router: Router = baseRouter;
     const roundStats = createRoundStatsCache(log);
     if (outcomeMode === 'active') {
       router = wrapRouterForOutcome(router, {
@@ -421,14 +455,16 @@ export async function runSupervisedLoop(opts: {
     // governance-hashed policy trigger and this composition's own option gate
     // dispatch (REQ-16.3) — the caller assembles opts.planning from both; this
     // composition never reads fusion-profiles.json itself (same separation as
-    // outcomeRouting/lessons). Dispatches role 'planner' through the SAME router
-    // instance the task loop uses below, whatever mode governance pinned (AZ-13).
+    // outcomeRouting/lessons). Dispatches role 'planner' through the BASE router
+    // (whatever mode governance pinned still filters/orders the eligible set the same
+    // way) so panel fan-out never records routing attempts against the live pick's
+    // stats (AZ-13, corrected — PR #50 review finding 6).
     let resolvedPlan: { id: string; content: string } | null = null;
     if (opts.planning?.enabled === true && opts.planning.plannerRoleTrigger === true) {
       const planned = await runPlannerFusion({
         runId: RUN_ID,
         taskId: TASK_ID,
-        router,
+        router: baseRouter,
         dispatcher: opts.planning.dispatcher,
         profile: opts.planning.profile,
         evidence,
@@ -579,12 +615,21 @@ export async function runSupervisedLoop(opts: {
     const onDeployRollback: HandlerDeps['onDeployRollback'] = () => {
       if (deployDeps === null) return { ok: false, detail: 'not_expanded' };
       audit({ event: 'deploy_manual_rollback', taskId: TASK_ID });
-      manualRollback = runManualRollback(deployDeps);
-      // Mark handled immediately: a rollback can be triggered mid-EXPANDED-window and
-      // reject before the `await manualRollback` below observes it, which would
-      // otherwise be an unhandledRejection (Phase-4 review finding). The real outcome
-      // still surfaces at that later await.
-      manualRollback.catch(() => {});
+      // Capture any rejection HERE, on the single promise the `await manualRollback`
+      // below reads. A clean non-zero rollback already resolves as ESCALATED via
+      // runRollback; this only covers the rollback COMMAND execution itself throwing
+      // (executor error) — which would otherwise reject runSupervisedLoop, skip
+      // DEPLOY_WINDOW_CLOSED, and leave a dangling ROLLING_BACK as the last deploy
+      // state (PR #50 review). Record a terminal ESCALATED/rollback_failed event so
+      // the window still closes cleanly and deployState never hangs at ROLLING_BACK.
+      manualRollback = runManualRollback(deployDeps).catch((err) => {
+        log.append({
+          runId: RUN_ID,
+          taskId: TASK_ID,
+          type: 'DEPLOY_STATE',
+          payload: { state: 'ESCALATED', trigger: 'rollback_failed', simulation: true, detail: (err as Error).message },
+        });
+      });
       return { ok: true };
     };
 
@@ -739,9 +784,17 @@ export async function runSupervisedLoop(opts: {
             log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'APPROVAL_PACKAGE_CREATED', payload: { approvalId: built.package.id } });
             audit({ event: 'approval_package_created', taskId: TASK_ID, approvalId: built.package.id });
 
-            const timeoutMs = opts.approval?.timeoutMs ?? 30 * 60_000;
-            const outcome = await waitForApprovalDecision(timeoutMs);
-            if (outcome === 'approve') {
+            // The blocking wait is OPT-IN (REQ-2/3): a non-interactive caller (CI/stub,
+            // bin/platform.ts's default path) passes no timeout, so the package is left
+            // in the approvals Map for a live Human Plane client and the run returns
+            // REVIEWING immediately — never a 30-minute hang then ESCALATED (PR #50
+            // review; Phase-3 parity). A caller that wants to hold the run open for a
+            // human decision passes approval.timeoutMs explicitly (the live CLI does).
+            const timeoutMs = opts.approval?.timeoutMs;
+            const outcome = timeoutMs === undefined ? 'reviewing' : await waitForApprovalDecision(timeoutMs);
+            if (outcome === 'reviewing') {
+              finalState = 'REVIEWING';
+            } else if (outcome === 'approve') {
               const approvedMerge = await runApprovedMerge({
                 runId: RUN_ID,
                 taskId: TASK_ID,
@@ -800,9 +853,12 @@ export async function runSupervisedLoop(opts: {
           };
           audit({ event: 'deploy_package_created', taskId: TASK_ID, approvalId: currentDeployApproval.id });
 
-          // REQ-6: deploy decision shares the task approval's timeout knob.
-          const deployTimeoutMs = opts.approval?.timeoutMs ?? 30 * 60_000;
-          const deployDecision = await waitForDeployDecision(deployTimeoutMs);
+          // REQ-6: deploy decision shares the task approval's timeout knob, and its
+          // opt-in semantics — no explicit timeout means no human present (CI/stub), so
+          // skip the deploy decision entirely rather than hang 30 minutes (PR #50 review).
+          // The task stays COMPLETED regardless; deploy never changes finalState.
+          const deployTimeoutMs = opts.approval?.timeoutMs;
+          const deployDecision = deployTimeoutMs === undefined ? 'skip' : await waitForDeployDecision(deployTimeoutMs);
           if (deployDecision === 'timeout' || deployDecision === 'killed') {
             // No HTTP call happened, so (unlike approve/reject, recorded by api.ts) the
             // timeout/kill event + audit is composition's own job (mirrors escalateTask above).
@@ -814,7 +870,12 @@ export async function runSupervisedLoop(opts: {
           if (deployDecision === 'approve') {
             // No production wait exists anywhere in core yet (task 2 finding) — real here,
             // tests just configure small interval_ms/expandedWindowMs.
-            const deployClock: DeployClock = { now: () => clock.now(), wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) };
+            // .unref() the wait timer so a kill during the EXPANDED window (which wins
+            // the race below via deployKillResolvers) does not leave a live ~10-min
+            // timer pinning the CLI process alive after the server closes (PR #50
+            // review). The Human Plane server keeps the loop alive while the stage runs,
+            // so an unref'd inter-probe wait still fires normally.
+            const deployClock: DeployClock = { now: () => clock.now(), wait: (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref(); }) };
             deployDeps = { runId: RUN_ID, taskId: TASK_ID, config: deployConfig, executor, log, evidence, clock: deployClock };
             const deployOutcome = await runDeployStage(deployDeps);
             if (deployOutcome.finalState === 'EXPANDED') {
@@ -854,7 +915,7 @@ export async function runSupervisedLoop(opts: {
           });
         }
       }
-      return { finalState, iterations: result.iterations, calibration, ...calibrationExtras(log) };
+      return { finalState, iterations: result.iterations, calibration, ...calibrationExtras(log, shadowProof) };
     } finally {
       await server.close();
     }

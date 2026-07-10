@@ -111,17 +111,17 @@ export interface LessonHitRateStats {
 }
 
 export function computeLessonHitRate(events: PlatformEvent[]): LessonHitRateStats {
+  // One pass collects both the injected-task set and the REVIEWING-task set, instead
+  // of an O(n^2) inner `events.some` scan per injected task (PR #50 review — same
+  // single-pass Set fix as aal's computeShadowOutcomeStats).
   const injectedTasks = new Set<string>();
+  const reviewingTasks = new Set<string>();
   for (const e of events) {
     if (e.type === 'LESSON_INJECTED' && e.taskId !== null) injectedTasks.add(e.taskId);
+    else if (e.type === 'TASK_STATE' && e.taskId !== null && e.payload['state'] === 'REVIEWING') reviewingTasks.add(e.taskId);
   }
   if (injectedTasks.size === 0) return { injectionCount: 0, hitRateProxy: 0 };
   let hits = 0;
-  for (const taskId of injectedTasks) {
-    const reachedReviewing = events.some(
-      (e) => e.type === 'TASK_STATE' && e.taskId === taskId && e.payload['state'] === 'REVIEWING',
-    );
-    if (reachedReviewing) hits += 1;
-  }
+  for (const taskId of injectedTasks) if (reviewingTasks.has(taskId)) hits += 1;
   return { injectionCount: injectedTasks.size, hitRateProxy: hits / injectedTasks.size };
 }

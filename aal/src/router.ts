@@ -184,12 +184,17 @@ export function wrapRouterForOutcome(
     try {
       deps.log.append({ runId: deps.runId, taskId: deps.taskId, type, payload });
     } catch (err) {
-      deps.log.append({
-        runId: deps.runId,
-        taskId: deps.taskId,
-        type: 'ERROR',
-        payload: { reason: 'outcome_route_append_failed', detail: (err as Error).message },
-      });
+      try {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'ERROR',
+          payload: { reason: 'outcome_route_append_failed', detail: (err as Error).message },
+        });
+      } catch {
+        // A persistently-failing log must never escape and block the round — the
+        // order is already decided, only the audit write can fail (PR #50 review).
+      }
     }
   };
   return {

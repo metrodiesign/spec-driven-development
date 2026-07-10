@@ -83,6 +83,25 @@ export function redactChatEvent(event: ChatServerEvent, homeDir: string): string
   return redactText(JSON.stringify(event), homeDir);
 }
 
+/** The one path this runtime's WS bridge owns (shared with the unknown-path guard). */
+export const CHAT_WS_PATH = '/api/chat/ws';
+
+/**
+ * Destroy any upgrade socket whose path no attached runtime owns. F-Chat and F-Term
+ * each register their OWN `server.on('upgrade')` handler that early-returns on a path
+ * it does not own (a naive destroy in either would kill the other's valid upgrades),
+ * so an unknown path was silently leaked — the sockets never listen on their own port
+ * (upgraded off the shared http.Server), so Node never auto-closes them (PR #50 review).
+ * Register this LAST, after every runtime's attachWs, so the owners get first refusal.
+ */
+export function attachUnknownUpgradeGuard(server: Server, knownPaths: string[]): void {
+  const known = new Set(knownPaths);
+  server.on('upgrade', (req, socket) => {
+    const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    if (!known.has(pathname)) socket.destroy();
+  });
+}
+
 export interface ChatRuntime {
   manager: ChatManager;
   /** Attach the WS bridge to the HTTP server after the app is listening. */
@@ -108,19 +127,26 @@ export function createChatRuntime(opts: {
 
   function attachWs(server: Server): void {
     const wss = new WebSocketServer({ noServer: true });
+    // A ws receiver/protocol error (malformed client frame) with no 'error' listener
+    // is an unhandled 'error' -> process crash; a wss-level error the same (PR #50 review).
+    wss.on('error', () => undefined);
     server.on('upgrade', (req, socket, head) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-      if (url.pathname !== '/api/chat/ws') return;
+      if (url.pathname !== CHAT_WS_PATH) return;
       const ticket = url.searchParams.get('ticket') ?? '';
       const redeemed = manager.redeemTicket(ticket);
       if (redeemed === null) {
         // Complete the handshake then close 4403 (AZ-14) — the WS close-code
         // precedent term-runtime.ts sets for a bad session (4404), not a raw
         // HTTP refusal (REQ-17.2).
-        wss.handleUpgrade(req, socket, head, (ws) => ws.close(4403, 'bad ticket'));
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          ws.on('error', () => ws.terminate());
+          ws.close(4403, 'bad ticket');
+        });
         return;
       }
       wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.on('error', () => ws.terminate());
         const conn = createChatConnection({
           queryFn: liveChatQuery,
           cwd: redeemed.projectDir,

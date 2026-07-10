@@ -263,6 +263,25 @@ test('identical inputs -> identical order and explored, every call — no RNG (R
   assert.deepEqual(first, second);
 });
 
+test('a persistently-failing log never blocks the round — safeAppend swallows the fallback ERROR throw too (PR #50 review)', () => {
+  // Both the primary append and the fallback ERROR append throw; the round order is
+  // already decided, so eligibleAdapters must still return, not double-throw out.
+  const throwingLog: EventLog = {
+    append() { throw new Error('disk full'); },
+    all: () => [],
+    exportJsonl: () => '',
+    projection: () => ({ tasks: {}, eventCount: 0 }),
+    close: () => undefined,
+  };
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')];
+  const stats = { 'a@v1': { attempts: 10, reviewingReached: 9 }, 'b@v1': { attempts: 10, reviewingReached: 1 } };
+  const wrapped = wrapRouterForOutcome(fakeRouterFrom(adapters), outcomeDeps(fakeRegistryFrom(adapters), throwingLog, stats, 100));
+  assert.doesNotThrow(() => {
+    const order = wrapped.eligibleAdapters('implementer');
+    assert.deepEqual(order.map((r) => r.record.adapterId), ['b', 'a'], 'the reorder+epsilon result still returns despite the failing log');
+  });
+});
+
 test('epsilon explores the RATED runner-up, never an unrated adapter pinned at index 1 (PR #50 review)', () => {
   // c (i0, rated .3) < a (i2, rated .9) is the real winner/runner-up pair; b (i1) is
   // unrated and must never move from its pinned slot, let alone get swapped in.

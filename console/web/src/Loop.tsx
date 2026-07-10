@@ -66,8 +66,15 @@ export function Loop(): React.JSX.Element {
     if (selected === null) return;
     let alive = true;
     let since = 0;
+    // Skip a tick while the previous poll is still in flight: two overlapping slow
+    // polls would read the same `since` (only advanced after the await), refetch the
+    // same events, and append both -> duplicated events / double-counted probes
+    // (PR #50 review).
+    let inFlight = false;
     const run = encodeURIComponent(selected);
     const poll = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const [evRes, apRes, depRes] = await Promise.all([
           fetch(`/api/loop/${run}/events?since=${since}`),
@@ -90,6 +97,8 @@ export function Loop(): React.JSX.Element {
         );
       } catch {
         if (alive) setPollError(tRef.current('loopPollFailedNetwork'));
+      } finally {
+        inFlight = false;
       }
     };
     void poll();
