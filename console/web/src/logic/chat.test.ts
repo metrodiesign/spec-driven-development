@@ -12,6 +12,26 @@ test('applyServerEvent: stream_delta appends an assistant message', () => {
   assert.deepEqual(s.messages, [{ role: 'assistant', text: 'hi' }]);
 });
 
+test('applyServerEvent: consecutive stream_delta events within one turn merge into ONE growing bubble (PR #50 review)', () => {
+  let s = initialChatUiState;
+  s = applyServerEvent(s, { type: 'stream_delta', text: 'Hel' });
+  s = applyServerEvent(s, { type: 'stream_delta', text: 'lo, ' });
+  s = applyServerEvent(s, { type: 'stream_delta', text: 'world' });
+  assert.deepEqual(s.messages, [{ role: 'assistant', text: 'Hello, world' }]);
+});
+
+test('applyServerEvent: a stream_delta after a user message starts a NEW bubble, not a merge (PR #50 review)', () => {
+  let s = initialChatUiState;
+  s = applyServerEvent(s, { type: 'stream_delta', text: 'first turn' });
+  s = appendUserMessage(s, 'another question');
+  s = applyServerEvent(s, { type: 'stream_delta', text: 'second turn' });
+  assert.deepEqual(s.messages, [
+    { role: 'assistant', text: 'first turn' },
+    { role: 'user', text: 'another question' },
+    { role: 'assistant', text: 'second turn' },
+  ]);
+});
+
 test('applyServerEvent: tool_card and approval_request are tracked separately (design.md G)', () => {
   let s = initialChatUiState;
   s = applyServerEvent(s, { type: 'tool_card', toolUseId: 'tu-1', name: 'Read', input: { path: 'a.ts' } });

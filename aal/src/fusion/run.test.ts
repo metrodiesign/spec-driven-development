@@ -172,6 +172,21 @@ test('cross_lineage naming an unavailable lineage fails fast panel_degraded, no 
   assert.equal(s.log.events.find((e) => e.type === 'FUSION_PANEL'), undefined, 'never dispatched a partial panel');
 });
 
+test('self diversity with enough seeds fans out one candidate per seed, no dispatch skipped (PR #50 review)', async () => {
+  const s = setupWith([{ id: 'A', lineage: 'familyA' }]);
+  const out = await runFusion(s.deps, profile({ panel: { size: 2, diversity: { kind: 'self', seeds: [1, 2] } } }), s.base);
+  assert.notEqual(out.escalateReason, 'panel_degraded');
+  const panel = s.log.events.find((e) => e.type === 'FUSION_PANEL');
+  assert.equal(panel?.payload['size'], 2);
+});
+
+test('self diversity with fewer seeds than the panel size fails fast panel_degraded instead of cycling seeds (PR #50 review)', async () => {
+  const s = setupWith([{ id: 'A', lineage: 'familyA' }]);
+  const out = await runFusion(s.deps, profile({ panel: { size: 2, diversity: { kind: 'self', seeds: [1] } } }), s.base);
+  assert.equal(out.escalateReason, 'panel_degraded');
+  assert.equal(s.log.events.find((e) => e.type === 'FUSION_PANEL'), undefined, 'never dispatched a degenerate (seed-reusing) panel');
+});
+
 test('fewer than two surviving candidates after an AdapterError escalates panel_degraded (REQ-9.8)', async () => {
   const s = setupWith([{ id: 'A', lineage: 'familyA', fault: 'throw_transport' }, { id: 'B', lineage: 'familyB' }]);
   const out = await runFusion(s.deps, profile(), s.base);

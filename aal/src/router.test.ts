@@ -263,6 +263,32 @@ test('identical inputs -> identical order and explored, every call — no RNG (R
   assert.deepEqual(first, second);
 });
 
+test('epsilon explores the RATED runner-up, never an unrated adapter pinned at index 1 (PR #50 review)', () => {
+  // c (i0, rated .3) < a (i2, rated .9) is the real winner/runner-up pair; b (i1) is
+  // unrated and must never move from its pinned slot, let alone get swapped in.
+  const adapters = [registeredAdapter('c'), registeredAdapter('b'), registeredAdapter('a')];
+  const stats = { 'c@v1': { attempts: 10, reviewingReached: 3 }, 'a@v1': { attempts: 10, reviewingReached: 9 } };
+  const log = fakeLog();
+  const wrapped = wrapRouterForOutcome(fakeRouterFrom(adapters), outcomeDeps(fakeRegistryFrom(adapters), log, stats, 100));
+  const order = wrapped.eligibleAdapters('implementer');
+  assert.deepEqual(
+    order.map((r) => r.record.adapterId),
+    ['c', 'b', 'a'],
+    'winner (a) and rated runner-up (c) swap; unrated b never moves from slot 1',
+  );
+  assert.equal(log.appended[0]?.payload['explored'], true);
+});
+
+test('epsilon never fires with only one rated adapter — no rated runner-up to explore (PR #50 review)', () => {
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')]; // b unrated
+  const stats = { 'a@v1': { attempts: 10, reviewingReached: 5 } };
+  const log = fakeLog();
+  const wrapped = wrapRouterForOutcome(fakeRouterFrom(adapters), outcomeDeps(fakeRegistryFrom(adapters), log, stats, 100));
+  const order = wrapped.eligibleAdapters('implementer');
+  assert.deepEqual(order.map((r) => r.record.adapterId), ['a', 'b'], 'no swap — b has zero evidence, not a real runner-up');
+  assert.equal(log.appended[0]?.payload['explored'], false);
+});
+
 test('never invents or drops a candidate — only permutes what the filtered eligible set already contains (REQ-15.6)', () => {
   const adapters = [registeredAdapter('a'), registeredAdapter('b'), registeredAdapter('c')];
   const stats = { 'a@v1': { attempts: 10, reviewingReached: 1 }, 'c@v1': { attempts: 10, reviewingReached: 9 } };

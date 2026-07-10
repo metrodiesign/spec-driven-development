@@ -30,6 +30,7 @@ export function Chat({ project }: { project: string }) {
   const { t } = useI18n();
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [state, setState] = useState<ChatUiState>(initialChatUiState);
   const [input, setInput] = useState('');
   const [resume, setResume] = useState('');
@@ -48,29 +49,40 @@ export function Chat({ project }: { project: string }) {
   useEffect(() => () => wsRef.current?.close(), []);
 
   async function start(): Promise<void> {
-    const body: Record<string, string | boolean> = { projectDir: project };
-    if (resume.trim().length > 0) body['resume'] = resume.trim();
-    if (fork) body['fork'] = true;
-    const r = await fetch('/api/chat/sessions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      setNote(t('chatSessionCreateFailed', { error: ((await r.json()) as { error?: string }).error ?? r.status }));
-      return;
+    // Reentry guard (PR #50 review): the Start button used to stay enabled until
+    // `connected` flips true on ws.onopen, so a double-click could create a second
+    // WebSocket without ever closing the first (leak + duplicate event handling).
+    if (connecting || connected) return;
+    setConnecting(true);
+    try {
+      const body: Record<string, string | boolean> = { projectDir: project };
+      if (resume.trim().length > 0) body['resume'] = resume.trim();
+      if (fork) body['fork'] = true;
+      const r = await fetch('/api/chat/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        setNote(t('chatSessionCreateFailed', { error: ((await r.json()) as { error?: string }).error ?? r.status }));
+        return;
+      }
+      const { wsTicket } = (await r.json()) as { sessionId: string; wsTicket: string };
+      setState(initialChatUiState);
+      const ws = new WebSocket(chatWsUrl(wsTicket));
+      ws.onopen = () => setConnected(true);
+      ws.onclose = () => setConnected(false);
+      ws.onmessage = (ev) => {
+        const event = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') as ChatServerEvent;
+        setState((s) => applyServerEvent(s, event));
+      };
+      wsRef.current = ws;
+      setNote(null);
+    } catch {
+      setNote(t('fetchUnavailable'));
+    } finally {
+      setConnecting(false);
     }
-    const { wsTicket } = (await r.json()) as { sessionId: string; wsTicket: string };
-    setState(initialChatUiState);
-    const ws = new WebSocket(chatWsUrl(wsTicket));
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onmessage = (ev) => {
-      const event = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') as ChatServerEvent;
-      setState((s) => applyServerEvent(s, event));
-    };
-    wsRef.current = ws;
-    setNote(null);
   }
 
   function send(): void {
@@ -116,7 +128,7 @@ export function Chat({ project }: { project: string }) {
           <label>
             <input type="checkbox" checked={fork} onChange={(e) => setFork(e.target.checked)} /> {t('chatForkLabel')}
           </label>{' '}
-          <button type="button" onClick={() => void start()}>
+          <button type="button" disabled={connecting} onClick={() => void start()}>
             {t('chatStartButton')}
           </button>
         </div>

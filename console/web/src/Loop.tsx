@@ -2,7 +2,7 @@
 // autonomous supervision does not require a terminal on the host. Thin view —
 // display shaping + control gating live in logic/loop.ts.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   attestationChecklist,
@@ -47,6 +47,16 @@ export function Loop(): React.JSX.Element {
   const [guidance, setGuidance] = useState('');
   const [pollError, setPollError] = useState<string | null>(null);
 
+  // The polling effect below intentionally depends only on [selected] (re-running it
+  // on every locale change would reset events/approvals/deployStatus needlessly) — so
+  // poll() reads the translator through this ref instead of closing over `t` directly,
+  // else error messages would stay in whatever language was active when the run was
+  // selected, even after a later locale toggle (PR #50 review).
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
+
   // Poll approvals + events since= the last seen seq (REQ-15.8) while a run is selected.
   useEffect(() => {
     setEvents([]);
@@ -76,10 +86,10 @@ export function Loop(): React.JSX.Element {
         // that is expected steady-state, not folded into the pollError banner below.
         setDeployStatus(depRes.ok ? ((await depRes.json()) as DeployStatus) : null);
         setPollError(
-          evRes.ok && apRes.ok ? null : t('loopPollFailed', { events: evRes.status, approvals: apRes.status }),
+          evRes.ok && apRes.ok ? null : tRef.current('loopPollFailed', { events: evRes.status, approvals: apRes.status }),
         );
       } catch {
-        if (alive) setPollError(t('loopPollFailedNetwork'));
+        if (alive) setPollError(tRef.current('loopPollFailedNetwork'));
       }
     };
     void poll();

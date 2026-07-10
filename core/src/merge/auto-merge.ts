@@ -110,6 +110,9 @@ export interface ApprovedMergeOptions {
   /** State on entry: REVIEWING for `runAutoMerge` (asserted); APPROVED for
    * `runApprovedMerge` (post `auto_approved` or `human_approved` — REQ-1.1). */
   state: TaskState;
+  /** Which basis got this call here (REQ-1.2/1.3) — recorded on the queue's
+   * MERGE_ENQUEUED audit trail when `queue` is supplied; irrelevant otherwise. */
+  approvalBasis: 'auto_approved' | 'human_approved';
   /** The fixture/target repo root (its .git holds both branches). */
   repoDir: string;
   /** Branch carrying the task's work, e.g. `task/<taskId>`. */
@@ -129,7 +132,9 @@ export interface ApprovedMergeOptions {
   queue?: MergeQueue;
 }
 
-export interface RunAutoMergeOptions extends ApprovedMergeOptions {
+// approvalBasis is omitted here: runAutoMerge decides it (always 'auto_approved') when
+// it calls runApprovedMerge internally — a caller of runAutoMerge never chooses it.
+export interface RunAutoMergeOptions extends Omit<ApprovedMergeOptions, 'approvalBasis'> {
   /** Inputs for the auto-approve gate (riskClass/acceptanceCriteria from the frozen contract). */
   decision: Omit<AutoApproveInput, 'diffPaths' | 'gatesGreen'> & { gatesGreen: boolean };
 }
@@ -249,6 +254,7 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     runId: opts.runId,
     taskId: opts.taskId,
     state,
+    approvalBasis: 'auto_approved',
     repoDir: opts.repoDir,
     taskBranch: opts.taskBranch,
     mainBranch: opts.mainBranch,
@@ -313,7 +319,7 @@ export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<Appr
     const result = await opts.queue.process({
       taskId: opts.taskId,
       taskBranch: opts.taskBranch,
-      approvalBasis: 'auto_approved',
+      approvalBasis: opts.approvalBasis,
       originalReport: opts.originalReport,
     });
     if (result.outcome === 'merge_conflict') {
@@ -393,6 +399,12 @@ export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<Appr
   if (!reproduced) {
     // Single escalate(audit_mismatch) whose handling reverts the merge commit as a
     // side effect — no separate roll_back transition on this path (REQ-8.3, AZ-5).
+    // The MergeQueue path only ever advances main via a plain `update-ref` in its OWN
+    // worktree (queue.ts) — it never checks out main in opts.repoDir — so opts.repoDir's
+    // working tree could still be sitting on the task branch here; check out main first
+    // so the revert always lands on the branch that was actually advanced (PR #50
+    // review; a no-op on the direct path, which already checked out main above).
+    git(opts.repoDir, 'checkout', '-q', opts.mainBranch);
     git(opts.repoDir, 'revert', '-m', '1', '--no-edit', mergeCommit);
     escalate('audit_mismatch', { mergeCommit });
     return { finalState: state, mergeCommit, sampled: true, reproduced: false };

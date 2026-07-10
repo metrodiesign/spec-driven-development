@@ -458,6 +458,80 @@ test('runAutoMerge routed through the queue: T2 fails -> ESCALATED(t2_failed), m
   }
 });
 
+test('runAutoMerge routed through the queue: sampled audit does NOT reproduce -> revert lands on main, not whatever opts.repoDir had checked out (PR #50 review)', async () => {
+  const fix = makeFixture();
+  try {
+    const { log, clock } = openLog(fix);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    // Task branch is actually RED (impl still 'wrong') but adds a feature file; a
+    // fabricated green report forces a merge the audit must then catch and revert.
+    // The queue never checks out main in fix.worktree (only integrationDir + an
+    // update-ref) — fix.worktree stays on TASK_BRANCH from setupTaskBranch, which is
+    // exactly the state the revert-target bug needs to be caught.
+    setupTaskBranch(fix, { 'src/impl.txt': 'wrong\n', 'src/feature.txt': 'ship\n' });
+    const fabricatedGreen: GateReport = {
+      tier: 'T1',
+      pass: true,
+      gateConfigHash: 'x',
+      commitHash: 'x',
+      worktreeHash: 'x',
+      envHash: 'x',
+      checks: [{ name: 'fullTests', pass: true, evidenceRef: 'blob://' + '0'.repeat(64) }],
+      scopeNote: 'x',
+    };
+
+    const integrationDir = setupIntegrationWorktree(fix);
+    const lease = createLeaseManager(fix.dbPath, clock, RUN_ID);
+    const gates = createGateRunner({
+      worktreeDir: integrationDir,
+      configPath: join(integrationDir, 'gate-ladder.json'),
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      log,
+      evidence,
+      clock,
+    });
+    const queue = createMergeQueue({
+      runId: RUN_ID,
+      repoDir: fix.worktree,
+      mainBranch: 'main',
+      worktreeDir: integrationDir,
+      gates,
+      log,
+      lease,
+    });
+
+    const out = await runAutoMerge({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      state: 'REVIEWING',
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+      decision: { riskClass: 'L1', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
+      originalReport: fabricatedGreen,
+      gateConfigRelPath: 'gate-ladder.json',
+      auditSampleRate: 100,
+      log,
+      evidence,
+      clock,
+      queue,
+    });
+
+    assert.equal(out.reproduced, false);
+    assert.equal(out.finalState, 'ESCALATED');
+    assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['why'], 'audit_mismatch');
+
+    git(fix.worktree, 'checkout', '-q', 'main');
+    assert.ok(
+      git(fix.worktree, 'ls-files', 'src/feature.txt').trim() === '',
+      'merge reverted on main — the queue-advanced ref, not fix.worktree\'s leftover task-branch checkout',
+    );
+  } finally {
+    fix.cleanup();
+  }
+});
+
 test('a non-qualifying task routes to the approval package: no merge, state unchanged (REQ-7.2)', async () => {
   const fix = makeFixture();
   try {

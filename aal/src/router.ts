@@ -107,7 +107,7 @@ function hashPercent(key: string): number {
 function reorderByOutcome(
   eligible: RegisteredAdapter[],
   stats: Record<string, ShadowOutcomeStats>,
-): { order: RegisteredAdapter[]; reordered: boolean } {
+): { order: RegisteredAdapter[]; reordered: boolean; rated: { i: number }[] } {
   const rateOf = (r: RegisteredAdapter): number | null => {
     const s = stats[breakerKey(r.record.adapterId, r.record.modelVersion)];
     return s === undefined || s.attempts === 0 ? null : s.reviewingReached / s.attempts;
@@ -115,7 +115,7 @@ function reorderByOutcome(
   const rated = eligible
     .map((a, i) => ({ a, i, rate: rateOf(a) }))
     .filter((x): x is { a: RegisteredAdapter; i: number; rate: number } => x.rate !== null);
-  if (rated.length === 0) return { order: eligible, reordered: false };
+  if (rated.length === 0) return { order: eligible, reordered: false, rated: [] };
 
   const sorted = [...rated].sort((x, y) => y.rate - x.rate);
   const order = [...eligible];
@@ -123,17 +123,30 @@ function reorderByOutcome(
     const winner = sorted[idx];
     if (winner !== undefined) order[slot.i] = winner.a;
   });
-  return { order, reordered: true };
+  // rated[k].i is exactly the destination slot that ends up holding rank k (the
+  // assignment above places sorted[idx] — rank idx — at rated[idx].i) — so rated[0].i/
+  // rated[1].i are the winner's and runner-up's positions regardless of where any
+  // pinned-unrated adapter sits.
+  return { order, reordered: true, rated };
 }
 
-/** Swap index 0/1 — the epsilon "explore the runner-up" move (REQ-15.2). Caller guarantees length >= 2. */
-function swapFirstTwo(list: RegisteredAdapter[]): RegisteredAdapter[] {
-  const out = [...list];
-  const first = out[0];
-  const second = out[1];
-  if (first === undefined || second === undefined) return out;
-  out[0] = second;
-  out[1] = first;
+/**
+ * Swap the winner with the RATED runner-up (REQ-15.2) — by rank, not physical
+ * index 0/1: an unrated adapter can sit at physical index 1 (reorderByOutcome
+ * never moves an unrated slot), and blindly swapping 0/1 would promote that
+ * zero-evidence adapter ahead of the true rated runner-up (PR #50 review).
+ * No-op when there is no second rated adapter to explore.
+ */
+function swapWithRatedRunnerUp(order: RegisteredAdapter[], rated: { i: number }[]): RegisteredAdapter[] {
+  const winnerPos = rated[0];
+  const runnerUpPos = rated[1];
+  if (winnerPos === undefined || runnerUpPos === undefined) return order;
+  const out = [...order];
+  const winner = out[winnerPos.i];
+  const runnerUp = out[runnerUpPos.i];
+  if (winner === undefined || runnerUp === undefined) return out;
+  out[winnerPos.i] = runnerUp;
+  out[runnerUpPos.i] = winner;
   return out;
 }
 
@@ -145,9 +158,11 @@ function swapFirstTwo(list: RegisteredAdapter[]): RegisteredAdapter[] {
  * round and appends ONLY `ROUTING_FROZEN` (REQ-15.5); otherwise no rated
  * adapter yet keeps the plain order with basis `insufficient_data` (REQ-15.7);
  * otherwise the set reorders by outcome (basis `reorder`) and MAY additionally
- * swap positions 0/1 when the deterministic explore hash lands under epsilon
- * AND the eligible set has >= 2 entries (REQ-15.2). Every non-frozen round
- * appends exactly one `OUTCOME_ROUTE {order, explored, basis}` (REQ-15.4).
+ * swap the winner with the rated runner-up when the deterministic explore hash
+ * lands under epsilon AND there are >= 2 RATED entries (REQ-15.2) — an unrated,
+ * zero-evidence adapter is never swapped in even if it physically sits at
+ * index 1. Every non-frozen round appends exactly one `OUTCOME_ROUTE
+ * {order, explored, basis}` (REQ-15.4).
  */
 export function wrapRouterForOutcome(
   router: Router,
@@ -185,11 +200,11 @@ export function wrapRouterForOutcome(
         safeAppend('ROUTING_FROZEN', { role });
         return eligible;
       }
-      const { order, reordered } = reorderByOutcome(eligible, deps.stats());
+      const { order, reordered, rated } = reorderByOutcome(eligible, deps.stats());
       let finalOrder = order;
       let explored = false;
-      if (reordered && eligible.length >= 2 && hashPercent(deps.exploreKey()) < deps.epsilonPercent) {
-        finalOrder = swapFirstTwo(finalOrder);
+      if (reordered && rated.length >= 2 && hashPercent(deps.exploreKey()) < deps.epsilonPercent) {
+        finalOrder = swapWithRatedRunnerUp(finalOrder, rated);
         explored = true;
       }
       safeAppend('OUTCOME_ROUTE', {

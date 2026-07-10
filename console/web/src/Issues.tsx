@@ -34,27 +34,35 @@ export function Issues(): React.JSX.Element {
   }, []);
 
   async function file(): Promise<void> {
-    const res = await fetch('/api/issues', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title, body }),
-    });
-    if (res.ok) {
-      setTitle('');
-      setBody('');
-      setNote(null);
-      refresh();
-    } else {
-      const err = (await res.json()) as { error?: string };
-      setNote(t('issuesFilingFailed', { error: err.error ?? res.status }));
+    try {
+      const res = await fetch('/api/issues', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, body }),
+      });
+      if (res.ok) {
+        setTitle('');
+        setBody('');
+        setNote(null);
+        refresh();
+      } else {
+        const err = (await res.json()) as { error?: string };
+        setNote(t('issuesFilingFailed', { error: err.error ?? res.status }));
+      }
+    } catch {
+      setNote(t('fetchUnavailable'));
     }
   }
 
   async function act(id: string, action: 'convert' | 'reject'): Promise<void> {
-    const res = await fetch(`/api/issues/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
-    const actionLabel = action === 'convert' ? t('issuesConvertButton') : t('reject');
-    setNote(res.ok ? null : t('issuesActionFailed', { action: actionLabel, status: res.status }));
-    refresh();
+    try {
+      const res = await fetch(`/api/issues/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+      const actionLabel = action === 'convert' ? t('issuesConvertButton') : t('reject');
+      setNote(res.ok ? null : t('issuesActionFailed', { action: actionLabel, status: res.status }));
+      refresh();
+    } catch {
+      setNote(t('fetchUnavailable'));
+    }
   }
 
   return (

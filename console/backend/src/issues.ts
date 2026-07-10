@@ -67,10 +67,17 @@ export function createIssue(dir: string, input: { title: string; body: string },
 /** REQ-8.4: list, oldest first. Only `<id>.json` files are records — `<id>.goal.yaml` drafts share the dir. */
 export function listIssues(dir: string): IssueRecord[] {
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((n) => n.endsWith('.json'))
-    .map((n) => JSON.parse(readFileSync(join(dir, n), 'utf8')) as IssueRecord)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const records: IssueRecord[] = [];
+  for (const n of readdirSync(dir)) {
+    if (!n.endsWith('.json')) continue;
+    try {
+      records.push(JSON.parse(readFileSync(join(dir, n), 'utf8')) as IssueRecord);
+    } catch {
+      // A corrupt record must not crash the whole listing (mirrors loadApprovedLessons's
+      // per-file skip, core/src/lessons/lessons.ts — PR #50 review).
+    }
+  }
+  return records.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 /**

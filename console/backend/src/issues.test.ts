@@ -61,6 +61,17 @@ test('listIssues: sorted oldest-first, ignores non-.json siblings like <id>.goal
   });
 });
 
+test('listIssues: a corrupt record is skipped, not thrown — the rest of the listing still returns (PR #50 review)', () => {
+  withDir((dir) => {
+    const a = createIssue(dir, { title: 'a', body: 'b' }, () => NOW);
+    assert.ok(a.ok);
+    if (!a.ok) return;
+    writeFileSync(join(dir, 'iss-corrupt.json'), '{ not valid json');
+    const listed = listIssues(dir);
+    assert.deepEqual(listed.map((i) => i.id), [a.issue.id], 'the corrupt file is skipped, the good record still lists');
+  });
+});
+
 test('convertIssue: writes a draft goal.yaml that freezeContract structurally refuses unedited (REQ-9.1/9.4)', () => {
   withDir((dir) => {
     const created = createIssue(dir, { title: 'add retries', body: 'flaky network calls need a retry' }, () => NOW);

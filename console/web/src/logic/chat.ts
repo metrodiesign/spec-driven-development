@@ -37,8 +37,19 @@ export const initialChatUiState: ChatUiState = { messages: [], toolCards: [], pe
  *  signals even for the SAME tool call (design.md G / REQ-18.1 vs 18.2). */
 export function applyServerEvent(state: ChatUiState, event: ChatServerEvent): ChatUiState {
   switch (event.type) {
-    case 'stream_delta':
+    case 'stream_delta': {
+      // The backend emits one stream_delta per text BLOCK within a single logical
+      // turn, not one per turn — append to the in-progress assistant bubble instead
+      // of starting a new one for every block (PR #50 review). A user/error message
+      // (or no message yet) means this delta starts a fresh turn instead.
+      const last = state.messages.at(-1);
+      if (last !== undefined && last.role === 'assistant') {
+        const messages = state.messages.slice(0, -1);
+        messages.push({ ...last, text: last.text + event.text });
+        return { ...state, messages };
+      }
       return { ...state, messages: [...state.messages, { role: 'assistant', text: event.text }] };
+    }
     case 'tool_card':
       return { ...state, toolCards: [...state.toolCards, { toolUseId: event.toolUseId, name: event.name, input: event.input }] };
     case 'approval_request':

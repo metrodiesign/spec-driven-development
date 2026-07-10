@@ -75,6 +75,7 @@ import {
   type Registry,
   type RouteHints,
   type Router,
+  type ShadowOutcomeStats,
   type ShadowProofReport,
 } from 'aal';
 import { runPlannerFusion } from './fusion.ts';
@@ -96,6 +97,40 @@ function parseRisk(v: unknown): RiskClass | null {
 }
 
 /**
+ * Lines actually changed (REQ-2.3's diff budget) — a raw `git diff` also carries
+ * file/hunk headers and unchanged context lines, which used to inflate the count
+ * against unrelated diff shape rather than the change size itself (PR #50 review).
+ */
+function countChangedLines(diff: string): number {
+  if (diff.length === 0) return 0;
+  return diff
+    .split('\n')
+    .filter((l) => (l.startsWith('+') && !l.startsWith('+++')) || (l.startsWith('-') && !l.startsWith('---')))
+    .length;
+}
+
+/**
+ * A round's `computeShadowOutcomeStats(log.all())` fold, shared between
+ * wrapRouterForOutcome and wrapRouterForShadow when both wrap the same round —
+ * each independently re-reading and re-folding the whole log was a real,
+ * byte-identical double cost every round outcome routing was active (PR #50
+ * review). `invalidate` is called at the top of every round (by the outermost
+ * wrapper) so a later round still sees its own new events.
+ */
+function createRoundStatsCache(log: EventLog): {
+  get: () => Record<string, ShadowOutcomeStats>;
+  invalidate: () => void;
+} {
+  let cached: Record<string, ShadowOutcomeStats> | null = null;
+  return {
+    get: () => (cached ??= computeShadowOutcomeStats(log.all())),
+    invalidate: () => {
+      cached = null;
+    },
+  };
+}
+
+/**
  * SHADOW_ROUTE recording from the composition root (REQ-7.1/7.3/7.4/7.5). Wraps
  * only `eligibleAdapters` — the one router method the main proposal flow
  * (`source.ts`) actually calls each round to pick its live choice (`eligible[0]`).
@@ -107,11 +142,21 @@ function parseRisk(v: unknown): RiskClass | null {
  */
 export function wrapRouterForShadow(
   router: Router,
-  deps: { registry: Registry; log: EventLog; runId: string; taskId: string },
+  deps: {
+    registry: Registry;
+    log: EventLog;
+    runId: string;
+    taskId: string;
+    /** Shared per-round fold (see createRoundStatsCache) — absent for every
+     *  pre-existing caller/test, which falls back to computing it directly here,
+     *  byte-identical to the old always-independent behavior. */
+    stats?: { get: () => Record<string, ShadowOutcomeStats>; invalidate: () => void };
+  },
 ): Router {
   return {
     ...router,
     eligibleAdapters(role: Role, hints?: RouteHints) {
+      deps.stats?.invalidate();
       const eligible = router.eligibleAdapters(role, hints);
       const live = eligible[0];
       if (live !== undefined && !shadowFrozen(deps.registry.all())) {
@@ -120,7 +165,7 @@ export function wrapRouterForShadow(
           role,
           liveChoice: liveKey,
           eligible: eligible.map((r) => breakerKey(r.record.adapterId, r.record.modelVersion)),
-          outcomeStats: computeShadowOutcomeStats(deps.log.all()),
+          outcomeStats: deps.stats?.get() ?? computeShadowOutcomeStats(deps.log.all()),
         });
         try {
           deps.log.append({
@@ -348,10 +393,11 @@ export async function runSupervisedLoop(opts: {
     // so shadow observes the already-reordered live choice.
     const outcomeMode = opts.outcomeRouting?.mode ?? 'shadow';
     let router: Router = createRouter(reg);
+    const roundStats = createRoundStatsCache(log);
     if (outcomeMode === 'active') {
       router = wrapRouterForOutcome(router, {
         registry: reg,
-        stats: () => computeShadowOutcomeStats(log.all()),
+        stats: roundStats.get,
         epsilonPercent: opts.outcomeRouting?.epsilon ?? 0,
         // Durable round count (OUTCOME_ROUTE events so far this run+task) so a
         // process restart mid-run never repeats an already-explored round (REQ-15.3).
@@ -362,7 +408,7 @@ export async function runSupervisedLoop(opts: {
       });
     }
     if (outcomeMode !== 'off') {
-      router = wrapRouterForShadow(router, { registry: reg, log, runId: RUN_ID, taskId: TASK_ID });
+      router = wrapRouterForShadow(router, { registry: reg, log, runId: RUN_ID, taskId: TASK_ID, stats: roundStats });
     }
     const taskContractExcerpt = {
       goalId: opts.contract.goal.id,
@@ -660,7 +706,7 @@ export async function runSupervisedLoop(opts: {
           // REQ-2: build a real package for a human to decide instead of leaving the
           // run stuck at REVIEWING with nothing in the approvals Map (Phase-3 gap #1).
           const diff = gitOut(fx.wt, 'diff', '--no-color', `main...${TASK_BRANCH}`);
-          const diffLineCount = diff.length === 0 ? 0 : diff.replace(/\n$/, '').split('\n').length;
+          const diffLineCount = countChangedLines(diff);
           const built = buildApprovalPackage({
             id: TASK_ID,
             taskId: TASK_ID,
@@ -700,6 +746,7 @@ export async function runSupervisedLoop(opts: {
                 runId: RUN_ID,
                 taskId: TASK_ID,
                 state: currentState(),
+                approvalBasis: 'human_approved',
                 repoDir: fx.wt,
                 taskBranch: TASK_BRANCH,
                 mainBranch: 'main',

@@ -977,3 +977,34 @@ test('outcome stats accumulate across rounds sharing a log — a proven adapter 
   assert.equal(latest?.payload['wouldChoose'], 'a@v1', 'a has the only proven reviewing-reached history — a real divergence');
   assert.equal(latest?.payload['basis'], 'highest_reviewing_rate');
 });
+
+test('wrapRouterForShadow reuses an injected round stats cache instead of independently recomputing (PR #50 review)', () => {
+  // The log itself has NO history for 'a' — an independent computeShadowOutcomeStats(log.all())
+  // would say insufficient_data. The injected cache claims 'a' is already proven instead; if the
+  // wrapper truly reuses it (rather than recomputing its own fold from the log), the recorded
+  // basis must reflect THIS injected verdict, not the empty log's.
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')];
+  const log = fakeLog();
+  let calls = 0;
+  const stats = {
+    get: (): Record<string, { attempts: number; reviewingReached: number }> => {
+      calls += 1;
+      return { 'a@v1': { attempts: 5, reviewingReached: 5 } };
+    },
+    invalidate: (): void => undefined,
+  };
+  const wrapped = wrapRouterForShadow(fakeRouter(adapters), {
+    registry: fakeRegistry(adapters),
+    log,
+    runId: 'RUN-1',
+    taskId: 'T-1',
+    stats,
+  });
+  wrapped.eligibleAdapters('implementer');
+  assert.equal(calls, 1, 'the shared cache was actually used');
+  assert.equal(
+    log.appended[0]?.payload['basis'],
+    'highest_reviewing_rate',
+    'reflects the injected stats, not an independent (empty) log recompute',
+  );
+});

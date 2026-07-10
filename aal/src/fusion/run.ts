@@ -91,7 +91,12 @@ function planPanel(deps: FusionDeps, profile: FusionProfile, base: AgentRequest,
     const only = eligible[0];
     if (only === undefined) return null;
     const seeds = profile.panel.diversity.seeds;
-    return Array.from({ length: size }, (_, i) => slot(only, i, seeds[i % Math.max(1, seeds.length)]));
+    // A panel this size needs a DISTINCT seed per slot — cycling short of that via
+    // modulo used to silently reuse seeds (duplicate/degenerate candidates) instead
+    // of the diversity the panel exists to produce; fail fast like cross_lineage's
+    // missing-lineage case instead (PR #50 review).
+    if (seeds.length < size) return null;
+    return Array.from({ length: size }, (_, i) => slot(only, i, seeds[i]));
   }
 
   // cross_lineage (REQ-9.1/9.7): one candidate per named lineage; a lineage with NO
