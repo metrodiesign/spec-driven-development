@@ -111,17 +111,22 @@ export interface LessonHitRateStats {
 }
 
 export function computeLessonHitRate(events: PlatformEvent[]): LessonHitRateStats {
+  // One pass collects both the injected-task set and the REVIEWING-task set, instead
+  // of an O(n^2) inner `events.some` scan per injected task (PR #50 review — same
+  // single-pass Set fix as aal's computeShadowOutcomeStats).
+  // Key a task INSTANCE by (runId, taskId), not taskId alone — same reason as aal's
+  // computeShadowOutcomeStats: the composition reuses a constant taskId per run, so
+  // taskId-only keying would collapse/cross-credit tasks if a multi-run log were ever
+  // folded (PR #64 review). Single-run today; this hardens the general contract.
+  const key = (e: PlatformEvent): string => `${e.runId}\u0000${String(e.taskId)}`;
   const injectedTasks = new Set<string>();
+  const reviewingTasks = new Set<string>();
   for (const e of events) {
-    if (e.type === 'LESSON_INJECTED' && e.taskId !== null) injectedTasks.add(e.taskId);
+    if (e.type === 'LESSON_INJECTED' && e.taskId !== null) injectedTasks.add(key(e));
+    else if (e.type === 'TASK_STATE' && e.taskId !== null && e.payload['state'] === 'REVIEWING') reviewingTasks.add(key(e));
   }
   if (injectedTasks.size === 0) return { injectionCount: 0, hitRateProxy: 0 };
   let hits = 0;
-  for (const taskId of injectedTasks) {
-    const reachedReviewing = events.some(
-      (e) => e.type === 'TASK_STATE' && e.taskId === taskId && e.payload['state'] === 'REVIEWING',
-    );
-    if (reachedReviewing) hits += 1;
-  }
+  for (const k of injectedTasks) if (reviewingTasks.has(k)) hits += 1;
   return { injectionCount: injectedTasks.size, hitRateProxy: hits / injectedTasks.size };
 }

@@ -187,6 +187,14 @@ test('self diversity with fewer seeds than the panel size fails fast panel_degra
   assert.equal(s.log.events.find((e) => e.type === 'FUSION_PANEL'), undefined, 'never dispatched a degenerate (seed-reusing) panel');
 });
 
+test('self diversity with DUPLICATE seeds fails fast panel_degraded — length is not distinctness (PR #50 review)', async () => {
+  const s = setupWith([{ id: 'A', lineage: 'familyA' }]);
+  // seeds [2, 2] has length 2 (== size) but would seat two identical-seed slots.
+  const out = await runFusion(s.deps, profile({ panel: { size: 2, diversity: { kind: 'self', seeds: [2, 2] } } }), s.base);
+  assert.equal(out.escalateReason, 'panel_degraded');
+  assert.equal(s.log.events.find((e) => e.type === 'FUSION_PANEL'), undefined, 'never dispatched two identical-seed candidates');
+});
+
 test('fewer than two surviving candidates after an AdapterError escalates panel_degraded (REQ-9.8)', async () => {
   const s = setupWith([{ id: 'A', lineage: 'familyA', fault: 'throw_transport' }, { id: 'B', lineage: 'familyB' }]);
   const out = await runFusion(s.deps, profile(), s.base);

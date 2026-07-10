@@ -35,6 +35,10 @@ const box: React.CSSProperties = {
   overflowWrap: 'anywhere',
 };
 const POLL_MS = 3000;
+// A hung fetch (e.g. the proxy waiting on a stale Human Plane upstream) never settles,
+// so without a timeout it would hold `inFlight` true forever and freeze all later ticks.
+// Abort comfortably above POLL_MS so a slow-but-live poll still completes (PR #64 review).
+const POLL_TIMEOUT_MS = 10_000;
 
 export function Loop(): React.JSX.Element {
   const { t } = useI18n();
@@ -66,13 +70,20 @@ export function Loop(): React.JSX.Element {
     if (selected === null) return;
     let alive = true;
     let since = 0;
+    // Skip a tick while the previous poll is still in flight: two overlapping slow
+    // polls would read the same `since` (only advanced after the await), refetch the
+    // same events, and append both -> duplicated events / double-counted probes
+    // (PR #50 review).
+    let inFlight = false;
     const run = encodeURIComponent(selected);
     const poll = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const [evRes, apRes, depRes] = await Promise.all([
-          fetch(`/api/loop/${run}/events?since=${since}`),
-          fetch(`/api/loop/${run}/approvals`),
-          fetch(`/api/loop/${run}/deploy`),
+          fetch(`/api/loop/${run}/events?since=${since}`, { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) }),
+          fetch(`/api/loop/${run}/approvals`, { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) }),
+          fetch(`/api/loop/${run}/deploy`, { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) }),
         ]);
         if (!alive) return;
         if (evRes.ok) {
@@ -90,6 +101,8 @@ export function Loop(): React.JSX.Element {
         );
       } catch {
         if (alive) setPollError(tRef.current('loopPollFailedNetwork'));
+      } finally {
+        inFlight = false;
       }
     };
     void poll();

@@ -40,6 +40,9 @@ const nodePtySpawn: SpawnPty = (file, args, opts): PtyLike => {
   };
 };
 
+/** The one path this runtime's WS bridge owns (shared with attachUnknownUpgradeGuard). */
+export const TERM_WS_PATH = '/api/term/ws';
+
 export interface TermRuntime {
   manager: TermManager;
   /** Attach the WS bridge to the HTTP server after the app is listening. */
@@ -67,9 +70,12 @@ export function createTermRuntime(opts: { projectsRoot: string; auditPath: strin
 
   function attachWs(server: Server): void {
     const wss = new WebSocketServer({ noServer: true });
+    // A ws receiver/protocol error (malformed client frame) with no 'error' listener
+    // is an unhandled 'error' -> process crash; a wss-level error the same (PR #50 review).
+    wss.on('error', () => undefined);
     server.on('upgrade', (req, socket, head) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-      if (url.pathname !== '/api/term/ws') return;
+      if (url.pathname !== TERM_WS_PATH) return;
       const ptyId = url.searchParams.get('ptyId') ?? '';
       const ticket = url.searchParams.get('ticket') ?? '';
       // Single-use ticket redemption (REQ-13.3); a bad/expired/reused ticket closes 4403.
@@ -79,6 +85,7 @@ export function createTermRuntime(opts: { projectsRoot: string; auditPath: strin
         return;
       }
       wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.on('error', () => ws.terminate());
         const re = manager.attach(ptyId);
         if (re === null) {
           ws.close(4404);

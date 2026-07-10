@@ -38,7 +38,13 @@ function readIssue(dir: string, id: string): IssueRecord | null {
   if (!ISSUE_ID_RE.test(id)) return null;
   const p = issuePath(dir, id);
   if (!existsSync(p)) return null;
-  return JSON.parse(readFileSync(p, 'utf8')) as IssueRecord;
+  try {
+    return JSON.parse(readFileSync(p, 'utf8')) as IssueRecord;
+  } catch {
+    // A corrupt record reads as not_found rather than a Fastify 500 on convert/reject
+    // (same per-file skip semantics as listIssues — PR #50 review).
+    return null;
+  }
 }
 
 function writeIssue(dir: string, issue: IssueRecord): void {

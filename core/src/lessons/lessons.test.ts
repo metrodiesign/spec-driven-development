@@ -228,6 +228,65 @@ test('cap truncates by count THEN cumulative bytes (REQ-12.5)', () => {
   }
 });
 
+test('reconciler: a corrupt PENDING file is skipped + ERROR-logged, not thrown — other lessons still reconcile (PR #50 review, REQ-12.6)', () => {
+  const h = harness();
+  try {
+    const good = proposeLessonFromHypothesis({
+      dir: h.dir, governanceLogPath: h.governanceLogPath, statement: 'good pending lesson',
+      sourceRunId: 'RUN-1', sourceTaskId: 'T-1', evidenceRefs: ['blob://good'], clock, log: h.log, runId: 'RUN-1', taskId: 'T-1',
+    });
+    const bad = proposeLessonFromHypothesis({
+      dir: h.dir, governanceLogPath: h.governanceLogPath, statement: 'bad pending lesson',
+      sourceRunId: 'RUN-1', sourceTaskId: 'T-1', evidenceRefs: ['blob://bad'], clock, log: h.log, runId: 'RUN-1', taskId: 'T-1',
+    });
+    if (good === null || bad === null) throw new Error('unreachable');
+
+    // Approve BOTH offline (CLI, no live run) so the reconciler tries to move each.
+    for (const p of listPendingProposals(readGovernanceLog(h.governanceLogPath))) {
+      approveProposal({ logPath: h.governanceLogPath, id: p.id, clock, decidedBy: 'human' });
+    }
+    // Corrupt one pending file so promoteLesson's JSON.parse throws for it.
+    writeFileSync(join(h.dir, 'pending', `${bad.id}.json`), '{ not valid json');
+
+    const loaded = loadApprovedLessons({
+      dir: h.dir, governanceLogPath: h.governanceLogPath, cap: { maxLessons: 5, maxBytes: 8192 },
+      log: h.log, runId: 'RUN-2', taskId: 'T-2',
+    });
+    assert.deepEqual(loaded.map((l) => l.id), [good.id], 'the good lesson reconciles + loads despite the corrupt sibling');
+    assert.ok(
+      h.log.all({ type: 'ERROR' }).some((e) => e.payload['reason'] === 'corrupt_lesson_file'),
+      'the corrupt pending file is ERROR-logged, the run is never blocked',
+    );
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('an individually-oversized lesson is skipped, never suppressing every OTHER lesson (PR #50 review, REQ-12.5)', () => {
+  const h = harness();
+  try {
+    mkdirSync(join(h.dir, 'approved'), { recursive: true });
+    // 'lsn-aaa' sorts first (hash order == filename sort) and alone exceeds the byte
+    // budget; the greedy `break` used to return [] and suppress b/c along with it.
+    writeFileSync(join(h.dir, 'approved', 'lsn-aaa.json'), JSON.stringify({
+      id: 'lsn-aaa', statement: 'x'.repeat(500), sourceRunId: 'RUN-1', sourceTaskId: 'T-1', evidenceRefs: [], proposedAt: '2026-07-09T00:00:00.000Z',
+    }));
+    for (const id of ['lsn-bbb', 'lsn-ccc']) {
+      writeFileSync(join(h.dir, 'approved', `${id}.json`), JSON.stringify({
+        id, statement: 'y'.repeat(50), sourceRunId: 'RUN-1', sourceTaskId: 'T-1', evidenceRefs: [], proposedAt: '2026-07-09T00:00:00.000Z',
+      }));
+    }
+    const loaded = loadApprovedLessons({ dir: h.dir, cap: { maxLessons: 5, maxBytes: 150 }, log: h.log, runId: 'RUN-1', taskId: 'T-1' });
+    assert.deepEqual(loaded.map((l) => l.id), ['lsn-bbb', 'lsn-ccc'], 'the oversized first lesson is skipped, the rest still load');
+    assert.ok(
+      h.log.all({ type: 'ERROR' }).some((e) => e.payload['reason'] === 'oversized_lesson' && e.payload['lessonId'] === 'lsn-aaa'),
+      'the oversized lesson is ERROR-logged by id',
+    );
+  } finally {
+    h.cleanup();
+  }
+});
+
 test('foldConfirmedHypotheses extracts statement/evidenceRef/runId/taskId, ignoring other event types', () => {
   const events = [
     { type: 'HYPOTHESIS_PROPOSED', runId: 'RUN-1', taskId: 'T-1', payload: { count: 1 } },

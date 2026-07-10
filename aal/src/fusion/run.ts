@@ -76,7 +76,10 @@ function escalate(deps: FusionDeps, profile: FusionProfile, reason: FusionEscala
 /** Build the N panel slots per the profile diversity, or null when a required lineage is unavailable (REQ-9.7). */
 function planPanel(deps: FusionDeps, profile: FusionProfile, base: AgentRequest, size: number): PanelSlot[] | null {
   const role = base.agentRole;
-  const eligible = deps.router.eligibleAdapters(role);
+  // Peek the SAME governed order the task loop routes through (REQ-16.2 same
+  // router/mode), but a panel build must not record a routing attempt or advance the
+  // epsilon round — record:false suppresses SHADOW_ROUTE/OUTCOME_ROUTE (PR #64 review).
+  const eligible = deps.router.eligibleAdapters(role, undefined, { record: false });
   const slot = (adapter: RegisteredAdapter, i: number, seed?: number): PanelSlot => ({
     adapter: adapter.adapter,
     lineage: adapter.lineage,
@@ -94,8 +97,10 @@ function planPanel(deps: FusionDeps, profile: FusionProfile, base: AgentRequest,
     // A panel this size needs a DISTINCT seed per slot — cycling short of that via
     // modulo used to silently reuse seeds (duplicate/degenerate candidates) instead
     // of the diversity the panel exists to produce; fail fast like cross_lineage's
-    // missing-lineage case instead (PR #50 review).
-    if (seeds.length < size) return null;
+    // missing-lineage case instead (PR #50 review). Length alone is not enough — the
+    // FIRST `size` seeds actually consumed must themselves be distinct (e.g. [2,2]
+    // has length 2 but seats two identical slots).
+    if (seeds.length < size || new Set(seeds.slice(0, size)).size < size) return null;
     return Array.from({ length: size }, (_, i) => slot(only, i, seeds[i]));
   }
 

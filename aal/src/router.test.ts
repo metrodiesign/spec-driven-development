@@ -263,6 +263,39 @@ test('identical inputs -> identical order and explored, every call — no RNG (R
   assert.deepEqual(first, second);
 });
 
+test('a persistently-failing log never blocks the round — safeAppend swallows the fallback ERROR throw too (PR #50 review)', () => {
+  // Both the primary append and the fallback ERROR append throw; the round order is
+  // already decided, so eligibleAdapters must still return, not double-throw out.
+  const throwingLog: EventLog = {
+    append() { throw new Error('disk full'); },
+    all: () => [],
+    exportJsonl: () => '',
+    projection: () => ({ tasks: {}, eventCount: 0 }),
+    close: () => undefined,
+  };
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')];
+  const stats = { 'a@v1': { attempts: 10, reviewingReached: 9 }, 'b@v1': { attempts: 10, reviewingReached: 1 } };
+  const wrapped = wrapRouterForOutcome(fakeRouterFrom(adapters), outcomeDeps(fakeRegistryFrom(adapters), throwingLog, stats, 100));
+  assert.doesNotThrow(() => {
+    const order = wrapped.eligibleAdapters('implementer');
+    assert.deepEqual(order.map((r) => r.record.adapterId), ['b', 'a'], 'the reorder+epsilon result still returns despite the failing log');
+  });
+});
+
+test('record:false peeks the reordered order but appends NOTHING — fusion panel reads the governed order without polluting stats (REQ-16.2, PR #64 review)', () => {
+  const adapters = [registeredAdapter('a'), registeredAdapter('b')];
+  const stats = { 'a@v1': { attempts: 10, reviewingReached: 1 }, 'b@v1': { attempts: 10, reviewingReached: 9 } }; // b outranks a
+  const log = fakeLog();
+  const wrapped = wrapRouterForOutcome(fakeRouterFrom(adapters), outcomeDeps(fakeRegistryFrom(adapters), log, stats, 0));
+  const peeked = wrapped.eligibleAdapters('planner', undefined, { record: false }).map((r) => r.record.adapterId);
+  assert.deepEqual(peeked, ['b', 'a'], 'the learned reorder IS applied on a peek — same governed order the task loop sees');
+  assert.equal(log.appended.length, 0, 'but no OUTCOME_ROUTE/ROUTING_FROZEN is recorded for a peek');
+  // a normal (recording) call on the SAME wrapper still records, proving the flag is the only difference
+  wrapped.eligibleAdapters('implementer');
+  assert.equal(log.appended.length, 1, 'a recording call still appends exactly one OUTCOME_ROUTE');
+  assert.equal(log.appended[0]?.type, 'OUTCOME_ROUTE');
+});
+
 test('epsilon explores the RATED runner-up, never an unrated adapter pinned at index 1 (PR #50 review)', () => {
   // c (i0, rated .3) < a (i2, rated .9) is the real winner/runner-up pair; b (i1) is
   // unrated and must never move from its pinned slot, let alone get swapped in.

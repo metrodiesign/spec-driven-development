@@ -106,6 +106,24 @@ test('freeze: deploy rejects failure_threshold >= probes (REQ-4.2, AZ-3)', () =>
   assert.throws(() => freezeContract(bytesOf(above), above), ContractInvalidError, 'threshold > probes');
 });
 
+test('freeze: deploy rejects a NEGATIVE failure_threshold (PR #50 review — `0 > -1` rolls a healthy deploy back)', () => {
+  const neg = { ...GOAL, deploy: { ...DEPLOY, observe: { ...DEPLOY.observe, probes: 3, failure_threshold: -1 } } };
+  assert.throws(() => freezeContract(bytesOf(neg), neg), ContractInvalidError);
+});
+
+test('freeze: deploy rejects a NON-INTEGER probes / failure_threshold (PR #50 review)', () => {
+  const fracProbes = { ...GOAL, deploy: { ...DEPLOY, observe: { ...DEPLOY.observe, probes: 2.5 } } };
+  assert.throws(() => freezeContract(bytesOf(fracProbes), fracProbes), ContractInvalidError, 'fractional probes');
+  const fracThreshold = { ...GOAL, deploy: { ...DEPLOY, observe: { ...DEPLOY.observe, probes: 5, failure_threshold: 1.5 } } };
+  assert.throws(() => freezeContract(bytesOf(fracThreshold), fracThreshold), ContractInvalidError, 'fractional threshold');
+});
+
+test('freeze: deploy accepts failure_threshold == 0 (a single failing probe rolls back)', () => {
+  const zero = { ...GOAL, deploy: { ...DEPLOY, observe: { ...DEPLOY.observe, probes: 3, failure_threshold: 0 } } };
+  const c = freezeContract(bytesOf(zero), zero);
+  assert.equal(c.deploy?.observe.failureThreshold, 0);
+});
+
 test('freeze: deploy accepts the boundary failure_threshold == probes - 1', () => {
   const ok = { ...GOAL, deploy: { ...DEPLOY, observe: { ...DEPLOY.observe, probes: 3, failure_threshold: 2 } } };
   const c = freezeContract(bytesOf(ok), ok);

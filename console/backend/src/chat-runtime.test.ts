@@ -5,9 +5,11 @@
 // untested-in-CI by design, mirroring term-runtime.ts).
 
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
+import type { Server } from 'node:http';
 
-import { buildLiveQueryOptions, redactChatEvent } from './chat-runtime.ts';
+import { attachUnknownUpgradeGuard, buildLiveQueryOptions, redactChatEvent } from './chat-runtime.ts';
 import type { ChatServerEvent } from './chat.ts';
 
 const fakeCanUseTool = (async () => ({ behavior: 'allow' as const })) as never;
@@ -81,4 +83,19 @@ test('redactChatEvent: a credential path is redacted and the home dir collapses 
 test('redactChatEvent: output is always valid JSON the client can parse (wire contract intact)', () => {
   const event: ChatServerEvent = { type: 'stream_delta', text: 'quotes " and \\ backslash and sk-abcdefgh12345678' };
   assert.doesNotThrow(() => JSON.parse(redactChatEvent(event, HOME)));
+});
+
+test('attachUnknownUpgradeGuard: destroys upgrades to unowned paths, leaves the runtimes\' own paths for them (PR #50 review)', () => {
+  // http.Server is an EventEmitter — emit 'upgrade' directly (no real socket needed).
+  const server = new EventEmitter() as unknown as Server;
+  attachUnknownUpgradeGuard(server, ['/api/chat/ws', '/api/term/ws']);
+  const emitUpgrade = (url: string): boolean => {
+    let destroyed = false;
+    server.emit('upgrade', { url }, { destroy: () => { destroyed = true; } }, Buffer.alloc(0));
+    return destroyed;
+  };
+  assert.equal(emitUpgrade('/api/chat/ws?ticket=x'), false, 'chat WS path is left for the chat runtime handler');
+  assert.equal(emitUpgrade('/api/term/ws?ptyId=1'), false, 'term WS path is left for the term runtime handler');
+  assert.equal(emitUpgrade('/nope'), true, 'an unknown path socket is destroyed, not leaked');
+  assert.equal(emitUpgrade('/'), true, 'the SPA path is not a WS path either');
 });
