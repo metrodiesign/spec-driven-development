@@ -35,6 +35,10 @@ const box: React.CSSProperties = {
   overflowWrap: 'anywhere',
 };
 const POLL_MS = 3000;
+// A hung fetch (e.g. the proxy waiting on a stale Human Plane upstream) never settles,
+// so without a timeout it would hold `inFlight` true forever and freeze all later ticks.
+// Abort comfortably above POLL_MS so a slow-but-live poll still completes (PR #64 review).
+const POLL_TIMEOUT_MS = 10_000;
 
 export function Loop(): React.JSX.Element {
   const { t } = useI18n();
@@ -77,9 +81,9 @@ export function Loop(): React.JSX.Element {
       inFlight = true;
       try {
         const [evRes, apRes, depRes] = await Promise.all([
-          fetch(`/api/loop/${run}/events?since=${since}`),
-          fetch(`/api/loop/${run}/approvals`),
-          fetch(`/api/loop/${run}/deploy`),
+          fetch(`/api/loop/${run}/events?since=${since}`, { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) }),
+          fetch(`/api/loop/${run}/approvals`, { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) }),
+          fetch(`/api/loop/${run}/deploy`, { signal: AbortSignal.timeout(POLL_TIMEOUT_MS) }),
         ]);
         if (!alive) return;
         if (evRes.ok) {
