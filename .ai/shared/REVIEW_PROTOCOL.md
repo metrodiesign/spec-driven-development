@@ -103,7 +103,11 @@ filesystem access).
 prefix. A record for an earlier head does not satisfy the gate — findings-fix pushes
 change the head, so either write a new record (new sha) or update the existing one and
 rename it; re-review scope after fixes is the operator's call, noted in the outcome
-column.
+column. **Exception**: when the current head's own commit contains nothing but that
+record file (the override path below always commits the record by itself), check the
+`<sha7>` against that commit's PARENT instead of the tip — the record-commit is not new
+code needing review, so writing it must not immediately invalidate itself. Any commit
+that changes anything else still counts as stale under the base rule.
 
 **Override path**: the review is expensive and human-priced — this gate never
 auto-runs `review-fanout` itself (a human decides to spend it). When triggered with no

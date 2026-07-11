@@ -33,7 +33,8 @@ off to sync-branch's existing steps for everything after.
      fail-open to "no gate"). Neither → skip straight to step 1 (unchanged fast path).
    - **If triggered**, check for `docs/reviews/PR-<n>-<sha7>.md` where `<sha7>` is the
      first 7 chars of the CURRENT `headRefOid` (a record for an earlier head counts as
-     missing — staleness rule).
+     missing — staleness rule, with the override-commit exception in
+     `REVIEW_PROTOCOL.md` so committing the record doesn't invalidate itself).
      - Record exists for the current head → proceed to step 1.
      - Missing or stale → **STOP** and ask the operator to either run `/review-fanout`
        on this PR's diff (its own output contract now includes writing the record), or
