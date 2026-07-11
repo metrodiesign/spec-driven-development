@@ -12,88 +12,88 @@
       "issue": 52,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT1XQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:633f439fc21dbb0b8be8febab25ee9f26c45553c6f04c71ceb6140a9fa52a54b",
-      "state": "open"
+      "bodyHash": "sha256:d698c2c37dd8d2d7487eabacd6196366c00b82f0c39485974df6eac8d75a5a22",
+      "state": "closed"
     },
     "2": {
       "issue": 53,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT2Uw",
       "subIssueLinked": true,
-      "bodyHash": "sha256:8a670392efc30850131d4acf58f360bc361b35c5b9b8c76b9d24a5271b11f72c",
-      "state": "open"
+      "bodyHash": "sha256:c1816ef77b470d6578b7644dfd68ffe1aa0195e1f9818b2e331b9f1f6d22e21b",
+      "state": "closed"
     },
     "3": {
       "issue": 54,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT3dw",
       "subIssueLinked": true,
-      "bodyHash": "sha256:332076f4e755caab3738802c0e0be0da299c99634573644a3c88fde8caeef039",
-      "state": "open"
+      "bodyHash": "sha256:190b0324d7bbddcba38e880bf156afd7db428aa8ec4b83dad6dd1ac39c156ce8",
+      "state": "closed"
     },
     "4": {
       "issue": 55,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT5Pw",
       "subIssueLinked": true,
-      "bodyHash": "sha256:416fd109cc54c2b676ba67e2265eec8d52f905642079d553f29e2ae75e303f24",
-      "state": "open"
+      "bodyHash": "sha256:2ea36727917a012648fd453edc918d9a235fb9c9c10c5a4d73fe34c120bff2b9",
+      "state": "closed"
     },
     "5": {
       "issue": 56,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT6TQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:233a4e830287f751c776db85ae4d2425c242ebd6aac8e312c9d6747d4ae1f186",
-      "state": "open"
+      "bodyHash": "sha256:a1d3305966f155d3e9a32be05387affedced68d7f757f58016c63427f99db671",
+      "state": "closed"
     },
     "6": {
       "issue": 57,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT75A",
       "subIssueLinked": true,
-      "bodyHash": "sha256:faf699c246fd2fe984411067c955ea8890575cb434bca24dd9544c5e8964874b",
-      "state": "open"
+      "bodyHash": "sha256:6e5a822148ed884e9bb0afe5f15d71bcf9184be8e66434e5b73997b43c5b3f2e",
+      "state": "closed"
     },
     "7": {
       "issue": 58,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT8vA",
       "subIssueLinked": true,
-      "bodyHash": "sha256:b699ee035fb893897d157f708b4e120b7a629445cdf9190b044bb8f08f179061",
-      "state": "open"
+      "bodyHash": "sha256:d2fe5702178fdf9bc2e7436f0346d15f212686de895109e3b1112b643bc85347",
+      "state": "closed"
     },
     "8": {
       "issue": 59,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT9qA",
       "subIssueLinked": true,
-      "bodyHash": "sha256:23b9f8724ffc17995fc2177cdc043517ca8ba45c44363060888b73da48a5eae4",
-      "state": "open"
+      "bodyHash": "sha256:c6651a455b16d3b505f12d3d27f1bb249caf25b030edff539fcb387a4ddffd54",
+      "state": "closed"
     },
     "9": {
       "issue": 60,
       "nodeId": "I_kwDOSt2IyM8AAAABIKT-og",
       "subIssueLinked": true,
-      "bodyHash": "sha256:f0d5dcb68e0f0a9dfeda919ab12875d6e75359311fbcb2e9b8cb2d13f64d8a7a",
-      "state": "open"
+      "bodyHash": "sha256:e69c13c5b3425c40e10636d019d96c547277bdee7bcec75b024f9fd4fed13c70",
+      "state": "closed"
     },
     "10": {
       "issue": 61,
       "nodeId": "I_kwDOSt2IyM8AAAABIKUASQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:d72a74ae94c2da02f9a394bf70d4739933584ccf4ed963f0dd4bedea405842f3",
-      "state": "open"
+      "bodyHash": "sha256:cb4ed9b86343f72280b5cda8c4e496211a1361733ddabf3eb2ed106335920956",
+      "state": "closed"
     },
     "11": {
       "issue": 62,
       "nodeId": "I_kwDOSt2IyM8AAAABIKUB8g",
       "subIssueLinked": true,
-      "bodyHash": "sha256:e4b3528485d70cc6f3c44e749924bf6cbb397f318711f86361ac4080d00627b1",
-      "state": "open"
+      "bodyHash": "sha256:38dfec69b4cafec12d9bc437f3a3107c0c6ccd027b4f6f69d6c9c86faf4a852a",
+      "state": "closed"
     },
     "12": {
       "issue": 63,
       "nodeId": "I_kwDOSt2IyM8AAAABIKUDJQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:9654e37b28b0e128abd23780d50891a41e281f64ccd8ffcd163da2320d37dc24",
-      "state": "open"
+      "bodyHash": "sha256:8212960e002ff139456e47dd452c1c973401e88c6f9712551fe1f1a7e994b1fc",
+      "state": "closed"
     }
   },
-  "lastSync": "2026-07-09T02:33:15+00:00",
+  "lastSync": "2026-07-11T06:03:22+00:00",
   "labelsEnsured": [
     "spec:platform-phase4",
     "spec-epic",
