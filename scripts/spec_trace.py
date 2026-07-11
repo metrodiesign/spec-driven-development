@@ -122,6 +122,14 @@ def iter_task_blocks(tasks_text):
     """yield task block ละหนึ่งข้อความ: บรรทัด checkbox (`- [ ]`/`- [x]`) + บรรทัด
     ต่อเนื่องที่ indent (ไม่ว่าง, ไม่ใช่ checkbox ใหม่) join ด้วยช่องว่างเดียว.
 
+    block สิ้นสุดที่บรรทัดต่อเนื่องบรรทัดแรกที่ขึ้นต้นด้วย `Evidence:`
+    (case-insensitive — นิยามเดียวกับ floor engine .ai/bin/check-evidence.sh):
+    Evidence transcript เป็น result artifact ไม่ใช่ spec marker — ถ้าปล่อยเข้า
+    block เนื้อ transcript ที่ quote `Satisfies:`/`Verify:` จะถูก parse เป็น
+    ref/command ปลอม (fake coverage ใน spec-trace gate, PR #102 fanout review).
+    ตัดแบบ line-anchored เท่านั้น — คำว่า `Evidence:` กลางบรรทัด (เช่นใน Verify
+    command) ไม่ใช่จุดตัด.
+
     เป็น single source ของนิยาม task boundary — `satisfies_text` (ตัวตรวจ coverage)
     และ `spec_to_goal.py` (per-task Satisfies↔Verify association) เดินไฟล์ผ่าน
     helper ตัวเดียวกัน semantics จึงไม่ drift.
@@ -142,6 +150,8 @@ def iter_task_blocks(tasks_text):
             if not nxt.strip() or not nxt[0].isspace():
                 break
             if nxt.lstrip().startswith(("- [ ]", "- [x]")):
+                break
+            if nxt.lstrip().lower().startswith("evidence:"):
                 break
             parts.append(nxt.strip())
             i += 1

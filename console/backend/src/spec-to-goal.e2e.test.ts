@@ -78,10 +78,12 @@ const FULL_TASKS = [
   '- [x] 2. Cover a dash range (checkbox state must not matter).',
   '     Satisfies: 2.1-2.2. Verify: pnpm test two',
   '- [ ] 3. Cover a single prefixed id, marker order shuffled; completed with an',
-  '     Evidence block that must NOT leak into the verification value.',
+  '     Evidence block that must NOT leak into the verification value, even when',
+  '     the transcript itself quotes spec markers (fanout review PR #102).',
   '     Satisfies: REQ-2.3. Depends on: 1. Verify: pnpm test three',
   '     Evidence:',
-  '       - test: `pnpm test three` -> 9 passed / 0 failed',
+  '       - test: `pnpm test three` -> 9 passed / 0 failed (transcript quoting',
+  '         Satisfies: 2.1 and Verify: echo fake must be parsed by nothing)',
   '       - deviations: none',
 ].join('\n');
 
@@ -150,6 +152,47 @@ test('Satisfies semantics match spec_trace: whole-REQ, dash range, REQ-N.M all r
     assert.equal(byId.get('AC-2.1'), 'pnpm test two', 'dash range 2.1-2.2');
     assert.equal(byId.get('AC-2.2'), 'pnpm test two', 'dash range 2.1-2.2');
     assert.equal(byId.get('AC-2.3'), 'pnpm test three', 'single REQ-N.M id, Verify after Depends on:, Evidence block excluded');
+  });
+});
+
+test('Evidence boundary: mid-line Evidence: stays verbatim in Verify, lowercase evidence: header still cuts (fanout review PR #102)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const body = ['## REQ-1: Boundary', '', '- 1.1 THE SYSTEM SHALL a', '- 1.2 THE SYSTEM SHALL b'].join('\n');
+    const tasks = [
+      '- [ ] 1. Verify command legitimately contains the word Evidence: mid-line.',
+      "     Satisfies: 1.1. Verify: grep -c 'Evidence:' tasks.md",
+      '- [x] 2. Completed task, lowercase evidence header (floor engine accepts it',
+      '     case-insensitively) with a transcript quoting a marker.',
+      '     Satisfies: 1.2. Verify: pnpm test b',
+      '     evidence:',
+      '       - test: `pnpm test b` -> 3 passed (transcript quotes Satisfies: 1.1 here)',
+    ].join('\n');
+    writeSpec(dir, 'fixture-feat', { requirements: reqDoc(body), tasks });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /2 acceptance criteria, 2 resolved \/ 0 unresolved/);
+    const acs = parseYaml(readFileSync(res.draftPath, 'utf8')).acceptance_criteria as { id: string; verification: string }[];
+    const byId = new Map(acs.map((a) => [a.id, a.verification]));
+    assert.equal(byId.get('AC-1.1'), "grep -c 'Evidence:' tasks.md", 'mid-line Evidence: is not a cut — command copied verbatim');
+    assert.equal(byId.get('AC-1.2'), 'pnpm test b', 'lowercase evidence: header cuts — quoted Satisfies: 1.1 must not double-cover');
+  });
+});
+
+test('spec-trace gate: Satisfies-last task with a transcript quoting other criteria must NOT fake coverage (fanout review PR #102)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const requirements = reqDoc(['## REQ-1: One', '', '- 1.1 THE SYSTEM SHALL a', '', '## REQ-2: Two', '', '- 2.1 THE SYSTEM SHALL b'].join('\n'));
+    const design = ['# Design: fixture-feat', '> Status: approved 2026-07-11', '', '## Requirement Traceability', '', '| element | REQ-1.1, REQ-2.1 |'].join('\n');
+    const tasks = [
+      '- [x] 1. Only real coverage is 1.1, with Satisfies deliberately the last marker.',
+      '     Verify: pnpm test one. Satisfies: 1.1',
+      '     Evidence:',
+      '       - test: covers REQ-2 acceptance, 2.1 passing in transcript prose only',
+    ].join('\n');
+    const specDir = writeSpec(dir, 'fixture-feat', { requirements, tasks });
+    writeFileSync(join(specDir, 'design.md'), design);
+    const res = spawnSync('bash', [traceWrapper, 'fixture-feat', dir], { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(res.status, 1, `trace gate must fail on uncovered 2.1, got:\n${res.stdout}\n${res.stderr}`);
+    assert.match(res.stdout, /2\.1/, 'reports 2.1 uncovered in tasks.md');
   });
 });
 
@@ -295,9 +338,11 @@ test('real archive phase4 via --specs-dir: header on line 3 + amended form pass,
     cpSync(join(repoRoot, '.ai', 'specs', 'archive', 'platform-phase4'), join(dir, 'platform-phase4'), { recursive: true });
     const res = generate(dir, 'platform-phase4');
     assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /126 acceptance criteria, 126 resolved \/ 0 unresolved/, 'archive resolved split pinned (fanout review PR #102)');
     const doc = parseYaml(readFileSync(res.draftPath, 'utf8'));
     assert.equal(doc.goal.title, 'platform-phase4', 'H1 `# Requirements — platform-phase4` form (REQ-3.2)');
     assert.equal(doc.goal.id, 'PLATFORM-PHASE4-001');
+    assert.equal(doc.pending_acceptance_criteria, undefined, 'nothing shifted to pending on the real archive');
     const active = (doc.acceptance_criteria ?? []) as { verification?: string }[];
     const pending = (doc.pending_acceptance_criteria ?? []) as { verification?: string }[];
     assert.equal(active.length + pending.length, 126, 'one AC per archived criterion (REQ-2.1)');

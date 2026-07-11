@@ -1,5 +1,5 @@
 # Design: platform-phase5-stage1 — Spec-to-Goal Generator
-> Status: approved 2026-07-11, amended 2026-07-11 (Verify-extraction stops at `Evidence:` — Codex P2 on PR #102; no REQ change)
+> Status: approved 2026-07-11, amended 2026-07-11 (task blocks end at the `Evidence:` header line in shared `iter_task_blocks` — Codex P2 + fanout review, PR #102; no REQ change)
 
 ## Architecture Overview
 
@@ -88,10 +88,16 @@ Architecture Overview):
   ให้ทั้งคู่เรียก helper ตัวเดียวกัน
 - ภายใน block (marker `Satisfies:` / `Verify:` / `Depends on:` / `Batch:` อยู่ลำดับ
   ใดก็ได้): แต่ละ segment = ข้อความหลัง marker ตัดท้ายที่ marker ตัวถัดไปตัวใดตัวหนึ่ง
-  ใน 4 ตัวนี้; การ scan ทั้ง block หยุดที่ `Evidence:` ตัวแรก (amended — Codex P2,
-  PR #102): task ที่ทำเสร็จแล้วมี Evidence transcript ต่อท้าย Verify — ถ้าไม่ตัด
-  verification จะกลืน transcript ทั้งก้อน และเนื้อ transcript ที่ quote marker เอง
-  จะถูก parse ผิด; ตัดแบบนี้ fail ไปทาง unresolved (human เติม) ไม่มีทาง fake-resolve
+  ใน 4 ตัวนี้
+- **Evidence boundary (amended — Codex P2 + fanout review, PR #102):** block จบที่
+  บรรทัดต่อเนื่องบรรทัดแรกที่*ขึ้นต้น*ด้วย `Evidence:` (line-anchored,
+  case-insensitive ตามนิยาม header ของ floor engine `.ai/bin/check-evidence.sh`) —
+  ตัดใน `iter_task_blocks` ชั้นเดียว ทั้งสอง consumer (spec-trace coverage gate +
+  generator) จึงมองไม่เห็น transcript เหมือนกัน ไม่มี drift; คำว่า `Evidence:`
+  กลางบรรทัด (เช่นใน Verify command) ไม่ใช่จุดตัด — Verify คง verbatim. ทิศ fail
+  ของ block ตาม convention (Evidence ต่อท้าย task): refs/verify หด → unresolved →
+  human เติม; block นอก convention ที่วาง Evidence ไว้ก่อน marker จะเสีย marker
+  หลังจุดตัดทั้งสอง tool เท่ากัน (มอง spec-trace แดงเป็นสัญญาณ)
 - `satisfies_refs = expand_refs(satisfies_segment, criteria_by_req)` (reuse)
 - `verify_cmd = verify_segment.strip()` — copy verbatim (แม้ไม่ใช่ executable command
   — analyze log: human review จับ)
@@ -277,10 +283,19 @@ Property-style เสริมใน case แรก: ทุก criterion จา�
   — เพิ่มเพื่อรองรับ banner step "set risk" (REQ-3.6): key ที่มองเห็นดีกว่าให้ human
   จำเองว่าต้องเพิ่ม; string "TODO" ที่ `parseRisk` ไม่รู้จัก → default L2 เหมือน absent
   (ไม่เปลี่ยนพฤติกรรม runtime)
-- **Amendment 2026-07-11 (Codex P2, PR #102):** นิยาม segment เดิม (ตัดที่ 4 marker
-  เท่านั้น) ทำ verification ของ spec ที่ทำเสร็จแล้ว (มี `Evidence:` block) กลืน
-  transcript ทั้งก้อน — reproduced กับ archive phase4 ทั้ง 126 AC. แก้ที่ generator
-  ชั้นเดียว: `task_maps` ตัด block ที่ `Evidence:` ตัวแรกก่อน scan marker
-  (`spec_trace.iter_task_blocks` ไม่แตะ — byte-identity ของ `satisfies_text` คงเดิม);
-  e2e เพิ่ม fixture task ที่มี Evidence + assertion กับ archive จริงว่าไม่มี
-  verification ตัวไหนมี `Evidence:`
+- **Amendment 2026-07-11 (Codex P2 + fanout review, PR #102):** นิยาม segment เดิม
+  (ตัดที่ 4 marker เท่านั้น) ทำ verification ของ spec ที่ทำเสร็จแล้ว (มี `Evidence:`
+  block) กลืน transcript ทั้งก้อน — reproduced กับ archive phase4 ทั้ง 126 AC
+  (Codex P2). รอบแรกแก้เป็น substring cut ใน `task_maps` ชั้นเดียว; fanout review
+  (6 CONFIRMED) พิสูจน์ว่าไม่พอ: (1) `satisfies_text`/spec-trace gate ซึ่งเป็น
+  consumer พี่น้องยัง parse transcript → fake coverage ใน CI gate ได้ (Satisfies
+  ท้าย block + transcript เอ่ยเลขเกณฑ์), (2) substring cut เอง fake-resolve ได้
+   2 ทาง (Verify ที่มีคำ `Evidence:` กลาง command ถูก truncate แต่ยัง resolve;
+  `Evidence:` กลาง prose ก่อน Satisfies ทำ refs หาย double-cover ยุบเหลือ 1 →
+  auto-resolve), (3) cut case-sensitive แต่ floor `check-evidence.sh` รับ header
+  แบบ case-insensitive. Fix สุดท้าย: ย้ายเป็น line-anchored + case-insensitive cut
+  ใน `iter_task_blocks` (single source ทั้งสอง consumer), เอา substring cut ใน
+  `task_maps` ออก — `satisfies_text` ยัง byte-identical ทั้ง 16 tasks.md จริง
+  (harness ยืนยัน); e2e pin ทุก mode: transcript quote marker, mid-line `Evidence:`
+  ใน Verify คง verbatim, lowercase `evidence:` header, spec-trace gate ต้องแดงเมื่อ
+  coverage มาจาก transcript, archive 126 resolved / 0 unresolved
