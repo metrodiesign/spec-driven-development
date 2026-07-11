@@ -99,6 +99,7 @@ check allow "note about -n flag"        "git commit -m 'note about -n flag'"
 check allow "global -c opt, clean commit" 'git -c user.x=y commit -m "normal"'
 check allow "git status"                'git status'
 check allow "git grep -n"               'git grep -n foo'
+# [#guard-read-vs-write] (.ai/shared/LESSONS.md, LESSONS-COVERAGE.md)
 # issue #27: read-only core.hooksPath queries are harmless and must NOT block
 check allow "read hooksPath bare"       'git config core.hooksPath'
 check allow "read hooksPath --get"      'git config --get core.hooksPath'

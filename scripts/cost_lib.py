@@ -14,6 +14,8 @@ RETRO_CMD     = "/spec-retro"       # command ที่ยืนยัน sessio
 TASK_ID_RE    = r"\d+"              # รูปแบบ task id; slug/ทศนิยม -> r"[\w.\-]+"
 TASK_ID_NUMERIC = True              # id เป็นเลขล้วน? (กำหนดการ cast + sort)
 # บรรทัด task ใน tasks.md เช่น "- [ ] 3." / "- [x] 3." (รองรับ -/* และ x/X)
+# เจตนาไม่รวมกับ .ai/bin/lib-guard.sh's CB_* (bash-only unification, REQ-3.2 ของ
+# sdd-guard-dedup) — python dialect นี้แยกเจตนา ดู lib-guard.sh สำหรับฝั่ง bash guard
 TASKS_CHECKBOX_RE = r"^[-*] \[[ xX]\] (" + TASK_ID_RE + r")"
 
 # ===== derived (ไม่ผูก workflow) =====

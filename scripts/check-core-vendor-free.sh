@@ -4,6 +4,7 @@
 # (unified-platform-spec.md §1.2, §2, §7). Vendor names are legal ONLY in Ring 2
 # (adapters/). Scans the whole tree of each ring including tests and comments;
 # the discipline is deliberate.
+# [#vendor-scan-includes-comments] (.ai/shared/LESSONS.md, LESSONS-COVERAGE.md)
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"

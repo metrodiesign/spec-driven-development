@@ -96,6 +96,7 @@ check block "push refs/heads/develop" 'git push origin HEAD:refs/heads/develop'
 
 # regression (review #1/#4/#5): rm recursive+force reachable via backslash / quotes / -c|eval wrapper.
 # token อันตรายประกอบ runtime กัน live guard บล็อก command ของ test เอง
+# [#guard-flatstring-escape-fail-open] (.ai/shared/LESSONS.md, LESSONS-COVERAGE.md)
 RM="r""m"
 check block "backslash rm -rf"       "\\${RM} -rf /tmp/x"
 check block "double-quoted rm -rf"   "\"${RM}\" -rf /tmp/x"

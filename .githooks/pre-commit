@@ -13,18 +13,24 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 BIN="$REPO_ROOT/.ai/bin"
 
+LIBGUARD="$BIN/lib-guard.sh"
+[ -r "$LIBGUARD" ] || { echo "Blocked: missing guard fragment $LIBGUARD — cannot verify guard patterns" >&2; exit 2; }
+# shellcheck source=../.ai/bin/lib-guard.sh
+. "$LIBGUARD"
+
 # 1. Secret scan (staged diff). check-secrets.sh exits non-zero when a secret is found.
 "$BIN/check-secrets.sh"
 
-# 2. Per-task Evidence check for staged tasks.md files.
-#    Scope-aware (not per-file): a commit is blocked only when a NEWLY-added `- [x]` task
-#    line carries no `Evidence:` line inside ITS OWN task block (from that `- [x]` line up to
-#    the next task marker or EOF). This is deliberately conservative:
-#      - pre-existing [x] tasks are NOT re-checked (only lines this diff adds),
-#      - an edit that adds no new [x] line cannot be blocked,
-#    so unrelated edits to a tasks.md don't cause false-blocks.
+# 2. Per-task Evidence check for staged tasks.md files. Delegates to the shared engine
+#    (.ai/bin/check-evidence.sh --added-only, REQ-1.2) so this policy cannot half-land
+#    relative to gate-task.sh's --strict mode. PRESENCE-ONLY, same as always: pre-existing
+#    [x] tasks are NOT re-checked (only lines this diff adds), and an edit that adds no new
+#    [x] line cannot be blocked, so unrelated edits to a tasks.md don't cause false-blocks.
 STAGED_TASKS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)tasks\.md$' || true)
 if [ -n "$STAGED_TASKS" ]; then
+  EVIDENCE_ENGINE="$BIN/check-evidence.sh"
+  [ -x "$EVIDENCE_ENGINE" ] || { echo "Blocked: missing/non-executable Evidence engine at $EVIDENCE_ENGINE" >&2; exit 2; }
+
   missing=()
   while IFS= read -r f; do
     [ -z "$f" ] && continue
@@ -34,51 +40,25 @@ if [ -n "$STAGED_TASKS" ]; then
     added_done=$(git diff --cached --unified=0 -- "$f" 2>/dev/null \
       | grep -E '^\+' | grep -vE '^\+\+\+' \
       | sed 's/^+//' \
-      | grep -iE '^[[:space:]]*- \[x\]' || true)
+      | grep -iE -- "$CB_DONE" || true)
     [ -z "$added_done" ] && continue
 
     # Staged (index) version of the whole file — the source of truth for task scope.
     staged_content=$(git show ":$f" 2>/dev/null || true)
     [ -z "$staged_content" ] && continue
 
-    # Walk the staged file as task blocks. A block opens on any `- [ ]` / `- [x]` line and
-    # runs until the next such line (or EOF). For each block whose opening line was newly
-    # added as `- [x]`, require an `Evidence:` line somewhere inside that block.
-    block_open=""        # opening line of the current block ("" until first task seen)
-    block_is_added_done=0
-    block_has_evidence=0
-    bad_in_file=0
-
-    # finalize the block we just left
-    finalize() {
-      if [ "$block_is_added_done" -eq 1 ] && [ "$block_has_evidence" -eq 0 ]; then
-        bad_in_file=1
-      fi
-    }
-
-    while IFS= read -r line; do
-      if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*- \[[ xX]\]'; then
-        # entering a new task block — close out the previous one first
-        [ -n "$block_open" ] && finalize
-        block_open="$line"
-        block_has_evidence=0
-        block_is_added_done=0
-        # is THIS opening line one of the newly-added [x] lines?
-        if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*- \[x\]'; then
-          # -F fixed-string match of the whole opening line against the added-[x] set.
-          # `-- "$line"` so a leading '-' in the line is not parsed as a grep option.
-          if printf '%s\n' "$added_done" | grep -qxF -- "$line"; then
-            block_is_added_done=1
-          fi
-        fi
-      elif printf '%s\n' "$line" | grep -qiE '^[[:space:]]*Evidence:'; then
-        block_has_evidence=1
-      fi
-    done <<<"$staged_content"
-    # close out the final block
-    [ -n "$block_open" ] && finalize
-
-    [ "$bad_in_file" -eq 1 ] && missing+=("$f")
+    ADDED_TMP="$(mktemp)"
+    printf '%s\n' "$added_done" > "$ADDED_TMP"
+    if out=$(printf '%s\n' "$staged_content" | "$EVIDENCE_ENGINE" --added-only "$ADDED_TMP"); then
+      : # pass
+    else
+      rc=$?
+      case $rc in
+        1) missing+=("$f") ;;
+        *) rm -f "$ADDED_TMP"; echo "Blocked: Evidence engine error (exit $rc) at $EVIDENCE_ENGINE" >&2; exit 2 ;;
+      esac
+    fi
+    rm -f "$ADDED_TMP"
   done <<<"$STAGED_TASKS"
 
   if [ "${#missing[@]}" -gt 0 ]; then

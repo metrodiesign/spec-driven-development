@@ -47,6 +47,11 @@ purpose to cut output cost.
      "breakdown ไม่พร้อม" fallback, paste that line as-is.
    - รายละเอียด/ข้อห้าม cost (dedup, การปันส่วน, ข้อจำกัด ledger, multi-session) ดู
      `references/cost-accounting.md` — อ่านเมื่อต้องตีความตัวเลขเกิน template ปกติ.
+   - Feature effectiveness metrics (sdd-spec-metrics REQ-4.1): `python3
+     scripts/spec-metrics.py --feature <active feature>` → paste its markdown table
+     verbatim at `<METRICS>`. Non-blocking (REQ-4.2): if the script fails or the
+     feature can't be determined, do NOT stop the retro — write "metrics unavailable:
+     <one-line reason>" in its place and continue.
 
 2. **Write the file** at `retrospectives/YYYY-MM/DD/HH.MM_<scope-slug>.md`
    (`<scope-slug>` = short kebab-case of the primary focus, e.g. `task4-header-nav`;
@@ -77,6 +82,13 @@ purpose to cut output cost.
    (แทนด้วย output ของ `scripts/session-cost.py --breakdown-only` — ตาราง token/model
    + cost ปันส่วน. ถ้า transcript ไม่มี usage แปะบรรทัด fallback ที่ script พิมพ์)
 
+   ## Feature Metrics
+
+   <METRICS>
+   (แทนด้วย output ของ `scripts/spec-metrics.py --feature <active feature>` —
+   non-blocking: ถ้า script fail หรือหา feature ไม่ได้ ใส่ "metrics unavailable: <เหตุผล>"
+   แทนตาราง แล้วทำ retro ต่อ ห้ามหยุด)
+
    ## Summary
 
    [2-4 ประโยค: ทำอะไรเสร็จ, REQ ID ที่ปิด, ผล verify (เขียว/เลข). จบ.]
@@ -89,10 +101,12 @@ purpose to cut output cost.
    ## Lessons Learned
 
    เพิ่มเฉพาะบทเรียน reusable, mistake-preventing จริง (0 ก็ได้ถ้าไม่มี). รูปแบบเดียวกับ
-   `.ai/shared/LESSONS.md` เพื่อ promote ตรงในขั้นถัดไป:
+   `.ai/shared/LESSONS.md` เพื่อ promote ตรงในขั้นถัดไป — ทุกบทเรียนที่จะ promote ต้องมี
+   classification กำกับ (sdd-lessons-to-guard-tests REQ-3.1; ไม่มี classification = retro
+   นี้ยังไม่ complete, ดู step 3):
 
-   - **Pattern**: [สิ่งที่ทำ/กับดัก] — **Why**: [ทำไมถึงสำคัญ/กันพลาดอะไร]
-   - **Discovery**: [สิ่งที่เพิ่งรู้] — **Why**: [นำไปใช้อย่างไร]
+   - **Pattern**: [สิ่งที่ทำ/กับดัก] — **Why**: [ทำไมถึงสำคัญ/กันพลาดอะไร] — **Classification**: mechanized|mechanizable|advisory
+   - **Discovery**: [สิ่งที่เพิ่งรู้] — **Why**: [นำไปใช้อย่างไร] — **Classification**: mechanized|mechanizable|advisory
 
    ## Next Steps
 
@@ -102,6 +116,17 @@ purpose to cut output cost.
 3. **Promote durable lessons (token-safe)**:
    Do NOT append lessons to CLAUDE.md. Add ONLY genuinely reusable, mistake-preventing
    lessons, and prune stale/duplicate ones. Route by scope:
+
+   **Classification is required for any lesson landing in `.ai/shared/LESSONS.md`**
+   (sdd-lessons-to-guard-tests REQ-3.1/3.3): pick one of `mechanized` (an executable
+   check already covers this — name it), `mechanizable` (a check is possible, not yet
+   built), or `advisory` (no executable surface makes sense — say why in one line, same
+   as `.ai/shared/LESSONS-COVERAGE.md`'s own reason column). Give the entry a `[#slug]`
+   marker and add its row to `LESSONS-COVERAGE.md` in the SAME commit — a lesson without
+   a classification, or a `mechanizable` one with no follow-up work item (a task in an
+   active spec's tasks.md, or a GitHub issue) created in THIS SAME retro, makes the retro
+   **incomplete** — do not close it silently; either finish the classification/follow-up
+   or explicitly note the gap in Next Steps.
    - Universal (process / workflow / git / CC tooling — applies on any task) →
      `.ai/shared/LESSONS.md` (always-on prefix — keep it lean).
    - Stack-specific implementation patterns (the project UI framework / styling system,

@@ -5,6 +5,12 @@
 C="${1:-$(cat)}"
 [ -n "$C" ] || exit 0
 
+BIN="$(cd "$(dirname "$0")" && pwd)"
+LIBGUARD="$BIN/lib-guard.sh"
+[ -r "$LIBGUARD" ] || { echo "Blocked: missing guard fragment $LIBGUARD — cannot verify bypass patterns" >&2; exit 2; }
+# shellcheck source=lib-guard.sh
+. "$LIBGUARD"
+
 block() {
   echo "Blocked: $1" >&2
   exit 2
@@ -20,7 +26,7 @@ block() {
 # .githooks` / `mv .githooks /tmp/bak` / `rm -rf .ai/bin` disable the floor just
 # as effectively as targeting one file inside it, so the trailing slash is
 # OPTIONAL ((/|$|[[:space:]])) and the bare dir form is covered.
-GUARD='(\.githooks(/[^[:space:]]*)?|\.ai/bin(/check-[^[:space:]]*\.sh|/gate-task\.sh|/?))([[:space:]]|$)'
+GUARD='(\.githooks(/[^[:space:]]*)?|\.ai/bin(/check-[^[:space:]]*\.sh|/gate-task\.sh|/lib-guard\.sh|/?))([[:space:]]|$)'
 # in-place destroy / move-away / write-to: chmod/chown/rm/truncate operate ON
 # their path arg, `tee FILE` writes TO its file arg, and `mv` of a guard path
 # REMOVES the floor from its place whether the guard is the source (move away)
@@ -36,7 +42,7 @@ echo "$C" | grep -qE "(cp|ln|install)[[:space:]]+[^[:space:]]+[[:space:]].*$GUAR
   block 'overwrite into guard or floor (.githooks | .ai/bin/check-*.sh | gate-task.sh) — ห้ามทับ enforcement floor'
 # redirect/write INTO a guard/floor file (e.g. `echo >> .githooks/pre-commit`,
 # overwrite an engine, or pipe into .git/config) disables it just the same
-echo "$C" | grep -qE '>[[:space:]]*(\.githooks/|\.ai/bin/check-[^[:space:]]*\.sh|\.ai/bin/gate-task\.sh|[^[:space:]]*\.git/config)' &&
+echo "$C" | grep -qE '>[[:space:]]*(\.githooks/|\.ai/bin/check-[^[:space:]]*\.sh|\.ai/bin/gate-task\.sh|\.ai/bin/lib-guard\.sh|[^[:space:]]*\.git/config)' &&
   block 'redirect/overwrite into guard, floor, or .git/config — ห้ามปิดหรือทับ enforcement floor'
 # setting hooksPath via config WRITE points hooks at an empty dir and disables the
 # secret-guard floor regardless of a `git` token. block only WRITES; a read-only
@@ -68,10 +74,8 @@ echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
 # collapse newlines to spaces FIRST so a quoted message spanning a literal newline is
 # a single line when de-quoted — otherwise sed (line-oriented) leaves an in-message -n
 # behind and false-blocks (issue #28). real -n/--no-verify outside quotes still survives.
-# GO = git global options ระหว่าง `git` กับ subcommand (`git -c user.x=y commit -nm`)
-# — anchor ติดกันเคยหลุด (bypass คลาสเดียวกับ PR #38/#39); pattern ก็อปตรงจาก
-# check-destructive.sh (single source of the tested regex)
-GO='([[:space:]]+(-[cC][[:space:]]*[^[:space:];&|]+|--(git-dir|work-tree|namespace|super-prefix|exec-path|config-env|attr-source|object-format)[[:space:]]+[^[:space:];&|-][^[:space:];&|]*|--[^[:space:];&|]+|-[pP]))*'
+# GO (git global-options regex, covers `git -c user.x=y commit -nm` etc — anchor-adjacent
+# bypass class PR #38/#39) — single source in lib-guard.sh, sourced above.
 DQ=$(printf '%s' "$C" | tr '\n' ' ' | sed -e "s/'[^']*'/ /g" -e 's/"[^"]*"/ /g')
 # ponytail: flat-string de-quote — a flag WRAPPED in quotes (`git commit "-nm"`) is
 # stripped together with its quoted span and slips this Tier-2 check. Not fixable by

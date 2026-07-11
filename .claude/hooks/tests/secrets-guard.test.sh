@@ -161,6 +161,111 @@ run_case allow "os.environ read reference"        staged src/app.py \
 run_case allow "settings dotted reference"        staged src/cfg.ts \
   'const secret_key = settings.authTokenProviderService;'
 
+
+# ============================================================================
+# sdd-ci-incremental-checks: --range <base>..<head> mode (REQ-1, REQ-2.3, REQ-5.1)
+# Two-commit fixture (base clean, head introduces $content in $fname), then the engine
+# is run with --range base..head. Hunk-scoped like staged: a secret OUTSIDE the range
+# (in an earlier commit) must not fire; one INSIDE it must.
+# ============================================================================
+run_case_range() { # $1=expect $2=desc $3=fname $4=head_content $5(opt)=skip $6(opt)=bad_base
+  local want=2; [ "$1" = allow ] && want=0
+  local desc="$2" fname="$3" content="$4" do_skip="${5:-}" bad_base="${6:-}"
+  local tmp; tmp="$(mktemp -d -t secguard-range.XXXXXX)"
+  local rc out
+
+  out=$(
+    cd "$tmp" || exit 99
+    git init -q . 2>/dev/null
+    git config user.email t@t.t; git config user.name t
+    printf 'baseline\n' > README.md
+    git add -A 2>/dev/null; git commit -q -m base 2>/dev/null
+    BASE_SHA=$(git rev-parse HEAD)
+    mkdir -p "$(dirname "./$fname")" 2>/dev/null || true
+    printf '%s\n' "$content" > "./$fname"
+    git add -A 2>/dev/null; git commit -q -m head 2>/dev/null
+    HEAD_SHA=$(git rev-parse HEAD)
+    [ "$bad_base" = 1 ] && BASE_SHA="not-a-real-ref-0000"
+    if [ "$do_skip" = skip ]; then export "$SKIPVAR=1"; fi
+    "$ENGINE" --range "$BASE_SHA..$HEAD_SHA" 2>&1
+  )
+  rc=$?
+  rm -rf "$tmp"
+  RANGE_OUT="$out"
+  if [ "$rc" -eq "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    echo "FAIL [range][$1] $desc -> exit $rc (want $want) :: $out"
+  fi
+}
+
+run_case_range block "secret introduced in the head commit"     src/a.txt \
+  'aws_key = AKIAIOSFODNN7EXAMPLE0'
+if ! printf '%s' "$RANGE_OUT" | grep -q 'AWS credential pattern'; then
+  fail=$((fail+1)); echo "FAIL: range block did not name the AWS pattern :: $RANGE_OUT"
+fi
+
+echo "--- REQ-1.3/2.4: unresolvable base endpoint falls back to --all, cause logged, still catches the tree secret ---"
+run_case_range block "bad base endpoint -> --all fallback still catches it" src/b.txt \
+  'aws_key = AKIAIOSFODNN7EXAMPLE0' "" 1
+printf '%s' "$RANGE_OUT" | grep -q 'falling back to --all' \
+  && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: fallback cause not logged :: $RANGE_OUT"; }
+
+echo "--- REQ-1.4/ARC-F10: SECRET_GUARD_SKIP ignored in --range (CI hard gate) ---"
+run_case_range block "skip var IGNORED in --range" src/c.txt \
+  'aws_key = AKIAIOSFODNN7EXAMPLE0' skip
+
+echo "--- REQ-1.1: old secret OUTSIDE the range (earlier commit) must NOT fire ---"
+tmp="$(mktemp -d -t secguard-range2.XXXXXX)"
+out=$(
+  cd "$tmp" || exit 99
+  git init -q . 2>/dev/null
+  git config user.email t@t.t; git config user.name t
+  printf 'aws_key = AKIAIOSFODNN7EXAMPLE0\n' > secret_early.txt
+  git add -A 2>/dev/null; git commit -q -m early-secret 2>/dev/null
+  RANGE_BASE=$(git rev-parse HEAD)
+  printf 'clean change one\n' > clean1.txt
+  git add -A 2>/dev/null; git commit -q -m clean1 2>/dev/null
+  printf 'clean change two\n' > clean2.txt
+  git add -A 2>/dev/null; git commit -q -m clean2 2>/dev/null
+  RANGE_HEAD=$(git rev-parse HEAD)
+  "$ENGINE" --range "$RANGE_BASE..$RANGE_HEAD" 2>&1
+)
+rc=$?
+rm -rf "$tmp"
+if [ "$rc" -eq 0 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [range][allow] secret outside range -> exit $rc :: $out"; fi
+
+echo "--- REQ-1.2: same secret (mode-agnostic AWS reason) via staged vs --range -> identical reason line ---"
+STAGED_TMP="$(mktemp -d -t secguard-parity-staged.XXXXXX)"
+STAGED_OUT=$(
+  cd "$STAGED_TMP" || exit 99
+  git init -q . 2>/dev/null; git config user.email t@t.t; git config user.name t
+  printf 'aws_key = AKIAIOSFODNN7EXAMPLE0\n' > s.txt
+  git add -A 2>/dev/null
+  "$ENGINE" 2>&1
+)
+rm -rf "$STAGED_TMP"
+RANGE_TMP="$(mktemp -d -t secguard-parity-range.XXXXXX)"
+RANGE_PARITY_OUT=$(
+  cd "$RANGE_TMP" || exit 99
+  git init -q . 2>/dev/null; git config user.email t@t.t; git config user.name t
+  printf 'baseline\n' > README.md; git add -A 2>/dev/null; git commit -q -m base 2>/dev/null
+  B=$(git rev-parse HEAD)
+  printf 'aws_key = AKIAIOSFODNN7EXAMPLE0\n' > s.txt
+  git add -A 2>/dev/null; git commit -q -m head 2>/dev/null
+  H=$(git rev-parse HEAD)
+  "$ENGINE" --range "$B..$H" 2>&1
+)
+rm -rf "$RANGE_TMP"
+STAGED_REASON=$(printf '%s' "$STAGED_OUT" | grep -F 'AWS credential pattern')
+RANGE_REASON=$(printf '%s' "$RANGE_PARITY_OUT" | grep -F 'AWS credential pattern')
+if [ -n "$STAGED_REASON" ] && [ "$STAGED_REASON" = "$RANGE_REASON" ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL [1.2 parity] staged=[$STAGED_REASON] range=[$RANGE_REASON]"
+fi
+
 echo "---"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
