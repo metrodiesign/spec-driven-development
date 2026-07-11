@@ -155,6 +155,9 @@ test('Satisfies semantics match spec_trace: whole-REQ, dash range, REQ-N.M all r
   });
 });
 
+// [#shared-iterator-boundary-altitude] LESSONS.md tripwire: this case and the
+// spec-trace fake-coverage case below pin the shared-iterator Evidence rule
+// (line-anchored, case-insensitive, cut in iter_task_blocks — never per-consumer).
 test('Evidence boundary: mid-line Evidence: stays verbatim in Verify, lowercase evidence: header still cuts (fanout review PR #102)', { skip }, () => {
   withSpecsDir((dir) => {
     const body = ['## REQ-1: Boundary', '', '- 1.1 THE SYSTEM SHALL a', '- 1.2 THE SYSTEM SHALL b'].join('\n');
