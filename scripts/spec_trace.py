@@ -118,33 +118,55 @@ def design_traceability_text(design_text):
     return rest[: nxt.start()] if nxt else rest
 
 
-def satisfies_text(tasks_text):
-    """รวมเฉพาะส่วนอ้างอิงบนบรรทัด `Satisfies:` (ตัดท้ายที่ Depends on:/Verify:/Batch:).
+def iter_task_blocks(tasks_text):
+    """yield task block ละหนึ่งข้อความ: บรรทัด checkbox (`- [ ]`/`- [x]`) + บรรทัด
+    ต่อเนื่องที่ indent (ไม่ว่าง, ไม่ใช่ checkbox ใหม่) join ด้วยช่องว่างเดียว.
 
-    บรรทัดต่อเนื่องที่ indent (ไม่ว่าง, ไม่ใช่ checkbox `- [ ]`/`- [x]` ใหม่)
-    ถูก join เข้ากับบรรทัด Satisfies: ก่อนตัดท้าย — กัน reference ที่ถูก wrap หล่นหาย.
+    block สิ้นสุดที่บรรทัดต่อเนื่องบรรทัดแรกที่ขึ้นต้นด้วย `Evidence:`
+    (case-insensitive — นิยามเดียวกับ floor engine .ai/bin/check-evidence.sh):
+    Evidence transcript เป็น result artifact ไม่ใช่ spec marker — ถ้าปล่อยเข้า
+    block เนื้อ transcript ที่ quote `Satisfies:`/`Verify:` จะถูก parse เป็น
+    ref/command ปลอม (fake coverage ใน spec-trace gate, PR #102 fanout review).
+    ตัดแบบ line-anchored เท่านั้น — คำว่า `Evidence:` กลางบรรทัด (เช่นใน Verify
+    command) ไม่ใช่จุดตัด.
+
+    เป็น single source ของนิยาม task boundary — `satisfies_text` (ตัวตรวจ coverage)
+    และ `spec_to_goal.py` (per-task Satisfies↔Verify association) เดินไฟล์ผ่าน
+    helper ตัวเดียวกัน semantics จึงไม่ drift.
 
     checkbox literal นี้เป็น python dialect แยกเจตนาจาก .ai/bin/lib-guard.sh's CB_*
     (bash-only unification, REQ-3.2 ของ sdd-guard-dedup) — ไม่ unify ข้ามภาษา.
     """
-    segments = []
     lines = tasks_text.splitlines()
     i = 0
     while i < len(lines):
         line = lines[i]
         i += 1
-        if "Satisfies:" not in line:
+        if not line.lstrip().startswith(("- [ ]", "- [x]")):
             continue
-        parts = [line.split("Satisfies:", 1)[1]]
+        parts = [line]
         while i < len(lines):
             nxt = lines[i]
             if not nxt.strip() or not nxt[0].isspace():
                 break
             if nxt.lstrip().startswith(("- [ ]", "- [x]")):
                 break
+            if nxt.lstrip().lower().startswith("evidence:"):
+                break
             parts.append(nxt.strip())
             i += 1
-        segments.append(re.split(r"Depends on:|Verify:|Batch:", " ".join(parts))[0])
+        yield " ".join(parts)
+
+
+def satisfies_text(tasks_text):
+    """รวมเฉพาะส่วนอ้างอิงหลัง `Satisfies:` ของแต่ละ task block
+    (ตัดท้ายที่ Depends on:/Verify:/Batch:) — build บน `iter_task_blocks`."""
+    segments = []
+    for block in iter_task_blocks(tasks_text):
+        if "Satisfies:" not in block:
+            continue
+        segments.append(
+            re.split(r"Depends on:|Verify:|Batch:", block.split("Satisfies:", 1)[1])[0])
     return "\n".join(segments)
 
 

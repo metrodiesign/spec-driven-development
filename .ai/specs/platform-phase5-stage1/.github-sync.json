@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "feature": "platform-phase5-stage1",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 99,
+    "nodeId": "I_kwDOSt2IyM8AAAABIdmYhg",
+    "bodyHash": "sha256:ca2e40afd32e3788be29b117db54675eb884f33a786f38918c2fc719b3fab0e2"
+  },
+  "tasks": {
+    "1": {
+      "issue": 100,
+      "nodeId": "I_kwDOSt2IyM8AAAABIdme0g",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:890acc3c755614d633efacce709b3f748a4b05a0d280d7242df0c65a5ec7eeae",
+      "state": "open"
+    },
+    "2": {
+      "issue": 101,
+      "nodeId": "I_kwDOSt2IyM8AAAABIdmj6Q",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:8c4a2a89cd9ac48fe5954595ba4141c6fcd18bc58b14877eacbd4cd717c56fed",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T15:16:42Z",
+  "labelsEnsured": ["spec:platform-phase5-stage1", "spec-epic", "spec-task", "req-spine"]
+}
