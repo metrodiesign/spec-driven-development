@@ -1,5 +1,5 @@
 # Design: platform-phase5-stage1 — Spec-to-Goal Generator
-> Status: approved 2026-07-11
+> Status: approved 2026-07-11, amended 2026-07-11 (Verify-extraction stops at `Evidence:` — Codex P2 on PR #102; no REQ change)
 
 ## Architecture Overview
 
@@ -88,7 +88,10 @@ Architecture Overview):
   ให้ทั้งคู่เรียก helper ตัวเดียวกัน
 - ภายใน block (marker `Satisfies:` / `Verify:` / `Depends on:` / `Batch:` อยู่ลำดับ
   ใดก็ได้): แต่ละ segment = ข้อความหลัง marker ตัดท้ายที่ marker ตัวถัดไปตัวใดตัวหนึ่ง
-  ใน 4 ตัวนี้
+  ใน 4 ตัวนี้; การ scan ทั้ง block หยุดที่ `Evidence:` ตัวแรก (amended — Codex P2,
+  PR #102): task ที่ทำเสร็จแล้วมี Evidence transcript ต่อท้าย Verify — ถ้าไม่ตัด
+  verification จะกลืน transcript ทั้งก้อน และเนื้อ transcript ที่ quote marker เอง
+  จะถูก parse ผิด; ตัดแบบนี้ fail ไปทาง unresolved (human เติม) ไม่มีทาง fake-resolve
 - `satisfies_refs = expand_refs(satisfies_segment, criteria_by_req)` (reuse)
 - `verify_cmd = verify_segment.strip()` — copy verbatim (แม้ไม่ใช่ executable command
   — analyze log: human review จับ)
@@ -274,3 +277,10 @@ Property-style เสริมใน case แรก: ทุก criterion จา�
   — เพิ่มเพื่อรองรับ banner step "set risk" (REQ-3.6): key ที่มองเห็นดีกว่าให้ human
   จำเองว่าต้องเพิ่ม; string "TODO" ที่ `parseRisk` ไม่รู้จัก → default L2 เหมือน absent
   (ไม่เปลี่ยนพฤติกรรม runtime)
+- **Amendment 2026-07-11 (Codex P2, PR #102):** นิยาม segment เดิม (ตัดที่ 4 marker
+  เท่านั้น) ทำ verification ของ spec ที่ทำเสร็จแล้ว (มี `Evidence:` block) กลืน
+  transcript ทั้งก้อน — reproduced กับ archive phase4 ทั้ง 126 AC. แก้ที่ generator
+  ชั้นเดียว: `task_maps` ตัด block ที่ `Evidence:` ตัวแรกก่อน scan marker
+  (`spec_trace.iter_task_blocks` ไม่แตะ — byte-identity ของ `satisfies_text` คงเดิม);
+  e2e เพิ่ม fixture task ที่มี Evidence + assertion กับ archive จริงว่าไม่มี
+  verification ตัวไหนมี `Evidence:`

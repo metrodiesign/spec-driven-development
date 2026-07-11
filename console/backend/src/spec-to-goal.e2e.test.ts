@@ -77,8 +77,12 @@ const FULL_TASKS = [
   '     Satisfies: REQ-1 (all criteria). Verify: pnpm test one',
   '- [x] 2. Cover a dash range (checkbox state must not matter).',
   '     Satisfies: 2.1-2.2. Verify: pnpm test two',
-  '- [ ] 3. Cover a single prefixed id, marker order shuffled.',
+  '- [ ] 3. Cover a single prefixed id, marker order shuffled; completed with an',
+  '     Evidence block that must NOT leak into the verification value.',
   '     Satisfies: REQ-2.3. Depends on: 1. Verify: pnpm test three',
+  '     Evidence:',
+  '       - test: `pnpm test three` -> 9 passed / 0 failed',
+  '       - deviations: none',
 ].join('\n');
 
 const PARTIAL_BODY = [
@@ -145,7 +149,7 @@ test('Satisfies semantics match spec_trace: whole-REQ, dash range, REQ-N.M all r
     assert.equal(byId.get('AC-1.2'), 'pnpm test one', 'REQ-1 (all criteria) expansion');
     assert.equal(byId.get('AC-2.1'), 'pnpm test two', 'dash range 2.1-2.2');
     assert.equal(byId.get('AC-2.2'), 'pnpm test two', 'dash range 2.1-2.2');
-    assert.equal(byId.get('AC-2.3'), 'pnpm test three', 'single REQ-N.M id, Verify after Depends on:');
+    assert.equal(byId.get('AC-2.3'), 'pnpm test three', 'single REQ-N.M id, Verify after Depends on:, Evidence block excluded');
   });
 });
 
@@ -294,9 +298,12 @@ test('real archive phase4 via --specs-dir: header on line 3 + amended form pass,
     const doc = parseYaml(readFileSync(res.draftPath, 'utf8'));
     assert.equal(doc.goal.title, 'platform-phase4', 'H1 `# Requirements — platform-phase4` form (REQ-3.2)');
     assert.equal(doc.goal.id, 'PLATFORM-PHASE4-001');
-    const active = doc.acceptance_criteria as unknown[];
-    const pending = (doc.pending_acceptance_criteria ?? []) as unknown[];
+    const active = (doc.acceptance_criteria ?? []) as { verification?: string }[];
+    const pending = (doc.pending_acceptance_criteria ?? []) as { verification?: string }[];
     assert.equal(active.length + pending.length, 126, 'one AC per archived criterion (REQ-2.1)');
+    for (const ac of [...active, ...pending]) {
+      assert.ok(!String(ac.verification).includes('Evidence:'), 'Evidence transcript never leaks into verification (PR #102 Codex P2)');
+    }
   });
 });
 

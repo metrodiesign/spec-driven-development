@@ -79,12 +79,16 @@ def task_maps(tasks_text, criteria_by_req):
     """คืน list ของ (satisfies_refs, verify_cmd) หนึ่งรายการต่อ task block.
 
     เดินไฟล์ด้วย `spec_trace.iter_task_blocks` (นิยาม block เดียวกับตัวตรวจ
-    coverage — REQ-2.3); ภายใน block: segment ของแต่ละ marker ตัดท้ายที่ marker
-    ถัดไป, Satisfies ขยายผ่าน `expand_refs` (dash range / N.M / REQ-N ทั้งตัว),
-    Verify copy verbatim (strip ปลายเท่านั้น — ไม่ตีความว่าเป็น command จริงไหม).
+    coverage — REQ-2.3); ภายใน block: การ scan หยุดที่ `Evidence:` ตัวแรก —
+    transcript ของ task ที่ทำเสร็จแล้วต้องไม่รั่วเข้า verification และเนื้อใน
+    transcript (ที่อาจ quote marker เอง) ต้องไม่ถูก parse (PR #102 Codex P2);
+    ก่อนถึงจุดนั้น: segment ของแต่ละ marker ตัดท้ายที่ marker ถัดไป, Satisfies
+    ขยายผ่าน `expand_refs` (dash range / N.M / REQ-N ทั้งตัว), Verify copy
+    verbatim (strip ปลายเท่านั้น — ไม่ตีความว่าเป็น command จริงไหม).
     """
     maps = []
     for block in spec_trace.iter_task_blocks(tasks_text):
+        block = block.split("Evidence:", 1)[0]
         markers = list(MARKER_RE.finditer(block))
         refs = set()
         verify_cmd = ""
