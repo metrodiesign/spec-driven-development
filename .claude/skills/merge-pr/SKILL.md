@@ -20,18 +20,19 @@ off to sync-branch's existing steps for everything after.
    Stop and report if any required check is failing/pending, `mergeable` is not
    `MERGEABLE`, or there's an unresolved `CHANGES_REQUESTED` review — do not merge.
 
-2. **Merge (squash) + delete the remote branch in one call:**
+2. **Merge (squash), no branch deletion here:**
    ```sh
-   env -u GH_TOKEN gh pr merge <n> --squash --delete-branch
+   env -u GH_TOKEN gh pr merge <n> --squash
    ```
-   `--delete-branch` deletes the remote branch via the GitHub API as part of the merge
-   call — this is **not** `git push`, so `destructive-guard.sh` never sees it regardless
-   of the current local branch.
+   Do **not** add `--delete-branch` — per `gh pr merge --help` it deletes **both** the
+   local and remote branch, which would leave nothing for sync-branch's local-delete
+   step to find, making it report/fail after the PR already merged successfully. Let
+   sync-branch own all cleanup (local + remote), unchanged from its standalone flow.
 
 3. **Hand off to sync-branch**: run `.claude/skills/sync-branch/SKILL.md` steps 1-5 for
-   this same PR number. Its own checks degrade to safe no-ops here — step 1's merge
-   check trivially passes (just merged in step 2 above), step 4's remote-branch check
-   trivially finds it already gone (`--delete-branch` already removed it).
+   this same PR number. Its own checks degrade to a safe no-op only for the merge check
+   in step 1 (trivially passes — just merged in step 2 above); steps 3 and 4 do the
+   real local + remote branch deletion exactly as they would standalone.
 
 4. **Report**: merge sha, base branch synced sha, local branch deleted (y/n).
 
