@@ -5,24 +5,24 @@
   "epic": {
     "issue": 99,
     "nodeId": "I_kwDOSt2IyM8AAAABIdmYhg",
-    "bodyHash": "sha256:ca2e40afd32e3788be29b117db54675eb884f33a786f38918c2fc719b3fab0e2"
+    "bodyHash": "sha256:63d058291d801c1e5947d19ef4aa01cfd7389cc5a2cf2174372e974680086f6d"
   },
   "tasks": {
     "1": {
       "issue": 100,
       "nodeId": "I_kwDOSt2IyM8AAAABIdme0g",
       "subIssueLinked": true,
-      "bodyHash": "sha256:890acc3c755614d633efacce709b3f748a4b05a0d280d7242df0c65a5ec7eeae",
-      "state": "open"
+      "bodyHash": "sha256:0a9e79636eba99ddcc14254757afd80a49a6de517a4e1857248a292b0962f95b",
+      "state": "closed"
     },
     "2": {
       "issue": 101,
       "nodeId": "I_kwDOSt2IyM8AAAABIdmj6Q",
       "subIssueLinked": true,
-      "bodyHash": "sha256:8c4a2a89cd9ac48fe5954595ba4141c6fcd18bc58b14877eacbd4cd717c56fed",
-      "state": "open"
+      "bodyHash": "sha256:4eedbd01a7e15918436ece9c11b6127d44af35cd42fab0fc7aeb1752b49e7336",
+      "state": "closed"
     }
   },
-  "lastSync": "2026-07-11T15:16:42Z",
+  "lastSync": "2026-07-11T16:38:53Z",
   "labelsEnsured": ["spec:platform-phase5-stage1", "spec-epic", "spec-task", "req-spine"]
 }

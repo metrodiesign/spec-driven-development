@@ -5,25 +5,25 @@
   "epic": {
     "issue": 71,
     "nodeId": "I_kwDOSt2IyM8AAAABIcHrUQ",
-    "bodyHash": "sha256:d4d7313de877008065a1b11865811b687fa70a4b765572779090a88dd1135070"
+    "bodyHash": "sha256:430528acc69f2c579bd8b151f92a2e9da907dce5b2eaf5afb07da7c71cc28c99"
   },
   "tasks": {
     "1": {
       "issue": 72,
       "nodeId": "I_kwDOSt2IyM8AAAABIcHrmA",
       "subIssueLinked": true,
-      "bodyHash": "sha256:46438ba45b1d4c4e6f30602dee638a38fba7114c4877ea8c2756d7b200204887",
-      "state": "open"
+      "bodyHash": "sha256:5dccb1fb54a09c42da4aa7b8aee4d78be5b1becc3c2fb3ed51b4160fbbc3c344",
+      "state": "closed"
     },
     "2": {
       "issue": 73,
       "nodeId": "I_kwDOSt2IyM8AAAABIcHsMQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:ffa63c2798ca5f837a12d67f596bcb662430b69bab7fcbfac5fa474e7a760846",
-      "state": "open"
+      "bodyHash": "sha256:2097230562d40f584b252112e409091b73958e9ded5374832c582811ed280999",
+      "state": "closed"
     }
   },
-  "lastSync": "2026-07-11T08:15:54Z",
+  "lastSync": "2026-07-11T16:45:00Z",
   "labelsEnsured": [
     "spec:sdd-gate-task-cache",
     "spec-epic",

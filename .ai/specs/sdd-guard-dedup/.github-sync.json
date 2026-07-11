@@ -5,32 +5,32 @@
   "epic": {
     "issue": 87,
     "nodeId": "I_kwDOSt2IyM8AAAABIcH2VA",
-    "bodyHash": "sha256:bc193aa94e99f4f3201fdf04a1241eb3669fc98d1331831dadbe289f351e61f5"
+    "bodyHash": "sha256:0057596e2fa798ff1f9ab9d91968016155087b7d8b5eca0de1a720aee788d8d3"
   },
   "tasks": {
     "1": {
       "issue": 88,
       "nodeId": "I_kwDOSt2IyM8AAAABIcH2cQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:2e44e0a5bfea71881220abf98f8329c405b8e30b2e2bafde91ded4912df98769",
-      "state": "open"
+      "bodyHash": "sha256:e8aa88b87779842f769c81b23f86ca365a5f9ca762b939cd9c6108d07fc1cbf1",
+      "state": "closed"
     },
     "2": {
       "issue": 89,
       "nodeId": "I_kwDOSt2IyM8AAAABIcH2rg",
       "subIssueLinked": true,
-      "bodyHash": "sha256:177a0cd68fa5b9223107dcc1908962e331dd7da0baf4cb8c40a694fd34d23a91",
-      "state": "open"
+      "bodyHash": "sha256:b349e7db9986c0eb3cde5359824377f3e696e7056cad4b53f56be1dade7a984f",
+      "state": "closed"
     },
     "3": {
       "issue": 90,
       "nodeId": "I_kwDOSt2IyM8AAAABIcH26A",
       "subIssueLinked": true,
-      "bodyHash": "sha256:678f645d4c658e829788e6eb80b7c4e1e53ac71e6311bf081888fb2e92a618b1",
-      "state": "open"
+      "bodyHash": "sha256:2fc6f4f09d2aad2bbc2c12b91a0c0298c9c1770d23b260ff97ae5fb950b7dd7c",
+      "state": "closed"
     }
   },
-  "lastSync": "2026-07-11T08:15:54Z",
+  "lastSync": "2026-07-11T16:56:00Z",
   "labelsEnsured": [
     "spec:sdd-guard-dedup",
     "spec-epic",
