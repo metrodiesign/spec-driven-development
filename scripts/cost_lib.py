@@ -219,8 +219,11 @@ def ledger_for(sid):
 
 
 def task_costs(exclude_session=""):
-    """อ่าน ledger ทั้งหมด -> {task: (cost, dur_ms, +lines, -lines, sid)}; เก็บ max cost/task."""
+    """อ่าน ledger ทั้งหมด -> {task: (cost, dur_ms, +lines, -lines, sid, session_count)};
+    เก็บ max-cost session/task ใน 5 ช่องแรก, session_count = จำนวน session ทั้งหมด (single-task,
+    retro'd — เกณฑ์เดียวกับ task_of()) ที่แตะ task นี้."""
     out = {}
+    counts = {}
     for f in glob.glob(os.path.join(LEDGER, "*.json")):
         try:
             d = json.load(open(f))
@@ -235,10 +238,11 @@ def task_costs(exclude_session=""):
         t = task_of(sid)
         if t is None:
             continue
+        counts[t] = counts.get(t, 0) + 1
         if t not in out or cost > out[t][0]:
             out[t] = (cost, d.get("duration_ms") or 0,
                       d.get("lines_added") or 0, d.get("lines_removed") or 0, sid)
-    return out
+    return {t: v + (counts[t],) for t, v in out.items()}
 
 
 def session_costs(exclude_session=""):

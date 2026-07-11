@@ -62,8 +62,16 @@ def _task_counts(tasks_path):
     return dict(total=len(matches), done=done)
 
 
-def _span_days(feature_dir):
-    out = _git("log", "--follow", "--format=%ct", "--", feature_dir)
+def _span_days(feature, feature_dir, archived):
+    # --follow only tracks a SINGLE file's rename chain, not a directory's — the archive
+    # move (.ai/specs/<feature> -> .ai/specs/archive/<feature>) is invisible to it, so an
+    # archived feature would otherwise only see post-archive commits (span always 0). List
+    # both paths explicitly instead: git returns every commit touching either one, no
+    # rename-detection heuristics needed since the pre/post paths are already known.
+    paths = [feature_dir]
+    if archived:
+        paths.append(os.path.join(".ai/specs", feature))
+    out = _git("log", "--format=%ct", "--", *paths)
     if not out:
         return None
     ts = [int(x) for x in out.splitlines() if x.strip()]
@@ -127,7 +135,7 @@ def build_row(feature, feature_dir, archived, all_sessions):
 
     row = dict(feature=feature, archived=archived,
                tasks=(tasks or "n/a"),
-               span_days=_span_days(feature_dir),
+               span_days=_span_days(feature, feature_dir, archived),
                pr_mentions=_pr_mentions(feature),
                rework=_rework(feature, req_path, design_path))
 
@@ -157,7 +165,8 @@ def per_task_breakdown(tasks_path):
     out = []
     for t in all_task_ids(tasks_path):
         rec = tc.get(t)
-        out.append(dict(task=t, cost_usd=(round(rec[0], 2) if rec else "n/a")))
+        out.append(dict(task=t, sessions=(rec[5] if rec else 0),
+                         cost_usd=(round(rec[0], 2) if rec else "n/a")))
     return out
 
 
@@ -183,9 +192,9 @@ def render_markdown(rows, totals, feature_breakdown=None):
              f"cost=${totals['cost_usd']:.2f}{' (incomplete)' if not totals['cost_complete'] else ''}, "
              f"sessions={totals['sessions']}")
     if feature_breakdown is not None:
-        L += ["", "## Per-task breakdown", "", "| task | cost $ |", "|---|---|"]
+        L += ["", "## Per-task breakdown", "", "| task | sessions | cost $ |", "|---|---|---|"]
         for t in feature_breakdown:
-            L.append(f"| {t['task']} | {t['cost_usd']} |")
+            L.append(f"| {t['task']} | {t['sessions']} | {t['cost_usd']} |")
     return "\n".join(L) + "\n"
 
 

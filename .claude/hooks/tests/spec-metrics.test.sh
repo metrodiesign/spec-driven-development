@@ -136,10 +136,37 @@ printf -- '- [x] 1. done\n- [x] 2. done\n' > "$REPO5/.ai/specs/feat-f/tasks.md"
 write_session "$HOME5" sess-f1 "$REPO5" 9.00 1 yes
 write_session "$HOME5" sess-f2 "$REPO5" 4.00 2 yes
 run_metrics "$REPO5" "$HOME5" --feature feat-f
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '\| 1 \| 9\.0?0? \|' && printf '%s' "$OUT" | grep -qE '\| 2 \| 4\.0?0? \|'; then
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '\| 1 \| 1 \| 9\.0?0? \|' && printf '%s' "$OUT" | grep -qE '\| 2 \| 1 \| 4\.0?0? \|'; then
   pass=$((pass+1))
 else
-  fail=$((fail+1)); echo "FAIL: per-task breakdown should show each task's own single-session cost :: $OUT"
+  fail=$((fail+1)); echo "FAIL: per-task breakdown should show each task's own session count + single-session cost (REQ-3.3) :: $OUT"
+fi
+
+echo "=== --feature per-task breakdown: 2 sessions on the SAME task -> session count 2 (REQ-3.3) ==="
+write_session "$HOME5" sess-f3 "$REPO5" 6.00 1 yes
+run_metrics "$REPO5" "$HOME5" --feature feat-f
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '\| 1 \| 2 \| 9\.0?0? \|'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: task with 2 contributing sessions should report sessions=2, cost=max (9.00) :: $OUT"
+fi
+
+echo "=== archived feature: span_days covers pre+post archive history, not just the move commit (REQ-1.1) ==="
+REPO7="$(new_repo)"
+HOME7="$(mktemp -d)"; CLEAN_DIRS+=("$HOME7")
+mkdir -p "$REPO7/.ai/specs/feat-h"
+printf -- '- [x] 1. done\n' > "$REPO7/.ai/specs/feat-h/tasks.md"
+( cd "$REPO7" && git add -A \
+  && GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00" \
+     git commit -q -m "feat-h: open" )
+( cd "$REPO7" && mkdir -p .ai/specs/archive && git mv .ai/specs/feat-h .ai/specs/archive/feat-h \
+  && GIT_AUTHOR_DATE="2020-01-06T00:00:00" GIT_COMMITTER_DATE="2020-01-06T00:00:00" \
+     git commit -q -m "feat-h: archive" )
+run_metrics "$REPO7" "$HOME7"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '\| feat-h \| True \| 1/1 \| n/a \| n/a \| 5\.0 \|'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: archived feature span_days should span pre+post archive history (5.0d via --follow-blind dir rename), not collapse to 0.0 :: $OUT"
 fi
 
 echo "=== post-approval edit fixture (commit after stamp) -> rework count = 1 (REQ-1.2) ==="
