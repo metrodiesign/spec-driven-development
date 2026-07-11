@@ -42,7 +42,8 @@ sequenceDiagram
         M->>M: parse tasks.md (total, [x])
         M->>G: log --follow artifacts (span, edits after approved-stamp date)
         M->>G: log --grep feature-slug (PR/fix mentions)
-        M->>CL: task_costs() → map task ids → feature via all_task_ids()
+        M->>CL: session_costs() → feature total (ids ∩ all_task_ids())
+        M->>CL: task_costs() → per-task rows for --feature breakdown (3.3)
         alt tasks attributed but ledger silent
             M->>M: mark cost "≥ X (incomplete)"
         end
@@ -77,9 +78,17 @@ Row model (one per feature):
 }
 ```
 
-- **Attribution** (REQ-1.1): `cost_lib.task_costs()` yields per-task-label
-  costs; task→feature mapping via each feature's `all_task_ids(tasks_path)`.
-  Ledger semantics (dedup, allocation) are cost_lib's — no reimplementation.
+- **Attribution** (REQ-1.1): per-feature `cost_usd` sums `cost_lib.session_costs()`
+  rows whose `ids` intersect the feature's `all_task_ids(tasks_path)` — NOT
+  `task_costs()` alone, which silently drops every batched (`/spec-implement
+  all`) session (`task_of()` returns `None` whenever a session covers more
+  than one task id, per cost_lib's own docstring, so `task_costs()` skips it
+  entirely). `task_costs()` is still used for the `--feature` per-task
+  breakdown (REQ-3.3); a task completed inside a batched session has no
+  single-task cost to show there and renders `n/a` for that row — the
+  feature-level total from `session_costs()` still counts it, so the feature
+  is never reported as cheaper than the ledger shows. Ledger semantics
+  (dedup, allocation) are cost_lib's — no reimplementation.
 - **Incomplete marker** (REQ-2.1): a feature whose git history shows sessions
   (commits) in its span but whose ledger rows are missing/partial renders
   cost as `≥ $X (incomplete)`; JSON carries `"complete": false`. Ledger dir

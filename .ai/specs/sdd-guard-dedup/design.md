@@ -52,7 +52,7 @@ sequenceDiagram
 
     P->>P: added set empty → continue (engine not invoked — ARC-F7)
     P->>E: --added-only added.txt (stdin = staged content)
-    Note over P,E: called as `if ! out=$(...); then` — set -e safe (ARC-F9)
+    Note over P,E: called as `if out=$(...); then ... else rc=$?; ...` — set -e safe, rc keeps the real code (ARC-F9)
     P->>P: exit 1 → EXISTING message; exit 2/126 → fail-closed message; block either way
 ```
 
@@ -91,8 +91,11 @@ Caller call pattern (ARC-F9/F10 — identical shape in both callers):
 ```sh
 ENGINE="$BIN/check-evidence.sh"
 [ -x "$ENGINE" ] || { echo "<caller's fail-closed message: engine missing at $ENGINE>" >&2; exit "$BLOCK_CODE"; }
-if ! EV_FAIL=$("$ENGINE" --strict <<<"$NEW"); then
-  case $? in
+if EV_FAIL=$("$ENGINE" --strict <<<"$NEW"); then
+  : # pass
+else
+  rc=$?
+  case $rc in
     1) # policy fail → caller's EXISTING user-facing message + $EV_FAIL excerpt
        ;;
     *) # 2/126/127 → caller's fail-closed message naming $ENGINE
@@ -102,9 +105,13 @@ if ! EV_FAIL=$("$ENGINE" --strict <<<"$NEW"); then
 fi
 ```
 
-(`$?` of the captured `if !` is preserved into the case via a temp var in the
-real implementation; shown compressed here. pre-commit runs `set -euo
-pipefail` — the `if !` form is what keeps set -e from aborting pre-message.)
+(Deliberately NOT `if ! EV_FAIL=$(...); then`: `!` negates the pipeline's exit
+status before the `if` test runs, so `$?` inside that form's `then` block is
+always 0, not the engine's real 1/2/126/127 — confirmed empirically, not just
+reasoned. The unnegated form above is equally `set -euo pipefail`-safe: being
+the condition of `if` — negated or not — is what exempts a command from
+`errexit`, so `rc=$?` in the `else` branch correctly preserves the engine's
+code.)
 
 `lib-guard.sh` fragment content: as specified in requirements — `GO`,
 `is_spec_tasks_path()`, `CB_*` — plus a header comment naming the python

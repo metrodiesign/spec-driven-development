@@ -103,8 +103,11 @@ Resolution rules (all deterministic, REQ-3.2):
   criterion-level ids (`REQ-1.2`) resolve to their parent `## REQ-1` block.
 - Design sections: rows of the `## Requirement Traceability` table whose REQ
   column mentions any selected id; the row's design-element cell is matched
-  against `## ` headings by literal substring; a row that names no heading
-  resolves to the whole `## Architecture Overview` section (safe default).
+  against `## ` headings by literal substring; a row whose cell matches no
+  heading resolves to `MISSING:` per REQ-3.4 (verified against all 8 design
+  docs in this batch: every traceability cell is a free-text summary, never a
+  heading name — a silent default here would make the full-read fallback
+  unreachable for design sections in every real spec, not an edge case).
 - Unknown task id → exit 1 + `available: 1..N` list from the checkbox scan
   (REQ-3.3). Unresolvable REQ/section → `MISSING:` marker, exit 0 (REQ-3.4 —
   the marker, not the exit code, drives the fallback).
@@ -173,6 +176,7 @@ New `.claude/hooks/tests/spec-slice.test.sh` with a fixture feature under
 | slice known task | output contains task block + its REQ block + mapped design section + Status headers | 3.1, 3.5 |
 | slice unknown id | exit 1, lists available | 3.3 |
 | slice with Satisfies: naming absent REQ | `MISSING:` present, exit 0 | 3.4 |
+| slice where the traceability row's design-element cell matches no `## ` heading | `MISSING:` present for that design ref, exit 0 | 3.4 |
 | SessionStart command with archive present | output lacks `archive` | 2.1, 2.2 |
 
 ## Requirement Traceability

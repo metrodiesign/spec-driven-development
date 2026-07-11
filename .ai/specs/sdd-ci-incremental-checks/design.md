@@ -177,9 +177,10 @@ New `.claude/hooks/tests/ci-scope.test.sh` + extended
 | ci-secret-scope: push event | decision=`--all` | 2.2 |
 
 Live confirmation on this feature's own PR (scope log lines on the
-pull_request run; full floor on the develop push after merge) recorded in the
-task Evidence block — supplementing, not replacing, the automated cases
-(ARC-F12 resolved).
+pull_request run) recorded in the task Evidence block — supplementing, not
+replacing, the automated cases. The develop-push full-floor run cannot be
+observed until after merge, so it is confirmed as a post-merge follow-up, not
+part of this task's closing Evidence (ARC-F12 resolved).
 
 ## Requirement Traceability
 

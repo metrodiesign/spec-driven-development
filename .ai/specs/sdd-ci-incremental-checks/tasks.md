@@ -26,10 +26,12 @@
      scan/test steps become thin calls into the scope scripts, push path
      byte-identical to today (`--all`, full `pnpm test`), comments documenting
      scoped-PR-vs-full-floor and the merge-ref rationale; record this PR's own
-     pull_request scope logs + the post-merge develop full run as Evidence.
+     pull_request scope logs as Evidence (the develop-push full-floor run
+     cannot exist until after this PR merges, so it cannot gate this task's
+     closing Evidence — confirm it post-merge as a follow-up note instead).
      Satisfies: REQ-2.2, REQ-2.4, REQ-3.2, REQ-3.4, REQ-4.2. Depends on: 2.
-     Verify: CI green on the PR with scope lines visible; develop push runs
-     the full floor.
+     Verify: CI green on the PR with scope lines visible. Post-merge
+     follow-up: confirm the develop push runs the full floor.
 
 ## Suggested execution batches
 
