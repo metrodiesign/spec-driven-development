@@ -49,6 +49,24 @@ type = "command"
 command = ".codex/hooks/task-gate.sh"
 timeout = 120
 
+# SessionStart / PreCompact — ported from the removed `.codex/hooks.json` (issue #26;
+# see the [hooks] comment above) instead of restoring that file, so PreToolUse/PostToolUse
+# stay registered exactly once. Same commands Claude runs (.claude/settings.json), single
+# source: SessionStart calls scripts/session-start-active-specs.sh (sdd-spec-context-loading),
+# PreCompact calls the Codex port of Claude's precompact-persist.sh reminder. Relative paths
+# throughout (no machine-specific absolute prefix, unlike the removed hooks.json).
+[[hooks.SessionStart]]
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "jq -n --arg b \"$(git branch --show-current 2>/dev/null)\" --arg s \"$(scripts/session-start-active-specs.sh)\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"Branch: \"+$b+\". Active specs: \"+$s)}}'"
+
+[[hooks.PreCompact]]
+
+[[hooks.PreCompact.hooks]]
+type = "command"
+command = ".codex/hooks/precompact-persist.sh"
+
 # Browser-verify MCP (confirm package/version). Enables the browser-verify recipes for Codex.
 [mcp_servers.chrome-devtools]
 command = "npx"
