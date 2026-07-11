@@ -45,3 +45,4 @@
 | branch-delete-ancestry-squash-issue | mechanized | .claude/hooks/tests/lesson-tripwires.test.sh::branch-delete-ancestry-squash-issue — sync-branch SKILL.md checks MERGED state before any -D fallback |
 | workflow-script-eslint-ignore | mechanized | eslint.config.mjs::workflows-ignore — ignores: [..., '.claude/workflows/**'] |
 | lesson-reintro-check-before-build | advisory | meta process discipline; REQ-3's retro classification step is the standing institutional answer, not a per-lesson executable check |
+| shared-iterator-boundary-altitude | mechanized | console/backend/src/spec-to-goal.e2e.test.ts — "spec-trace gate ... must NOT fake coverage" + "Evidence boundary: mid-line ... lowercase evidence: header still cuts" (ทั้งคู่แดงถ้า Evidence rule ถูก fork per-consumer, หลุด case-insensitivity, หรือกลับเป็น substring cut) |
