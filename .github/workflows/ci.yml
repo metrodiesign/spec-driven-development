@@ -63,6 +63,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Setup pnpm
+        # ci-scope.test.sh's FILTERED-path fixtures call real `pnpm ls -r --filter` (no
+        # `pnpm install` needed — package enumeration only) to prove the scope scripts'
+        # success path, not just their fail-closed fallback; without a real pnpm on PATH
+        # every case degrades to "package probe failed" -> full, silently hiding the
+        # cases it exists to cover.
+        uses: pnpm/action-setup@v4
       - name: Guard regression tests
         # Tier 1 floor: the single check engine (.ai/bin/check-*.sh) is exercised by its
         # adversarial test suite here so it cannot drift / be weakened silently — a loosened
