@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "feature": "sdd-lessons-to-guard-tests",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 83,
+    "nodeId": "I_kwDOSt2IyM8AAAABIcHz9w",
+    "bodyHash": "sha256:bbafb565c1521fdb644388113a04c614d1e47f548acf7565509fe929c2df2123"
+  },
+  "tasks": {
+    "1": {
+      "issue": 84,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH0FQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:b49891d2ced504a53db7aef7a31f16b567de4a65dc0dac4dd73b6c0b381d7da4",
+      "state": "open"
+    },
+    "2": {
+      "issue": 85,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH0XQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:9c638f444911df4f9a96081dd953cb6fe96c3703c5114cc5ff19f7e9a4fdab27",
+      "state": "open"
+    },
+    "3": {
+      "issue": 86,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH1MA",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:bf9d90c00f7dbd74194fa8f78f39287e1b6b1df8521d233bfbe93274fe8eaf7d",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T08:15:54Z",
+  "labelsEnsured": [
+    "spec:sdd-lessons-to-guard-tests",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "feature": "sdd-plan-doc-reconcile",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 97,
+    "nodeId": "I_kwDOSt2IyM8AAAABIcH70w",
+    "bodyHash": "sha256:81c3e74dc42bf11b1f1835e585008e2dc2770bb2f053fcaad8dd36b537bf0654"
+  },
+  "tasks": {
+    "1": {
+      "issue": 98,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH7-A",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:d0c31a26d5e72972b11212d85e866fd09c62df91abcaf1634ed07d45ca513d2b",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T08:15:54Z",
+  "labelsEnsured": [
+    "spec:sdd-plan-doc-reconcile",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

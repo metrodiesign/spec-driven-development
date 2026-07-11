@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "feature": "sdd-spec-metrics",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 94,
+    "nodeId": "I_kwDOSt2IyM8AAAABIcH6Xg",
+    "bodyHash": "sha256:8ecd239c4b843d417782c2e01766120ce750f13565092f009ae8bfc8ec6831d6"
+  },
+  "tasks": {
+    "1": {
+      "issue": 95,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH6fQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:85d5d4369d27a6989a163c5a8e74c3ed4e6b08336d0e59de368518953bc8a599",
+      "state": "open"
+    },
+    "2": {
+      "issue": 96,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH6yw",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:6999674324a737c1957b70e4d05d501442d056239e117ad78a4656c62fe95f29",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T08:15:54Z",
+  "labelsEnsured": [
+    "spec:sdd-spec-metrics",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

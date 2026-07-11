@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "feature": "sdd-spec-context-loading",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 74,
+    "nodeId": "I_kwDOSt2IyM8AAAABIcHumQ",
+    "bodyHash": "sha256:7d6386a46107e469b2354dba40ae53ca2948db7f0dac417e1c5ffd247a85a28f"
+  },
+  "tasks": {
+    "1": {
+      "issue": 75,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHutw",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:b259d214b15e342fbaa4eec53bc11f10372796d672e9a02f541414a21c30a75c",
+      "state": "open"
+    },
+    "2": {
+      "issue": 76,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHvIw",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:c2f52d77f3b3d3bdd5deca07235f6a87f7d8bf4867c97e397a55ac268872f0bf",
+      "state": "open"
+    },
+    "3": {
+      "issue": 77,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHvYg",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:ded6566a892fbd3d976218db18863d0bc14e7f0e88719a902d5051e5cf746c94",
+      "state": "open"
+    },
+    "4": {
+      "issue": 78,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHvlQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:6af958d4351a15762e7046bb62c32609d819a224cc53a7fc5cc5a677c4f47de8",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T08:15:54Z",
+  "labelsEnsured": [
+    "spec:sdd-spec-context-loading",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}
