@@ -6,6 +6,9 @@
 
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+# Mirrors .ai/bin/lib-guard.sh's is_spec_tasks_path() by hand — deliberately NOT sourced
+# (ARC-F8): a sourced dependency in this 4-line case would add a new failure mode in a
+# PostToolUse hot path worth more than the duplication it removes. Keep in sync by hand.
 case "$FILE" in
   */.ai/specs/*/tasks.md) ;;
   .ai/specs/*/tasks.md) ;;

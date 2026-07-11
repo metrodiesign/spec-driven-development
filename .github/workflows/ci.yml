@@ -14,6 +14,17 @@ permissions:
 # (.ai/bin/check-*.sh) via its adversarial suite, a full-tree secret scan, and the
 # REQ-coverage tracer. A downstream project that scaffolds an app adds its own
 # typecheck/test steps (the task gate already auto-detects them — see .ai/bin/gate-task.sh).
+#
+# SCOPE (sdd-ci-incremental-checks): pull_request runs are SCOPED to what the PR touched
+# (diff-range secret scan, changed-package test filter) for fast feedback; every push to
+# develop/main runs the FULL floor unchanged (whole-tree secret scan, full test suite) — the
+# security/correctness guarantee never weakens, PRs only get a faster fast-path on top of it.
+# Both jobs checkout with fetch-depth 0 so `git merge-base origin/<base>..HEAD` resolves in
+# the common case (scripts/ci-secret-scope.sh, scripts/ci-test-scope.sh fall back to the full
+# floor + log the cause on any resolution failure, never to running less). The default
+# pull_request checkout is the ephemeral MERGE commit (parents = base tip + PR head), so the
+# resolved merge-base equals the base tip and the PR is scanned/tested AS MERGED against
+# current base — intentionally kept (not overridden to head.sha), see design ARC-F5.
 jobs:
   platform:
     # Platform (unified-platform-spec.md) — Phase 0. Pinned to macOS per
@@ -24,6 +35,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Vendor-name check on core/ (INV-7)
         run: scripts/check-core-vendor-free.sh
       - uses: pnpm/action-setup@v4
@@ -34,17 +47,29 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Typecheck
+        # Full, all packages, on every event — cheap and part of the floor (REQ-3.4).
         run: pnpm typecheck
       - name: Lint
         run: pnpm lint
       - name: Tests (incl. core fault-injection suite)
-        run: pnpm test
+        # Scoped on pull_request (changed package + every dependent), full on push to
+        # develop/main (REQ-3.1, 3.2) — thin call into the testable script (REQ-5.3).
+        run: scripts/ci-test-scope.sh "$GITHUB_EVENT_NAME" "$GITHUB_BASE_REF"
 
   verify:
     name: guards + spec-trace
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup pnpm
+        # ci-scope.test.sh's FILTERED-path fixtures call real `pnpm ls -r --filter` (no
+        # `pnpm install` needed — package enumeration only) to prove the scope scripts'
+        # success path, not just their fail-closed fallback; without a real pnpm on PATH
+        # every case degrades to "package probe failed" -> full, silently hiding the
+        # cases it exists to cover.
+        uses: pnpm/action-setup@v4
       - name: Guard regression tests
         # Tier 1 floor: the single check engine (.ai/bin/check-*.sh) is exercised by its
         # adversarial test suite here so it cannot drift / be weakened silently — a loosened
@@ -65,15 +90,22 @@ jobs:
             echo "::endgroup::"
           done
           exit "$status"
+      - name: Lessons coverage check
+        # sdd-lessons-to-guard-tests: every LESSONS.md slug has exactly one
+        # LESSONS-COVERAGE.md row and vice versa, and every `mechanized` row's artifact
+        # still exists and carries its [#slug] marker — stops the table from rotting.
+        run: scripts/lessons-coverage-check.sh
       - name: Secret scan
-        # Tier 1 floor: full-tree secret scan (single source: .ai/bin/check-secrets.sh).
-        # --all scans the whole tree (not just a staged diff) so CI catches anything that
-        # slipped past a local pre-commit hook or was committed without core.hooksPath set.
-        # SECRET_GUARD_SKIP is force-cleared here so a stray env value cannot neuter the
-        # CI scan (the local-only human override must not exist in the floor).
+        # Tier 1 floor (single source: .ai/bin/check-secrets.sh, thin call via
+        # scripts/ci-secret-scope.sh — REQ-5.3). pull_request scans the diff range; every
+        # push to develop/main still scans the WHOLE tree exactly as before, so CI always
+        # catches anything that slipped past a local pre-commit hook or was committed
+        # without core.hooksPath set. SECRET_GUARD_SKIP is force-cleared here so a stray
+        # env value cannot neuter the CI scan (the local-only human override must not exist
+        # in the floor — check-secrets.sh itself also ignores it outside staged mode).
         env:
           SECRET_GUARD_SKIP: ''
-        run: .ai/bin/check-secrets.sh --all
+        run: scripts/ci-secret-scope.sh "$GITHUB_EVENT_NAME" "$GITHUB_BASE_REF"
       - name: Setup Python
         # Pin the interpreter the REQ-coverage step relies on (spec_trace.py) instead of
         # whatever python3 the runner image happens to ship.
@@ -83,15 +115,25 @@ jobs:
       - name: Spec trace (REQ coverage)
         # Tier 1 floor: every REQ in each feature's requirements.md must be referenced in
         # design.md and tasks.md. Fails the build on any uncovered REQ. Runs once per
-        # feature dir under .ai/specs/ (skips dirs without a requirements.md, e.g. .gitkeep).
+        # feature dir under .ai/specs/ (skips dirs without a requirements.md, e.g. .gitkeep),
+        # AND once per archived feature under .ai/specs/archive/ (sdd-spec-context-loading
+        # REQ-1.5) — archiving a closed spec must never let it rot untraced.
         run: |
           set -euo pipefail
+          shopt -s nullglob
           status=0
           for dir in .ai/specs/*/; do
             [ -f "${dir}requirements.md" ] || continue
             feature="$(basename "$dir")"
             echo "::group::spec-trace ${feature}"
             scripts/spec-trace.sh "$feature" || status=1
+            echo "::endgroup::"
+          done
+          for dir in .ai/specs/archive/*/; do
+            [ -f "${dir}requirements.md" ] || continue
+            feature="$(basename "$dir")"
+            echo "::group::spec-trace archive/${feature}"
+            scripts/spec-trace.sh "$feature" .ai/specs/archive || status=1
             echo "::endgroup::"
           done
           exit "$status"

@@ -37,6 +37,7 @@ GATEFILE="$SANDBOX/.claude/specs/sample/tasks.md"
 mkdir -p "$SANDBOX/.ai/specs/sample"
 AIGATEFILE="$SANDBOX/.ai/specs/sample/tasks.md"
 
+CACHE_SANDBOXES=()
 cleanup() {
   # assemble the recursive-force delete token at runtime so the live destructive guard
   # (which scans literal command lines) never sees it as a literal in this file.
@@ -44,6 +45,7 @@ cleanup() {
   RMBIN="r""m"
   FLAG="-r""f"
   "$RMBIN" "$FLAG" "$SANDBOX" 2>/dev/null || true
+  for d in "${CACHE_SANDBOXES[@]}"; do "$RMBIN" "$FLAG" "$d" 2>/dev/null || true; done
 }
 trap cleanup EXIT
 
@@ -223,6 +225,204 @@ check_claude block "Edit flip [ ]->[x] no Evidence" edit '- [ ] 2. Freshly flipp
 check_claude allow "Edit flip [ ]->[x] evidenced"   edit '- [ ] 2. Freshly flipped task, properly evidenced' "$HUNK_EV"
 # Edit that does NOT increase [x] count (already [x]) -> allow silently (not a new flip).
 check_claude allow "Edit non-flip (already [x])"    edit "$HUNK_EV" "$HUNK_EV"
+
+echo "=== SDD-GATE-TASK-CACHE: tree-hash skip (REQ-1..5) ==="
+# Isolated git-init fixture (ARC-10): GIT_CEILING_DIRECTORIES pins git so a call can never
+# escape to the enclosing repo. Spy-command output lives OUTSIDE the sandboxed tree (a
+# sibling mktemp file) so the spy's own side effect never perturbs the fingerprint it is
+# proving ran-or-skipped.
+new_cache_sandbox() {
+  local dir; dir="$(mktemp -d)"
+  CACHE_SANDBOXES+=("$dir")
+  mkdir -p "$dir/.ai/specs/sample"
+  # initial commit so .git/index exists (a brand-new git-init repo has NO index file
+  # until the first `git add`; without this, compute_key()'s temp-index seed-copy
+  # finds nothing to copy and every fingerprint attempt fails-safe to "cache disabled" —
+  # realistic production usage always has history by the time a task gate fires).
+  ( cd "$dir" && git init -q && git config user.email t@t.co && git config user.name t \
+      && printf 'x' > .gitkeep && git add -A && git commit -q -m init )
+  printf '%s' "$dir"
+}
+
+T_GREEN='printf "t\n" >> "$SPY"; true'
+T_RED='printf "t\n" >> "$SPY"; false'
+
+# $1=sandbox $2=GATE_NEW $3=test_cmd(default green) $4=typecheck_cmd(default true)
+# $5=SDD_GATE_TOOLCHAIN_CMD value (optional) $6=SDD_GATE_NO_CACHE value (optional) -> sets rc, err
+run_cache_gate() {
+  local sbx="$1" new="$2" tcmd="${3:-$T_GREEN}" tccmd="${4:-true}" toolchain="${5:-}" nocache="${6:-}"
+  err=$( cd "$sbx" && env GIT_CEILING_DIRECTORIES="$(dirname "$sbx")" \
+      GATE_FILE=".ai/specs/sample/tasks.md" GATE_NEW="$new" \
+      SDD_TYPECHECK_CMD="$tccmd" SDD_TEST_CMD="$tcmd" SPY="$SPY" \
+      SDD_GATE_TOOLCHAIN_CMD="$toolchain" SDD_GATE_NO_CACHE="$nocache" \
+      "$ENGINE" 2>&1 >/dev/null )
+  rc=$?
+}
+
+spy_count() { wc -l < "$SPY" | tr -d ' '; }
+
+FLIP1='- [x] 1. flip
+     Evidence: proof one'
+FLIP2='- [x] 1. flip
+     Evidence: proof one
+- [x] 2. second flip
+     Evidence: proof two'
+FLIP_NO_EV='- [x] 9. flip with no evidence'
+
+echo "--- REQ-2.1/2.2: green writes exactly one 40-hex key; red writes nothing ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+CACHE_FILE="$SBX/.git/sdd-gate-cache"
+run_cache_gate "$SBX" "$FLIP1"
+LINES=$(grep -cxE '[0-9a-f]{40}' "$CACHE_FILE" 2>/dev/null || echo 0)
+if [ "$rc" -eq 0 ] && [ "$LINES" -eq 1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][2.1] rc=$rc lines=$LINES err=$err"; fi
+
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+CACHE_FILE="$SBX/.git/sdd-gate-cache"
+run_cache_gate "$SBX" "$FLIP1" "$T_RED"
+if [ "$rc" -eq 2 ] && [ ! -s "$CACHE_FILE" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][2.2] red run rc=$rc cache=$(cat "$CACHE_FILE" 2>/dev/null)"; fi
+
+echo "--- REQ-3.1/3.3/ARC-1: flip task1 (green), flip task2 (spec-dir-only change) -> HIT, spy unchanged ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+run_cache_gate "$SBX" "$FLIP1"; C1=$(spy_count)
+run_cache_gate "$SBX" "$FLIP2"; C2=$(spy_count)
+if [ "$rc" -eq 0 ] && printf '%s' "$err" | grep -q 'gate cache hit' && [ "$C2" -eq "$C1" ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL [cache][3.1/3.3] rc=$rc c1=$C1 c2=$C2 err=$err"
+fi
+
+echo "--- REQ-1.3: determinism — two consecutive identical calls both hit/agree ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+run_cache_gate "$SBX" "$FLIP1"
+run_cache_gate "$SBX" "$FLIP1"
+if [ "$rc" -eq 0 ] && printf '%s' "$err" | grep -q 'gate cache hit'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][1.3] determinism: rc=$rc err=$err"; fi
+
+echo "--- REQ-1.1/3.2: edit a tracked source file -> miss, suite runs ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+printf 'v1' > "$SBX/src.txt"; ( cd "$SBX" && git add -A && git commit -q -m base )
+run_cache_gate "$SBX" "$FLIP1"; C1=$(spy_count)
+printf 'v2' > "$SBX/src.txt"
+run_cache_gate "$SBX" "$FLIP1"; C2=$(spy_count)
+if [ "$rc" -eq 0 ] && ! printf '%s' "$err" | grep -q 'gate cache hit' && [ "$C2" -gt "$C1" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][1.1 edit] rc=$rc c1=$C1 c2=$C2 err=$err"; fi
+
+echo "--- ARC-15: delete a tracked file -> miss, suite runs ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+printf 'v1' > "$SBX/src.txt"; ( cd "$SBX" && git add -A && git commit -q -m base )
+run_cache_gate "$SBX" "$FLIP1"; C1=$(spy_count)
+rm "$SBX/src.txt"
+run_cache_gate "$SBX" "$FLIP1"; C2=$(spy_count)
+if [ "$rc" -eq 0 ] && ! printf '%s' "$err" | grep -q 'gate cache hit' && [ "$C2" -gt "$C1" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][ARC-15 delete] rc=$rc c1=$C1 c2=$C2 err=$err"; fi
+
+echo "--- REQ-1.1: create an untracked non-ignored file -> miss, suite runs ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+run_cache_gate "$SBX" "$FLIP1"; C1=$(spy_count)
+printf 'new' > "$SBX/untracked.txt"
+run_cache_gate "$SBX" "$FLIP1"; C2=$(spy_count)
+if [ "$rc" -eq 0 ] && ! printf '%s' "$err" | grep -q 'gate cache hit' && [ "$C2" -gt "$C1" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][1.1 untracked] rc=$rc c1=$C1 c2=$C2 err=$err"; fi
+
+echo "--- REQ-1.1: edit ONLY tasks.md content on disk (spec dirs excluded) -> still HIT ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+printf '%s\n' "$FLIP1" > "$SBX/.ai/specs/sample/tasks.md"
+run_cache_gate "$SBX" "$FLIP1"; C1=$(spy_count)
+printf '%s\n' "$FLIP2" > "$SBX/.ai/specs/sample/tasks.md"
+run_cache_gate "$SBX" "$FLIP2"; C2=$(spy_count)
+if [ "$rc" -eq 0 ] && printf '%s' "$err" | grep -q 'gate cache hit' && [ "$C2" -eq "$C1" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][1.1 tasks.md-only] rc=$rc c1=$C1 c2=$C2 err=$err"; fi
+
+echo "--- REQ-1.2: change SDD_TEST_CMD (config) -> miss ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+run_cache_gate "$SBX" "$FLIP1" 'printf t >> "$SPY"; true'
+run_cache_gate "$SBX" "$FLIP1" 'printf t >> "$SPY" ; true'
+if [ "$rc" -eq 0 ] && ! printf '%s' "$err" | grep -q 'gate cache hit'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][1.2 cmd change] rc=$rc err=$err"; fi
+
+echo "--- REQ-1.5: change SDD_GATE_TOOLCHAIN_CMD output (salt) -> miss ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+run_cache_gate "$SBX" "$FLIP1" "$T_GREEN" true "echo v1"
+run_cache_gate "$SBX" "$FLIP1" "$T_GREEN" true "echo v2"
+if [ "$rc" -eq 0 ] && ! printf '%s' "$err" | grep -q 'gate cache hit'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][1.5 salt change] rc=$rc err=$err"; fi
+
+echo "--- REQ-1.6: .gitmodules present -> cache fully disabled (no read, no write) ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+: > "$SBX/.gitmodules"
+CACHE_FILE="$SBX/.git/sdd-gate-cache"
+run_cache_gate "$SBX" "$FLIP1"; C1=$(spy_count)
+run_cache_gate "$SBX" "$FLIP1"; C2=$(spy_count)
+if [ "$rc" -eq 0 ] && [ "$C2" -gt "$C1" ] && [ ! -s "$CACHE_FILE" ] && ! printf '%s' "$err" | grep -q 'gate cache hit'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL [cache][1.6 gitmodules] rc=$rc c1=$C1 c2=$C2 cache=$(cat "$CACHE_FILE" 2>/dev/null) err=$err"
+fi
+
+echo "--- REQ-4.1: SDD_GATE_NO_CACHE=1 on a warm cache -> suite runs, no cache write ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+CACHE_FILE="$SBX/.git/sdd-gate-cache"
+run_cache_gate "$SBX" "$FLIP1"
+BEFORE=$(cat "$CACHE_FILE" 2>/dev/null)
+run_cache_gate "$SBX" "$FLIP1" "$T_GREEN" true "" 1; C_AFTER=$(spy_count)
+AFTER=$(cat "$CACHE_FILE" 2>/dev/null)
+if [ "$rc" -eq 0 ] && [ "$C_AFTER" -eq 2 ] && [ "$BEFORE" = "$AFTER" ] && ! printf '%s' "$err" | grep -q 'gate cache hit'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL [cache][4.1 no-cache-env] rc=$rc spy=$C_AFTER before=[$BEFORE] after=[$AFTER] err=$err"
+fi
+
+echo "--- REQ-2.4: corrupt cache (binary garbage) -> full run, no crash, no false hit ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+mkdir -p "$SBX/.git"
+head -c 200 /dev/urandom > "$SBX/.git/sdd-gate-cache" 2>/dev/null
+run_cache_gate "$SBX" "$FLIP1"
+if [ "$rc" -eq 0 ] && ! printf '%s' "$err" | grep -q 'gate cache hit'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][2.4 corrupt] rc=$rc err=$err"; fi
+
+echo "--- REQ-3.4: cache HIT still runs Evidence — missing evidence still exit 2 ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+run_cache_gate "$SBX" "$FLIP1"
+run_cache_gate "$SBX" "$FLIP_NO_EV"
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'gate cache hit'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][3.4 hit-but-no-evidence] rc=$rc err=$err"; fi
+
+echo "--- REQ-3.4/ARC-3: cache append to a read-only .git dir -> warning, Evidence still decides exit ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+chmod -w "$SBX/.git"
+run_cache_gate "$SBX" "$FLIP1"
+chmod +w "$SBX/.git"
+if [ "$rc" -eq 0 ] && printf '%s' "$err" | grep -q 'append failed'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][ARC-3 readonly-append] rc=$rc err=$err"; fi
+
+echo "--- REQ-4.2: 9 distinct green keys -> cache capped at 8 ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+CACHE_FILE="$SBX/.git/sdd-gate-cache"
+i=1
+while [ "$i" -le 9 ]; do
+  printf 'v%s' "$i" > "$SBX/src.txt"
+  run_cache_gate "$SBX" "$FLIP1"
+  i=$((i+1))
+done
+LINES=$(grep -cxE '[0-9a-f]{40}' "$CACHE_FILE" 2>/dev/null || echo 0)
+if [ "$LINES" -eq 8 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL [cache][4.2 cap] lines=$LINES (want 8)"; fi
+
+echo "--- REQ-2.5/REQ-4.2/ARC-16: concurrent invocations, IDENTICAL tree -> integrity + no duplicate key ---"
+SBX="$(new_cache_sandbox)"; SPY="$(mktemp)"
+PAR_PIDS=()
+j=1
+while [ "$j" -le 4 ]; do
+  ( cd "$SBX" && GIT_CEILING_DIRECTORIES="$(dirname "$SBX")" \
+      GATE_FILE=".ai/specs/sample/tasks.md" GATE_NEW="$FLIP1" \
+      SDD_TYPECHECK_CMD=true SDD_TEST_CMD="$T_GREEN" SPY="$SPY" \
+      "$ENGINE" >/dev/null 2>>"$SPY.err" ) &
+  PAR_PIDS+=("$!")
+  j=$((j+1))
+done
+for p in "${PAR_PIDS[@]}"; do wait "$p"; done
+CACHE_FILE="$SBX/.git/sdd-gate-cache"
+BAD_LINES=$(grep -vxE '[0-9a-f]{40}' "$CACHE_FILE" 2>/dev/null | grep -c . || true)
+if [ -f "$CACHE_FILE" ]; then
+  ANY_KEY=$(head -1 "$CACHE_FILE")
+  DUP_COUNT=$(grep -cxF "$ANY_KEY" "$CACHE_FILE" 2>/dev/null || echo 0)
+else
+  DUP_COUNT=0
+fi
+if [ "${BAD_LINES:-0}" -eq 0 ] && [ "${DUP_COUNT:-0}" -le 1 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL [cache][2.5/4.2 concurrency] bad_lines=$BAD_LINES dup_count=$DUP_COUNT content=$(cat "$CACHE_FILE" 2>/dev/null)"
+fi
 
 echo "---"
 echo "pass=$pass fail=$fail"

@@ -3,15 +3,19 @@
 # Ported from ~/.claude/hooks/secret-guard.sh; detection patterns kept verbatim.
 #
 # Default: scan STAGED changes (git diff --cached) — for pre-commit hooks / agents.
-#   --all : scan the whole tree (tracked files) — for CI.
+#   --all               : scan the whole tree (tracked files) — for CI pushes to develop/main.
+#   --range <base>..<head> : scan added/modified content + filenames in that commit range
+#                            (hunk-scoped, like staged) — for CI on pull_request.
+# All three modes share the SAME rule set below (REQ-1.2) — no forked pattern lists.
 #
 # Blocks (exit 2) on:
 #   1. Known key patterns (Omise, Stripe, AWS, GitHub, generic high-entropy assignment)
 #   2. Forbidden config files (.env/.env.*/*.pem/*.key/... and appsettings.*.json without .example)
 # Prints which file/pattern matched to stderr.
 #
-# Exit 0 = OK, exit 2 = block. (SECRET_GUARD_SKIP=1 overrides ONLY on the staged path — the
-# in-session human escape hatch; it is IGNORED in --all/CI mode, which is a hard gate.)
+# Exit 0 = OK, exit 2 = block. (SECRET_GUARD_SKIP=1 overrides ONLY the staged path — the
+# in-session human escape hatch; it is IGNORED in --all and --range, both CI modes, which
+# are a hard gate that no env var may neuter.)
 
 set -euo pipefail
 
@@ -20,9 +24,14 @@ YEL=$'\e[33m'
 RST=$'\e[0m'
 
 MODE=staged
-if [ "${1:-}" = "--all" ]; then
-  MODE=all
-fi
+RANGE=""
+case "${1:-}" in
+  --all) MODE=all ;;
+  --range)
+    MODE=range
+    RANGE="${2:?usage: check-secrets.sh --range <base>..<head>}"
+    ;;
+esac
 
 fail=0
 reasons=()
@@ -49,6 +58,27 @@ if [ "$MODE" = "all" ]; then
       sed 's/^/+/' "$f" 2>/dev/null || true
     done <<< "$FILES"
   )
+elif [ "$MODE" = "range" ]; then
+  # hunk-scoped, like staged (REQ-1.1 as amended, ARC-F7) — --all on develop/main is the
+  # whole-file floor. Both endpoints must resolve to a real commit; any resolution or diff
+  # failure logs the cause and falls back to the full-tree scan (REQ-1.3, 2.4) rather than
+  # silently scanning nothing.
+  BASE_REF_SPEC="${RANGE%%..*}"
+  HEAD_REF_SPEC="${RANGE##*..}"
+  if ! git rev-parse --verify --quiet "$BASE_REF_SPEC^{commit}" >/dev/null \
+    || ! git rev-parse --verify --quiet "$HEAD_REF_SPEC^{commit}" >/dev/null; then
+    echo "check-secrets: range endpoint unresolvable ($RANGE) — falling back to --all" >&2
+    exec "$0" --all
+  fi
+  if ! FILES=$(git diff --name-only --diff-filter=ACMR "$RANGE" -- . "$TESTS_EXCLUDE" 2>/dev/null); then
+    echo "check-secrets: git diff failed for $RANGE — falling back to --all" >&2
+    exec "$0" --all
+  fi
+  [ -z "$FILES" ] && exit 0     # verified-valid range with an empty diff = clean
+  if ! CONTENT=$(git diff --unified=0 "$RANGE" -- . "$TESTS_EXCLUDE" 2>/dev/null); then
+    echo "check-secrets: git diff (content) failed for $RANGE — falling back to --all" >&2
+    exec "$0" --all
+  fi
 else
   # staged (Added/Modified/Renamed/Copied)
   FILES=$(git diff --cached --name-only --diff-filter=ACMR -- . "$TESTS_EXCLUDE" 2>/dev/null || true)
@@ -186,9 +216,9 @@ ${YEL}Remediation:${RST}
 Bypass (NOT recommended): SECRET_GUARD_SKIP=1 ...
 EOF
   # Review #14: SECRET_GUARD_SKIP is an escape hatch for the in-session human on the STAGED
-  # path only. In --all (CI) mode it MUST be ignored — CI is a hard gate, never bypassable by
-  # an env var an agent or a workflow could set.
-  if [ "$MODE" != "all" ] && [ "${SECRET_GUARD_SKIP:-0}" = "1" ]; then
+  # path only. In --all and --range (CI) modes it MUST be ignored — CI is a hard gate, never
+  # bypassable by an env var an agent or a workflow could set (ARC-F10).
+  if [ "$MODE" = "staged" ] && [ "${SECRET_GUARD_SKIP:-0}" = "1" ]; then
     echo >&2
     printf '%s\n' "${YEL}⚠ SECRET_GUARD_SKIP=1 set — overriding block${RST}" >&2
     exit 0

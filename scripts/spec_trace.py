@@ -123,6 +123,9 @@ def satisfies_text(tasks_text):
 
     บรรทัดต่อเนื่องที่ indent (ไม่ว่าง, ไม่ใช่ checkbox `- [ ]`/`- [x]` ใหม่)
     ถูก join เข้ากับบรรทัด Satisfies: ก่อนตัดท้าย — กัน reference ที่ถูก wrap หล่นหาย.
+
+    checkbox literal นี้เป็น python dialect แยกเจตนาจาก .ai/bin/lib-guard.sh's CB_*
+    (bash-only unification, REQ-3.2 ของ sdd-guard-dedup) — ไม่ unify ข้ามภาษา.
     """
     segments = []
     lines = tasks_text.splitlines()
@@ -237,11 +240,13 @@ def run(feature, specs_dir):
 
 
 def main(argv):
-    if len(argv) != 2:
-        print("ใช้: scripts/spec-trace.sh <feature>   (feature = โฟลเดอร์ใต้ .ai/specs/)",
+    if len(argv) not in (2, 3):
+        print("ใช้: scripts/spec-trace.sh <feature> [<specs-dir>]   "
+              "(feature = โฟลเดอร์ใต้ specs-dir, default .ai/specs)",
               file=sys.stderr)
         return 1
-    specs_dir = Path(__file__).resolve().parent.parent / ".ai" / "specs"
+    specs_dir = Path(argv[2]) if len(argv) == 3 \
+        else Path(__file__).resolve().parent.parent / ".ai" / "specs"
     return run(argv[1], specs_dir)
 
 

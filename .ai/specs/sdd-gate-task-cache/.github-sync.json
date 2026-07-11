@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "feature": "sdd-gate-task-cache",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 71,
+    "nodeId": "I_kwDOSt2IyM8AAAABIcHrUQ",
+    "bodyHash": "sha256:d4d7313de877008065a1b11865811b687fa70a4b765572779090a88dd1135070"
+  },
+  "tasks": {
+    "1": {
+      "issue": 72,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHrmA",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:46438ba45b1d4c4e6f30602dee638a38fba7114c4877ea8c2756d7b200204887",
+      "state": "open"
+    },
+    "2": {
+      "issue": 73,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHsMQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:ffa63c2798ca5f837a12d67f596bcb662430b69bab7fcbfac5fa474e7a760846",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T08:15:54Z",
+  "labelsEnsured": [
+    "spec:sdd-gate-task-cache",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

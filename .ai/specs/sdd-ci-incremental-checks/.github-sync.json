@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "feature": "sdd-ci-incremental-checks",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 79,
+    "nodeId": "I_kwDOSt2IyM8AAAABIcHxSA",
+    "bodyHash": "sha256:59875ffd0e6fadc35a0368274db9eb7a43ada9e7e3e4cf3b7bc6e1574231f6b4"
+  },
+  "tasks": {
+    "1": {
+      "issue": 80,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHxYA",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:d9ff46847b5fb76f84deb6c1d1ce26602b36b362a6689f509badfe4fb0d534f0",
+      "state": "open"
+    },
+    "2": {
+      "issue": 81,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHxwQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:3252dcd62fc6327220de862e18f056477348fbf6122ef42edbb2787172221aa8",
+      "state": "open"
+    },
+    "3": {
+      "issue": 82,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcHyAA",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:ad08ad7b543329166cc9f4874d42b0002d44a49ed970fb36a636999d9e2574a8",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T08:15:54Z",
+  "labelsEnsured": [
+    "spec:sdd-ci-incremental-checks",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

@@ -8,6 +8,9 @@
 #                     files, which `git diff --stat` NEVER shows — that is the point)
 #   [d] disk        — do the project's code dir and manifest actually exist on disk
 #
+# [#tasks-checkbox-vs-filesystem] (.ai/shared/LESSONS.md, LESSONS-COVERAGE.md) — this
+# script is the mechanization of that lesson: trust the filesystem over checkboxes/log.
+#
 # Usage: scripts/spec-state.sh <feature-name>
 #   e.g.:  scripts/spec-state.sh my-feature
 #

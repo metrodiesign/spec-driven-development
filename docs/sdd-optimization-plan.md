@@ -1,5 +1,35 @@
 # แผน optimize spec-driven development (อ้างอิง Kiro docs)
 
+> **Last reconciled: 2026-07-11** (sdd-plan-doc-reconcile) — every Tier 1-4 item and all
+> Tier-5 items below now carry a status line (`APPLIED <date> — evidence: <path>` |
+> `APPLIED-WITH-DEVIATION` | `OPEN` | `SUPERSEDED — by <artifact>`) verified against real
+> repo paths at this commit. This is a status pass only — no proposal text below was
+> deleted or reworded (unproven claims stay `OPEN` rather than being marked done).
+>
+> **Open items as of 2026-07-11** (everything still `OPEN` below, one line each):
+> - Tier-5 #6 backfill of old artifacts (ID format, REQ-15.6 order, bugfix placeholder) —
+>   unowned, no current spec covers it
+> - Tier-5 #11 per-task commit history (spec-implement has no per-task auto-commit step)
+> - Tier-5 #12 design.md sync after implementation-time decisions (beyond spec-analyze's
+>   requirement-sync mode)
+> - Tier-5 #13 spec-analyze report as its own artifact file (deprioritized by W5 itself —
+>   inline requirements.md section judged "good enough")
+> - Tier-5 #14 hook-fires-for-real smoke-test discipline
+> - Tier-5 #15 Bash-reads-`.env` gap (deny-Read doesn't cover Bash) — now partially
+>   addressed for the STAGED/tracked path by [sdd-guard-dedup](../.ai/specs/sdd-guard-dedup/)
+>   + [sdd-ci-incremental-checks](../.ai/specs/sdd-ci-incremental-checks/)'s secret
+>   scanning, but a bare `cat .env` via Bash on an untracked file is still unguarded
+> - Tier-5 #16 global `cache-ts.sh` no-matcher trade-off — out of this repo's scope
+>   (lives in global `~/.claude/settings.json`)
+> - Tier-5 #17 pane-loop.md's bypassPermissions source still doesn't say global-vs-project
+> - Tier-5 #18 Thai-output convention for the remaining 3 GLOBAL agent definitions — out
+>   of this repo's scope
+> - Tier-5 #19/#20 Kiro agentic-hook-actions and steering-manual-inclusion-mode — no
+>   recorded explicit decision either way
+>
+> (Header note: this section originally said "22 จุด" for Tier 5; the enumerated list
+> below has always had 20 items (1-20) — corrected the count here, item text untouched.)
+
 > ที่มา: workflow `kiro-sdd-optimizer` (45 agents, 2026-06-12) — fetch Kiro docs 16/16 หน้า
 > (specs 8, hooks 6, steering 1, skills 1) + audit setup ปัจจุบัน 5 ด้าน → ข้อเสนอ 20 ข้อ
 > ทุกข้อผ่าน adversarial verify กับไฟล์จริง (apply ตรงได้ 3, ต้องปรับแล้วใช้ได้ 17, reject 0)
@@ -66,12 +96,19 @@
 
 ### A1. สร้าง task-boundary quality gate แทน Stop/TaskCompleted ที่ตายทั้งคู่ [apply, high/medium]
 
+> **APPLIED 2026-06-12** — evidence: `.claude/hooks/task-gate.sh` (+ `.ai/bin/gate-task.sh`
+> engine); `Stop`/`TaskCompleted` absent from `.claude/settings.json`.
+
 ไฟล์: `.claude/settings.json`, `.claude/hooks/task-gate.sh` (ใหม่)
 
 - พิสูจน์แล้ว: Stop hook exit code เป็นของ `tail` + `exit 0` ปิดท้าย = โมเดลไม่เคยเห็นผล test; TaskCompleted ตายสองชั้น (lint script ที่ผูกกับ tool ซึ่งถูกถอดออกใน toolchain เวอร์ชันที่ใช้ → exit 1 เสมอ, event ยิงเฉพาะ Task tools ที่ workflow นี้ไม่ใช้)
 - ทำ: ลบ Stop + TaskCompleted hooks; เพิ่ม PostToolUse (matcher `Edit|Write`, timeout 120) → `.claude/hooks/task-gate.sh`: อ่าน stdin JSON ด้วย jq, early-exit ถ้า file ไม่ใช่ `.ai/specs/*/tasks.md`, ตรวจว่า edit flip `- [ ]` → `- [x]` (เทียบ old_string/new_string; Write ดู content), ถ้าใช่รัน gate ที่ขับด้วย env (`.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD` — auto-detect package.json scripts ของ Node ถ้ามี) — เขียว = เงียบ exit 0, แดง = exit 2 + stderr ไทยสั้น "ห้าม mark [x] จนกว่าเขียว" ยิงแค่ 5-10 ครั้ง/feature
 
 ### S1. ซ่อม feedback loop ของ Stop hook (ถ้าเลือกเก็บ Stop ไว้แทน A1) [adjust, high/low]
+
+> **SUPERSEDED — by A1**. A1 and S1 were declared mutually exclusive alternatives in
+> this same document ("A1 กับ S1 เลือกแนวเดียว"); A1 was the one implemented, so S1's
+> Stop-hook-repair path was never taken.
 
 ไฟล์: `.claude/settings.json`, `package.json`
 
@@ -82,6 +119,11 @@
 
 ### A4. ถอด prettier hook + ซ่อม SessionStart JSON [adjust, medium/low]
 
+> **APPLIED 2026-06-12** — evidence: no `prettier` entry in `.claude/settings.json`;
+> SessionStart uses `jq -n --arg ...` (since evolved further by
+> [sdd-spec-context-loading](../.ai/specs/sdd-spec-context-loading/) into
+> `scripts/session-start-active-specs.sh`, same jq-safe shape).
+
 ไฟล์: `.claude/settings.json`
 
 - ข้อเท็จจริงจาก verify (แรงกว่าที่คิด): prettier hook "ทำงานจริง" — npm 11 auto-install prettier เวอร์ชัน floating ผ่าน npx (ไม่เคยผ่าน dependency review, ขัด Dependency rules) format ทุกไฟล์รวม .md ใน `.ai/specs/` (~0.6s/ครั้ง) + ทำ harness file-state stale บังคับ re-read
@@ -90,6 +132,12 @@
   `jq -n --arg b "$(git branch --show-current 2>/dev/null)" --arg s "$(ls .ai/specs 2>/dev/null | tr '\n' ' ')" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:("Branch: "+$b+". Active specs: "+$s)}}'`
 
 ### A2. ขยาย destructive-command guard ให้ครอบ Destructive Ops + Workflow rules จริง [adjust, high/low]
+
+> **APPLIED-WITH-DEVIATION 2026-06-12** — evidence: `.claude/hooks/destructive-guard.sh`
+> (thin adapter) + `.ai/bin/check-destructive.sh` (the real engine). Deviation: the
+> vendor-neutral `.ai/bin/` layer (multi-agent portability work, after this item
+> originally landed) relocated the actual pattern logic out of the Claude-only hook file
+> into a shared engine every agent adapter sources — same behavior, different home.
 
 ไฟล์: `.claude/settings.json`, `.claude/hooks/destructive-guard.sh` (ใหม่)
 
@@ -103,6 +151,13 @@
 
 ### A3. Wire secret-guard.sh ที่เขียนเสร็จแล้วแต่ลอยอยู่ [adjust, high/low]
 
+> **APPLIED-WITH-DEVIATION 2026-06-12** — evidence: `.githooks/pre-commit` (committed,
+> Tier-1 floor, `core.hooksPath` wired via `.ai/bin/install.sh`) + `.ai/bin/check-secrets.sh`.
+> Deviation: the original proposal symlinked a per-machine `~/.claude/hooks/secret-guard.sh`;
+> the actual implementation is a repo-committed, single-source engine every clone gets via
+> `core.hooksPath .githooks` — stronger (survives clone/onboarding) than the original
+> per-machine symlink idea.
+
 ไฟล์: `.git/hooks/pre-commit`, `.claude/settings.json`, `~/.claude/hooks/secret-guard.sh`
 
 - `~/.claude/hooks/secret-guard.sh` ครบเครื่อง (Omise/Stripe/AWS/GitHub patterns + entropy + remediation) แต่ไม่ถูกอ้างที่ไหนเลย
@@ -113,12 +168,19 @@
 
 ### ST3. ลบ rules orphan: api-design.md + components.md [apply, medium/low]
 
+> **APPLIED 2026-06-12** — evidence: both `.claude/rules/api-design.md` and
+> `.claude/rules/components.md` confirmed absent from the repo.
+
 ไฟล์: `.claude/rules/api-design.md`, `.claude/rules/components.md`
 
 - ทั้งคู่ frontmatter `paths:` ชี้ไป directory ที่โปรเจกต์ไม่ได้ใช้จริง = ไม่เคยถูกโหลดตั้งแต่ commit แรก; api-design.md ขัด Non-Goals (ไม่มี backend); components.md มี placeholder ค้าง + เนื้อหาซ้ำ tech.md
 - ทำ: ลบทั้งคู่ (stack-nextjs.md ครอบ domain component อยู่แล้ว — one domain per file)
 
 ### W1. ลบย่อหน้า stale ใน spec-implement ที่สั่งกลับด้านกับ default all-in-one [adjust, high/low]
+
+> **APPLIED 2026-06-12** — evidence: current `.claude/skills/spec-implement/SKILL.md`
+> reads "the DEFAULT for a COUPLED feature... is ALL tasks in ONE session, in dependency
+> order" with no contradictory paragraph remaining.
 
 ไฟล์: `.claude/skills/spec-implement/SKILL.md`
 
@@ -131,6 +193,11 @@
 
 ### W3. Approval state durable ใน artifact + กลไก resolve active spec [adjust, high/low]
 
+> **APPLIED 2026-06-12** — evidence: `> Status: approved <date>` header lines present
+> across `.ai/specs/*/requirements.md` (and design.md/tasks.md); spec-implement resolves
+> the active spec per its own headless-safe rule (unchecked task id present, ask if
+> ambiguous).
+
 ไฟล์: skills spec-requirements / spec-design / spec-tasks / spec-implement / spec-analyze / spec-pbt / spec-quick
 
 - ปัญหา: "approved" อยู่ในบทสนทนาเท่านั้น — หลัง /clear หรือ headless session แยกไม่ออกว่า gate ไหนผ่าน; 4 skills อ้าง "the active spec" โดยไม่มี argument-hint ทั้งที่ specs/ มี 2 feature; spec-pbt แนะนำ dedicated PBT framework ที่ไม่ได้ติดตั้ง (ชนกฎ tech.md)
@@ -139,6 +206,11 @@
 - (ค) spec-pbt เพิ่ม guard: เช็ก package.json ก่อน — PBT framework ไม่มี = ขออนุมัติตามกฎ tech.md ก่อนเพิ่ม
 
 ### W4 + ST7. Promote บทเรียนเข้า skill ต้นเหตุ + script ตรวจ ground truth [adjust, high/low+medium]
+
+> **APPLIED 2026-06-13** — evidence: `scripts/spec-state.sh` (ground-truth reconcile,
+> [#tasks-checkbox-vs-filesystem](../.ai/shared/LESSONS-COVERAGE.md)) + spec-implement
+> SKILL.md step 0 running it; W4(ก) reverse-coverage rule = `scripts/spec-trace.sh` (see
+> A5 below), the "ตัวตรวจ" side of the same merge this item names.
 
 ไฟล์: `.claude/skills/spec-tasks/SKILL.md`, `.claude/skills/spec-implement/SKILL.md`, `scripts/spec-state.sh` (ใหม่)
 
@@ -149,6 +221,10 @@
 
 ### W5. ปิด loop ของ /spec-analyze: repair เข้า requirements.md + propagate [adjust, high/medium]
 
+> **APPLIED 2026-06-13** — evidence: `.claude/skills/spec-analyze/SKILL.md` repair-loop
+> steps (batched fix questions, write back into requirements.md, "Edge Cases & Open
+> Questions" log with anchor commit hash).
+
 ไฟล์: skills spec-analyze / spec-design / spec-tasks
 
 - ปัญหา: spec-analyze เป็น report-only ไม่มีใคร apply fix กลับ; หลักฐานจริง: requirements.md ของ feature spec หนึ่งอ้างรหัส finding L1/A1/C2/G2/A4/A5 ที่ dangle ไปบทสนทนาที่หายแล้ว; working agreement "propagates to design and tasks" ไม่มี skill ไหนทำจริง
@@ -157,6 +233,11 @@
 - ระวัง: skill 17 บรรทัด อย่าบวมเกิน ~2 เท่า; คง "Do NOT silently edit" โดยขยายว่า edit ได้เฉพาะหลัง user ตัดสิน
 
 ### A5. Deterministic traceability: scripts/spec-trace.sh [adjust, high/medium]
+
+> **APPLIED 2026-06-13** — evidence: `scripts/spec-trace.sh` + `scripts/spec_trace.py`,
+> wired into `ci.yml`'s spec-trace step and referenced by 5+ skill SKILL.md files. Since
+> extended by [sdd-spec-context-loading](../.ai/specs/sdd-spec-context-loading/) with an
+> optional `<specs-dir>` argument so it also covers `.ai/specs/archive/`.
 
 ไฟล์: `scripts/spec-trace.sh` (ใหม่), skills spec-tasks / spec-implement
 
@@ -169,6 +250,10 @@
 
 ### W7. spec-quick: front-loaded questions + self-check [adjust, medium/low]
 
+> **APPLIED 2026-06-13** — evidence: `.claude/skills/spec-quick/SKILL.md` step 0
+> (conditional batched question) + inline self-check before design + compact task-list
+> interrupt point.
+
 ไฟล์: `.claude/skills/spec-quick/SKILL.md`
 
 - Kiro ระบุ batched clarifying questions ก่อน generate คือ "the key interaction point" ของโหมดไม่มี gate — spec-quick ปัจจุบันกระโดดเข้า create folder ทันที
@@ -180,6 +265,11 @@
 
 ### ST2. stack-nextjs.md path-scoped จริง + แยก browser-verify ไป references/ [adjust, high/medium]
 
+> **APPLIED 2026-06-12** — evidence:
+> `.claude/skills/spec-implement/references/browser-verify.md` exists, referenced from
+> spec-implement's verify step. (`stack-nextjs.md` itself has since been removed entirely
+> — see Tier-5 #8 below, a later, larger supersession.)
+
 ไฟล์: `.claude/rules/stack-nextjs.md`, `.claude/skills/spec-implement/SKILL.md` + `references/browser-verify.md` (ใหม่), `.claude/skills/spec-retro/SKILL.md`
 
 - 47.8KB/49 bullets, glob `**/*.{ts,tsx}` = de-facto always-on; ~ครึ่งเป็น verify recipes ที่ใช้เฉพาะช่วง verify; lesson ขัดกันเอง (บรรทัด 19 ชดเชย scrollbar +15 เสมอ vs บรรทัด 45 headless = overlay 0px)
@@ -188,12 +278,21 @@
 
 ### ST4. เลิกโหลด product/tech/structure ซ้ำสองทาง [apply, medium/low]
 
+> **APPLIED 2026-06-12** — evidence: current `CLAUDE.md` does not `@`-import
+> `.claude/rules/*` files; the rules loader auto-loads them as pointer stubs instead
+> (documented in `CLAUDE.md`'s own "Read first, every session" section).
+
 ไฟล์: `CLAUDE.md` (โปรเจกต์)
 
 - โหลดซ้ำ 2 กลไก: @-import ใน CLAUDE.md + rules auto-loader (พิสูจน์จาก lessons.md ที่อยู่ใน context โดยไม่มี @) ≈ เสี่ยง double ~3.5k tokens; ทั้งสามไฟล์ไม่มี paths frontmatter = always-rules แน่นอน ถอด @ ปลอดภัย
 - ทำ: แทนสามบรรทัด `See @.claude/rules/...` ด้วย pointer ธรรมดาไม่มี @; เปิด session ใหม่ตรวจหนึ่งครั้งว่า rules ยังครบ
 
 ### ST5. ย้าย cost-accounting จาก lessons.md ไป references/ ของ spec-retro [adjust, medium/low]
+
+> **APPLIED 2026-06-12** — evidence: `.claude/skills/spec-retro/references/cost-accounting.md`
+> exists; `.ai/shared/LESSONS.md`'s cost entry
+> ([#cost-from-ledger-only](../.ai/shared/LESSONS-COVERAGE.md)) is now the lean kernel
+> form this item describes.
 
 ไฟล์: `.claude/rules/lessons.md`, `.claude/skills/spec-retro/SKILL.md` + `references/cost-accounting.md` (ใหม่)
 
@@ -202,6 +301,13 @@
 - หมายเหตุจาก verify: pane-loop เป็น command (`.claude/commands/pane-loop.md`) ไม่มี SKILL.md
 
 ### ST6. Sync steering กับ ground truth + ขั้น steering sync ใน spec-retro [adjust, medium/low]
+
+> **APPLIED-WITH-DEVIATION 2026-06-12** — evidence: `.claude/skills/spec-retro/SKILL.md`
+> step 4 "Steering sync". Deviation: the specific files this item names
+> (`.claude/rules/tech.md`/`structure.md`/`lessons.md`) are now themselves thin pointer
+> stubs to `.ai/shared/CODING_STANDARDS.md` / `ARCHITECTURE.md` / `LESSONS.md` (the later
+> vendor-neutral `.ai/` layer refactor) — the sync step's target moved with them, same
+> intent.
 
 ไฟล์: `.claude/rules/tech.md`, `structure.md`, `lessons.md`, `.claude/skills/spec-retro/SKILL.md`
 
@@ -215,12 +321,20 @@
 
 ### W2. ทำเส้นทาง Design-First ให้ใช้ได้จริง [adjust, medium/medium]
 
+> **APPLIED 2026-06-13** (PR #7) — evidence: `CLAUDE.md` "(Design-First swaps 1 and 2 —
+> same gates)"; `.ai/shared/EARS.md` ships 5 patterns (see Tier-5 #1).
+
 ไฟล์: skills spec-design / spec-requirements, `.claude/agents/spec-architect.md`, `CLAUDE.md` (1 บรรทัด)
 
 - spec-new โฆษณาเส้นทาง Design → Requirements → Tasks แต่ spec-design บังคับอ่าน requirements.md ก่อนเสมอ = พังตั้งแต่ skill ที่สอง; โปรเจกต์นี้เข้าโปรไฟล์ Design-First ของ Kiro พอดี (stack pin ตายตัว)
 - ทำ: (1) CLAUDE.md เพิ่มวงเล็บหนึ่งบรรทัดตรง non-negotiable workflow: "(Design-First swaps 1 and 2 — same approval gates)" ปลดความขัดแย้ง constitution กับ skill; (2) spec-design เพิ่ม conditional design-first mode (input = คำตอบ /spec-new + rules; ถาม HLD/LLD หนึ่งคำถาม; งด traceability table; เพิ่ม "## Non-Functional Considerations" เฉพาะโหมดนี้); delegate ไป spec-architect ต้องส่ง design-first context (แก้ spec-architect.md ~2 บรรทัดรองรับ); (3) spec-requirements เพิ่มโหมด derive จาก design.md (REQ cite design section; sync ทิศเดียว: design เป็น upstream) + backfill traceability table กลับเข้า design.md หลัง derive; (4) ขยาย EARS template จาก 3 เป็น 5 patterns (เพิ่ม ubiquitous + WHERE) — แก้ gap ที่ critic ชี้ด้วย
 
 ### W6. ยกระดับ spec-bugfix เต็ม shape ของ Kiro Bugfix Spec [adjust, medium/medium]
+
+> **APPLIED 2026-06-13** (PR #7) — evidence: `.claude/skills/spec-bugfix/SKILL.md`'s
+> `bugfix.md` template with `## Current Behavior (Defect)` / `## Expected Behavior` /
+> `## Unchanged Behavior` sections and stable F-ID/B-ID; used live by the (now archived)
+> `bugfix-console-fetch-status` and `bugfix-fchat-hardening` specs.
 
 ไฟล์: `.claude/skills/spec-bugfix/SKILL.md`, `.claude/skills/spec-implement/SKILL.md` (1 บรรทัด)
 
@@ -229,6 +343,14 @@
 - ไม่ migrate bugfix spec เดิมที่ปิดไปแล้ว
 
 ### A6. Harden agent contracts [adjust, medium/low]
+
+> **APPLIED 2026-06-13** (PR #7) — evidence: `.claude/agents/pbt-runner.md` `model: opus`;
+> `.ai/roles/bug-investigator.md` "Reproduce the reported behavior FOR REAL with Bash
+> whenever the code can be... reproduced live"; `.claude/agents/spec-architect.md`
+> description leads with "Fresh-context adversarial reviewer/auditor". Deviation: items
+> (2)/(3)'s substance now lives in the vendor-neutral `.ai/roles/*` definitions with a
+> thin Claude adapter on top, not directly in `.claude/agents/*.md` prose as originally
+> proposed.
 
 ไฟล์: `.claude/agents/pbt-runner.md`, `bug-investigator.md`, `spec-architect.md`, skills spec-design / spec-pbt
 
@@ -240,20 +362,35 @@
 
 ---
 
-## Tier 5 — gap จาก critic (22 จุด) ที่ยังไม่มีเจ้าภาพ
+## Tier 5 — gap จาก critic (20 จุด — header เดิมว่า 22, enumerated list มีแค่ 1-20 เสมอ; แก้ตัวเลขนับให้ตรง list จริง ไม่ได้ลบ item ใดออก) ที่ยังไม่มีเจ้าภาพ
 
 จัดกลุ่มตามน้ำหนัก:
 
 ควรยกเป็นงานเพิ่มทันที (เจ็บจริง/เคยพังจริง):
 
-1. spec-requirements ไม่ได้ rec ตรงตัว — EARS template มี 3/5 patterns + ไม่มี guard กัน criterion non-atomic/subjective (ถูก W2(4) ครอบบางส่วน — ตอน implement ให้ปิดทั้งสองจุด)
-2. PreCompact hook + breadcrumb กลางงาน — context discipline ใน CLAUDE.md ตอนนี้พึ่งความจำโมเดลล้วน; เพิ่ม PreCompact hook inject คำสั่ง persist active-task state ก่อน compact
-3. spec-file guard hook — PreToolUse Edit บน `.ai/specs/**/requirements.md` เตือนเมื่อแก้ spec ที่ approved ระหว่างมี task ค้าง (เสริม W3 status field พอดี)
-4. completion evidence ใน tasks.md — บังคับบันทึกผลเทสต์/viewport ที่ตรวจ/deviation ตอน mark [x] (เสริม A1 task-gate)
-5. spec-architect ซ้ำ outline กับ spec-design (drift risk) — repurpose เป็น design-reviewer/requirements-auditor แบบ fresh-context adversarial (audit ชี้ว่า "คุ้มสุดและถูก")
-6. backfill artifact เดิมที่ commit แล้ว: ID format asymmetry (`1.1` vs `REQ-1.1` — A5 parser รองรับแล้วแต่ artifact ควร normalize), REQ-15.6 แทรกผิดลำดับ, placeholder ใน bugfix tasks.md
+1. **[APPLIED 2026-06-13 — evidence: `.ai/shared/EARS.md` "## The 5 patterns" + "Writing atomic, testable requirements" section]** spec-requirements ไม่ได้ rec ตรงตัว — EARS template มี 3/5 patterns + ไม่มี guard กัน criterion non-atomic/subjective (ถูก W2(4) ครอบบางส่วน — ตอน implement ให้ปิดทั้งสองจุด)
+2. **[APPLIED 2026-06-13 — evidence: `.claude/hooks/precompact-persist.sh` + `PreCompact` block in `.claude/settings.json`]** PreCompact hook + breadcrumb กลางงาน — context discipline ใน CLAUDE.md ตอนนี้พึ่งความจำโมเดลล้วน; เพิ่ม PreCompact hook inject คำสั่ง persist active-task state ก่อน compact
+3. **[APPLIED 2026-06-13 — evidence: `.claude/hooks/spec-edit-guard.sh` → `.ai/bin/check-spec-edit.sh`]** spec-file guard hook — PreToolUse Edit บน `.ai/specs/**/requirements.md` เตือนเมื่อแก้ spec ที่ approved ระหว่างมี task ค้าง (เสริม W3 status field พอดี)
+4. **[APPLIED 2026-06-13 — evidence: `.ai/bin/gate-task.sh` Evidence-block enforcement, exercised throughout this same reconciliation session]** completion evidence ใน tasks.md — บังคับบันทึกผลเทสต์/viewport ที่ตรวจ/deviation ตอน mark [x] (เสริม A1 task-gate)
+5. **[APPLIED 2026-06-13 — evidence: `.claude/agents/spec-architect.md` description leads with "Fresh-context adversarial reviewer/auditor"]** spec-architect ซ้ำ outline กับ spec-design (drift risk) — repurpose เป็น design-reviewer/requirements-auditor แบบ fresh-context adversarial (audit ชี้ว่า "คุ้มสุดและถูก")
+6. **[OPEN — unowned, no current spec covers it]** backfill artifact เดิมที่ commit แล้ว: ID format asymmetry (`1.1` vs `REQ-1.1` — A5 parser รองรับแล้วแต่ artifact ควร normalize), REQ-15.6 แทรกผิดลำดับ, placeholder ใน bugfix tasks.md
 
-รอง (ทำเมื่อแตะไฟล์นั้นอยู่แล้ว): 7. dedup policy สำหรับกฎซ้ำหลายที่ (task-sizing 3 ที่, EARS 2 ที่) — กำหนด single source + pointer 8. นโยบาย prune/merge lesson ที่ขัดกันเองใน stack-nextjs.md (ST2 แก้คู่ 19/45 แล้ว แต่ไม่ได้วางกติกากันเกิดซ้ำ) 9. product.md ทำตัวเป็น mini-spec ของฟีเจอร์เดียว (rubric/จำนวนการ์ดซ้ำ requirements.md) — จะ stale เมื่อมีฟีเจอร์ถัดไป 10. dedup เนื้อหา tech.md Hard Constraints กับ structure.md Anti-Patterns (~4 กฎซ้ำ) 11. per-task history ที่ตรวจสอบได้ (commit ที่ task boundary แทน commit เดียวจบ feature) 12. design sync หลัง implementation decision (เช่น การ pin เวอร์ชันของ styling system ไม่ถูกบันทึกใน design.md) 13. spec-analyze report เป็นไฟล์ artifact ใน specs/<feature>/ (W5 บันทึกใน requirements.md section — พอใช้ แต่ถ้าอยาก audit trail เต็มค่อยแยกไฟล์) 14. hook verification discipline — smoke-test ว่า hook ยิงจริง (`claude --debug`) — สาเหตุที่ 3 hooks ตายเงียบนาน 15. Bash อ่าน secret (`cat .env`) — deny-Read ไม่ครอบ Bash; A3 ครอบเฉพาะจุด commit 16. cache-ts.sh ใน global settings ยิงทุก PostToolUse ไม่มี matcher (spawn process ทุก tool call) — อย่างน้อยบันทึกเป็น trade-off ที่รู้ตัว 17. pane-loop.md:25 ชี้แหล่ง bypassPermissions ผิดไฟล์ (อยู่ global ไม่ใช่ project) 18. ภาษา output (ไทย) ใน agent definitions — A6 ครอบ 3 ตัว project แล้ว เหลือ global 3 ตัว 19. Kiro agentic hook actions (NL-prompt hook) — ฝั่ง Claude Code ทำได้ผ่าน hook JSON `additionalContext` / UserPromptSubmit injection; ตอนนี้ rec ทั้งหมดเป็น deterministic shell — ตัดสินใจ explicit ว่าจงใจไม่ใช้ 20. Kiro steering manual inclusion mode (`#steering-name`) — map ได้กับ @-mention / skill references/ — ยังไม่ถูกใช้เป็น pattern
+รอง (ทำเมื่อแตะไฟล์นั้นอยู่แล้ว):
+
+7. **[APPLIED — evidence: task-sizing guidance now lives solely in `.claude/skills/spec-tasks/SKILL.md`]** dedup policy สำหรับกฎซ้ำหลายที่ (task-sizing 3 ที่, EARS 2 ที่) — กำหนด single source + pointer
+8. **[SUPERSEDED — by the `.ai/shared/stack/` extension-point design]** นโยบาย prune/merge lesson ที่ขัดกันเองใน stack-nextjs.md (ST2 แก้คู่ 19/45 แล้ว แต่ไม่ได้วางกติกากันเกิดซ้ำ) — `stack-nextjs.md` เองถูกลบไปแล้ว ไม่มี active stack profile ให้ lesson ขัดกันอีก
+9. **[SUPERSEDED — by `.ai/shared/PROJECT_CONTEXT.md`]** product.md ทำตัวเป็น mini-spec ของฟีเจอร์เดียว (rubric/จำนวนการ์ดซ้ำ requirements.md) — จะ stale เมื่อมีฟีเจอร์ถัดไป — `.claude/rules/product.md` เป็น pointer stub 3 บรรทัดแล้ว ปัญหาเดิมไม่มีอยู่จริงอีกต่อไป
+10. **[SUPERSEDED — by the `.ai/shared/` layer]** dedup เนื้อหา tech.md Hard Constraints กับ structure.md Anti-Patterns (~4 กฎซ้ำ) — ทั้งสองไฟล์เป็น stub ชี้ `.ai/shared/CODING_STANDARDS.md`/`ARCHITECTURE.md` แล้ว
+11. **[OPEN]** per-task history ที่ตรวจสอบได้ (commit ที่ task boundary แทน commit เดียวจบ feature) — spec-implement SKILL.md ไม่มีขั้น auto-commit ต่อ task
+12. **[OPEN]** design sync หลัง implementation decision (เช่น การ pin เวอร์ชันของ styling system ไม่ถูกบันทึกใน design.md)
+13. **[OPEN — deprioritized by W5 itself, "พอใช้"]** spec-analyze report เป็นไฟล์ artifact ใน specs/<feature>/ (W5 บันทึกใน requirements.md section — พอใช้ แต่ถ้าอยาก audit trail เต็มค่อยแยกไฟล์)
+14. **[OPEN]** hook verification discipline — smoke-test ว่า hook ยิงจริง (`claude --debug`) — สาเหตุที่ 3 hooks ตายเงียบนาน
+15. **[OPEN — see "Open items" list at top for the current partial-coverage note]** Bash อ่าน secret (`cat .env`) — deny-Read ไม่ครอบ Bash; A3 ครอบเฉพาะจุด commit
+16. **[OPEN — unowned, lives in global `~/.claude/settings.json`, out of this repo's scope]** cache-ts.sh ใน global settings ยิงทุก PostToolUse ไม่มี matcher (spawn process ทุก tool call) — อย่างน้อยบันทึกเป็น trade-off ที่รู้ตัว
+17. **[OPEN]** pane-loop.md:25 ชี้แหล่ง bypassPermissions ผิดไฟล์ (อยู่ global ไม่ใช่ project) — current text still doesn't say global-vs-project explicitly
+18. **[OPEN — unowned, "global 3 ตัว" out of this repo's scope]** ภาษา output (ไทย) ใน agent definitions — A6 ครอบ 3 ตัว project แล้ว เหลือ global 3 ตัว
+19. **[OPEN — no recorded explicit decision found]** Kiro agentic hook actions (NL-prompt hook) — ฝั่ง Claude Code ทำได้ผ่าน hook JSON `additionalContext` / UserPromptSubmit injection; ตอนนี้ rec ทั้งหมดเป็น deterministic shell — ตัดสินใจ explicit ว่าจงใจไม่ใช้
+20. **[OPEN — no recorded explicit decision found]** Kiro steering manual inclusion mode (`#steering-name`) — map ได้กับ @-mention / skill references/ — ยังไม่ถูกใช้เป็น pattern
 
 ## ลำดับ implement ที่แนะนำ
 

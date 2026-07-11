@@ -2,6 +2,12 @@ export const meta = {
   name: 'review-fanout',
   description: 'Multi-angle diff review: finder fan-out, per-candidate adversarial verify, gap sweep',
   whenToUse: 'High-effort code review of a commit/range without hand-rolling Agent spawns and mailbox collection',
+  // Output contract addition (sdd-premerge-review-standard REQ-3.2): when this workflow
+  // satisfies the pre-merge review gate (.ai/shared/REVIEW_PROTOCOL.md "Pre-merge
+  // multi-angle review"), the CALLING loop — not this script, which has no filesystem
+  // access — is responsible for writing docs/reviews/PR-<n>-<sha7>.md (template:
+  // .ai/templates/review-record.md) from this workflow's returned findings/refuted/
+  // unverified arrays before merge-pr proceeds.
   phases: [
     { title: 'Find', detail: '10 finder angles over the diff' },
     { title: 'Verify', detail: 'one 3-state verifier per deduped candidate' },

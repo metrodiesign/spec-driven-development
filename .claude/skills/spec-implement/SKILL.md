@@ -30,9 +30,17 @@ in tasks.md before implementing.
 
 For EACH task:
 
-1. Read the task plus its linked IDs in requirements.md (or bugfix.md with its
-   F-IDs/B-IDs, for a bugfix spec), the relevant parts of design.md (if present
-   — bugfix specs have none), and @.ai/shared/ARCHITECTURE.md.
+1. Load context via `scripts/spec-slice.sh <feature> <task-id>` and read ONLY
+   its output (the task block + its linked REQ blocks + the design sections
+   the traceability table maps to those REQs + Status headers) plus
+   @.ai/shared/ARCHITECTURE.md. This is a bugfix spec's own scope — bugfix.md
+   uses F-IDs/B-IDs, not REQ ids, so the slicer does not apply there; read
+   bugfix.md directly instead. Fall back to reading the full requirements.md
+   + design.md when: (a) the slice output contains any `MISSING:` marker, (b)
+   this is the feature's final or an assembly task (it needs cross-task
+   awareness by design), or (c) I ask for full context. Slice-first is an
+   optimization, never a gate — if the slicer is missing or errors, fall back
+   to the full read instead of guessing.
 2. Plan the task with your own internal TODO list, then implement the WHOLE task in
    one cohesive pass. It may span many files — that is expected; keep the entire
    task in context rather than splitting it across turns.

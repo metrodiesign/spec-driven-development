@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "feature": "sdd-premerge-review-standard",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 91,
+    "nodeId": "I_kwDOSt2IyM8AAAABIcH4KQ",
+    "bodyHash": "sha256:f0f483d1b42b4ac8e73c46048de09502be47db96061e466d749b99dc5f4f7a48"
+  },
+  "tasks": {
+    "1": {
+      "issue": 92,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH42w",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:c30ad170a65708213f80024853f6ad06a8ccdb14199924a46841caa66b1a898e",
+      "state": "open"
+    },
+    "2": {
+      "issue": 93,
+      "nodeId": "I_kwDOSt2IyM8AAAABIcH5Zw",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:4f74116ab646408ebd1b71d78a7ca40a70482a946580aa032df06425b298e9de",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-11T08:15:54Z",
+  "labelsEnsured": [
+    "spec:sdd-premerge-review-standard",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

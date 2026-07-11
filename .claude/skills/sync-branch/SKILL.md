@@ -33,15 +33,16 @@ env -u GH_TOKEN gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch-ur
 ## Steps
 
 1. **Resolve the branch to clean up.**
-   - If `$ARGUMENTS` is a PR number: `env -u GH_TOKEN gh pr view <n> --json state,headRefName,mergeCommit`.
+   - If `$ARGUMENTS` is a PR number: `env -u GH_TOKEN gh pr view <n> --json state,headRefName,baseRefName,mergeCommit`.
      Stop and report if `state != "MERGED"` — do not clean up an open branch.
    - Else: use the current branch (`git branch --show-current`). Confirm it's actually
-     merged: `env -u GH_TOKEN gh pr list --head <branch> --state merged --json number,mergedAt`.
+     merged: `env -u GH_TOKEN gh pr list --head <branch> --state merged --json number,mergedAt,baseRefName`.
      Stop and report if empty (nothing merged for this branch yet).
 
-2. **Determine the base branch** — this repo's convention is `develop`
-   (see `CLAUDE.md`: "ห้าม push ตรงเข้า main, develop ต้องผ่าน PR เสมอ"). Use `main` only
-   if the PR's base was `main`.
+2. **Determine the base branch** — use the `baseRefName` fetched in step 1 directly
+   (this repo's convention keeps it `develop`, see `CLAUDE.md`: "ห้าม push ตรงเข้า main,
+   develop ต้องผ่าน PR เสมอ" — but a PR based on `main` must sync `main`, not be assumed
+   into `develop`).
 
 3. **Sync base + delete local branch:**
    ```sh
