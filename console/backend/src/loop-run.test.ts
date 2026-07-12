@@ -1213,3 +1213,27 @@ test('a planning dispatcher assembled WIDER than the contract\'s max_parallel_ag
     rmSync(persistDir, { recursive: true, force: true });
   }
 });
+
+test('the guard mirrors the dispatch condition: planner trigger OFF -> no dispatch this run, an over-wide dispatcher is NOT refused (REQ-4.2 is WHILE-dispatching — Codex review PR #110)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-guard-off-'));
+  try {
+    const out = await runSupervisedLoop({
+      contract: { ...CONTRACT, budget: { ...CONTRACT.budget, maxParallelAgents: 1 } },
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      approval: { timeoutMs: 100 },
+      planning: { enabled: true, plannerRoleTrigger: false, profile: PLAN_PROFILE, dispatcher: createDispatcher({ buckets: new Map(), maxParallel: 2 }) },
+    });
+    assert.equal(out.finalState, 'ESCALATED', 'the run proceeds exactly like the no-planning run (approval timeout terminal)');
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'PLAN_RESOLVED' }).length, 0, 'and indeed nothing was dispatched');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});

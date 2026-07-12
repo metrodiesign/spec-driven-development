@@ -339,3 +339,12 @@ Design-critique round 2026-07-12 (spec-architect วิจารณ์ design.md
 - **AD6** REQ-4.2 min() vs guard refuse — ยืนยัน: composed rule = ceiling (clamp ผ่าน
   `min()`), guard refuse = fail-closed เมื่อ caller ประกอบผิด (ลืม ceiling) — คนละ
   เหตุการณ์ ไม่ขัดกัน; rationale ใน design C6
+
+Post-PR review round (Codex, PR #110, 2026-07-12):
+
+- **CX1** guard เดิมเช็คแค่ `planning.enabled` → refuse config ชอบธรรม
+  `{enabled: true, plannerRoleTrigger: false}` ที่ไม่มี dispatch เกิดจริง —
+  **APPLIED**: guard เช็คสอง flag mirror เงื่อนไข dispatch (REQ-4.2 เป็น
+  WHILE-dispatching; fail-closed ไม่เสีย — run ที่ trigger เปิดเข้า guard ตอนเริ่ม
+  ของมันเอง) + regression test (trigger off + over-wide dispatcher → รันสำเร็จ);
+  design C6 amended

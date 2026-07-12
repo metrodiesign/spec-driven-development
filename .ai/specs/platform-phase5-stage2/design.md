@@ -1,5 +1,5 @@
 # Design: platform-phase5-stage2 — goal.schema.json + Typed Contract
-> Status: approved 2026-07-12
+> Status: approved 2026-07-12, amended 2026-07-12 (CX1: guard scope สอง flag — Codex review PR #110)
 
 ## Architecture Overview
 
@@ -252,7 +252,8 @@ export interface DispatcherOptions {
 `#ci-green-not-pipeline-connected`):
 
 ```ts
-if (opts.planning?.enabled === true &&
+// Both flags — mirror of the dispatch condition (Codex review PR #110, CX1)
+if (opts.planning?.enabled === true && opts.planning.plannerRoleTrigger === true &&
     opts.planning.dispatcher.effectiveMaxParallel > opts.contract.budget.maxParallelAgents) {
   throw new Error(`planning dispatcher parallelism ${eff} exceeds contract max_parallel_agents ${cap}`);
 }
@@ -267,6 +268,13 @@ ceiling จน dispatcher ขนานเกิน contract) ไม่ใช่ 
 opaque หลังสร้างแล้ว retro-clamp ไม่ได้; ใน default config (routing `maxParallel: 1`)
 guard ไม่มีวัน trip. Production ยังไม่มีจุดสร้าง dispatcher จริง (tests เท่านั้น) —
 guard คือ enforcement ที่รอ live assembler ในอนาคต.
+
+Guard scope แก้ตาม Codex review PR #110 (CX1): เช็ค **สอง** flag mirror เงื่อนไข
+dispatch (`enabled && plannerRoleTrigger`) — REQ-4.2 เป็น WHILE-dispatching; run ที่
+trigger ปิดไม่ dispatch จึงไม่มีอะไรให้ bound และต้องไม่ถูก refuse (config ชอบธรรมที่
+test "EITHER axis off" รับรอง). Fail-closed ไม่เสีย: run ถัดไปที่ trigger เปิดเข้า
+guard ใหม่ตอนเริ่มของมันเอง; regression test คู่กัน (trigger off + over-wide
+dispatcher → รันสำเร็จ, PLAN_RESOLVED = 0).
 
 ### C7 — loopManaged
 

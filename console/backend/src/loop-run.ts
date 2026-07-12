@@ -374,7 +374,11 @@ export async function runSupervisedLoop(opts: {
   // than the contract's governance ceiling is a composition bug, refused up front —
   // the dispatcher is opaque after construction, so it cannot be clamped here
   // (phase5-stage2 REQ-4.2; the composed rule is createDispatcher's `ceiling`).
-  if (opts.planning?.enabled === true) {
+  // Both flags, mirroring the dispatch condition below: with the planner trigger
+  // off this run performs no concurrent dispatch, so there is nothing to bound —
+  // REQ-4.2 is WHILE-dispatching (Codex review PR #110); a later run that flips
+  // the trigger on re-enters this guard at its own start.
+  if (opts.planning?.enabled === true && opts.planning.plannerRoleTrigger === true) {
     const eff = opts.planning.dispatcher.effectiveMaxParallel;
     const cap = opts.contract.budget.maxParallelAgents;
     if (eff > cap) {
