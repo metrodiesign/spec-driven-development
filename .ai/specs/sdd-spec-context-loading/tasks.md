@@ -1,6 +1,6 @@
 # Implementation Tasks: Spec Context Loading Discipline (archive + per-task slice)
 
-> Status: approved 2026-07-11
+> Status: approved 2026-07-11, amended 2026-07-12 (quick, no gates)
 
 > Each task is a cohesive, independently verifiable slice. Implement a whole task
 > in one pass (it may touch many files). Decompose into sub-steps yourself at
@@ -51,7 +51,60 @@
        - viewports: n/a — repo/CI maintenance action
        - deviations: none. Full guard-suite sweep (9 files) still all exit 0 after the moves. Actual CI-green confirmation happens once this branch is pushed as a PR (same follow-up caveat as sdd-ci-incremental-checks task 3).
 
+- [x] 5. Fix design-table REQ-column matcher to accept bare `N.M` ids, not
+     just `REQ-N` (scripts/spec-slice.sh), and make a REQ that matches zero
+     traceability rows surface its own `MISSING:` marker instead of silently
+     contributing nothing (quick amendment, no gates — bug flagged in
+     retrospectives/2026-07/12/15.25_phase5-stage3-impl.md and
+     LESSONS.md #slice-tool-verify-not-just-missing-marker).
+     Satisfies: REQ-3.6, REQ-3.7.
+     Verify: bash .claude/hooks/tests/spec-slice.test.sh (new cases) + full
+     guard-suite sweep + scripts/spec-trace.sh sdd-spec-context-loading +
+     scripts/lessons-coverage-check.sh.
+     Evidence:
+       - test: added 3 cases to `.claude/hooks/tests/spec-slice.test.sh`
+         (bare-dotted-id match, zero-row MISSING, mixed REQ-prefixed+bare row)
+         against a new `bare-id-fixture`; confirmed RED against the pre-fix
+         matcher (2 of 3 failed exactly as diagnosed — bare id silently
+         matched nothing, zero-row case produced no MISSING); applied the fix
+         (regex alternation accepting `(^|[,[:space:]])N\.[0-9]` alongside the
+         existing `REQ-N` alternative, plus a `DESIGN_REQS_MATCHED` sweep
+         after the row loop); reran -> `pass=12 fail=0`. Full guard-suite
+         sweep (11 `.claude/hooks/tests/*.test.sh` files) -> all exit 0.
+         `scripts/spec-trace.sh sdd-spec-context-loading` -> OK, 20 criteria.
+         `scripts/lessons-coverage-check.sh` -> OK, slugs synced. Live
+         verification against the two real specs that exposed the bug:
+         `scripts/spec-slice.sh platform-phase5-stage2 1` and
+         `scripts/spec-slice.sh platform-phase5-stage3 1` now both emit
+         `MISSING: design section for REQ-N (no traceability-table row
+         references it)` markers where before the fix they emitted nothing at
+         all for the design section (silent, no marker) — the fallback
+         signal is now present, even though the underlying design-element
+         cell in those two specs separately fails the pre-existing
+         cell-to-heading lookup (see deviations).
+       - viewports: n/a — logic-only (bash + grep -E)
+       - deviations: (1) discovered, while verifying against real specs, that
+         the OTHER half of REQ-3.1's matcher (design-element cell matched
+         against `## ` headings by literal substring) resolves to `MISSING`
+         for effectively every row in every spec in this repo — a sweep
+         across all 11 `.ai/specs/*/design.md` traceability tables found 0
+         cell-to-heading matches out of every row checked (0/11 through 0/24
+         per spec, including this spec's own table). The design-section
+         slice has therefore never actually returned content for any real
+         spec; every task always falls back to a full `design.md` read for
+         its design section, for a reason unrelated to REQ-3.6/3.7. Left
+         unfixed — out of scope for this amendment, not silently expanded;
+         flagged to the operator as a new, separate, higher-severity
+         discovery for a follow-up decision. (2) Did not add a bare
+         whole-integer (no-dot) alternative for the REQ column, matching
+         `scripts/spec_trace.py`'s own `REF_RE` precedent, which likewise
+         requires the `REQ-` prefix for a whole-requirement reference and
+         only makes the prefix optional for dotted criterion ids — no real
+         table in this repo uses a bare whole-integer reference.
+
 ## Suggested execution batches
 
 Tasks 1+2+3 share the fixture and the test file — ONE session
 (`/spec-implement 1-3`). Task 4 is a mechanical follow-up in the same PR.
+Task 5 is a later quick amendment (2026-07-12, no gates) fixing the bare-id
+matcher gap discovered while implementing platform-phase5-stage3.

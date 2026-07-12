@@ -1,6 +1,7 @@
 # Requirements: Spec Context Loading Discipline (archive + per-task slice)
 
-> Status: approved 2026-07-11
+> Status: approved 2026-07-11, amended 2026-07-12 (quick, no gates — REQ-3.6/3.7,
+> closes the bare-id matcher gap in REQ-3.1/3.4)
 
 ## Overview
 
@@ -65,6 +66,17 @@ detail.
   silently.
 - 3.5 THE SYSTEM SHALL include the artifact `Status:` headers in the slice so
   approval state remains visible to the consumer.
+- 3.6 THE SYSTEM SHALL match a Requirement Traceability row to a selected REQ
+  number whether its REQ column writes the id `REQ-`-prefixed (`REQ-1.2`) or as
+  a bare dotted id (`1.2`) — both denote the same requirement, and a table
+  written entirely in one style SHALL NOT drop the design section silently
+  (closes a gap in 3.1: the original matcher only recognized the `REQ-`
+  prefixed form).
+- 3.7 WHEN a task's selected REQ number matches zero Requirement Traceability
+  rows at all THE SYSTEM SHALL print a `MISSING:` marker for that REQ's design
+  coverage, the same as when a matched row's design-element cell resolves to
+  no heading (3.4) — a table using only one id style must surface as loudly as
+  a single unresolved row, never as a quiet zero-row omission.
 
 ## REQ-4: spec-implement uses the slice by default
 

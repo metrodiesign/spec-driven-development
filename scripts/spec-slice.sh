@@ -76,6 +76,7 @@ printf '%s\n' "$TASK_BLOCK"
 
 MISSING=()
 DESIGN_ELEMENTS_SEEN=()
+DESIGN_REQS_MATCHED=()
 
 for n in $SATISFIES_NUMS; do
   echo "== REQ-$n (requirements.md) =="
@@ -89,8 +90,11 @@ for n in $SATISFIES_NUMS; do
 done
 
 # Design sections: rows of design.md's own Requirement Traceability table whose REQ column
-# mentions any selected id; the row's design-element cell is matched against "## " headings
-# by literal substring (REQ-3.1). A cell matching no heading -> MISSING (REQ-3.4).
+# mentions any selected id, either "REQ-N" prefixed or a bare "N.M" dotted id (REQ-3.6); the
+# row's design-element cell is matched against "## " headings by literal substring (REQ-3.1).
+# A cell matching no heading -> MISSING (REQ-3.4). A REQ with zero matching rows at all ->
+# MISSING too (REQ-3.7) — a table written in one id style must never drop a whole design
+# section silently.
 if [ -f "$DESIGN_FILE" ]; then
   TRACE_BLOCK=$(awk '
     !started && /^## Requirement Traceability/ { started=1; next }
@@ -107,7 +111,10 @@ if [ -f "$DESIGN_FILE" ]; then
 
     match=0
     for n in $SATISFIES_NUMS; do
-      if printf '%s' "$cell2" | grep -qE "REQ-${n}([^0-9]|\$)"; then match=1; break; fi
+      if printf '%s' "$cell2" | grep -qE "REQ-${n}([^0-9]|\$)|(^|[,[:space:]])${n}\.[0-9]"; then
+        match=1
+        DESIGN_REQS_MATCHED+=("$n")
+      fi
     done
     [ "$match" -eq 1 ] || continue
 
@@ -126,6 +133,14 @@ if [ -f "$DESIGN_FILE" ]; then
     echo "== DESIGN $HEADING (design.md) =="
     section_from_heading "$DESIGN_FILE" "$HEADING"
   done <<< "$TRACE_BLOCK"
+
+  for n in $SATISFIES_NUMS; do
+    already=0
+    for seen in "${DESIGN_REQS_MATCHED[@]:-}"; do
+      [ "$seen" = "$n" ] && { already=1; break; }
+    done
+    [ "$already" -eq 1 ] || MISSING+=("MISSING: design section for REQ-$n (no traceability-table row references it)")
+  done
 fi
 
 if [ "${#MISSING[@]}" -gt 0 ]; then
