@@ -61,6 +61,9 @@ importers:
       adapters:
         specifier: workspace:*
         version: link:../../adapters
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       core:
         specifier: workspace:*
         version: link:../../core

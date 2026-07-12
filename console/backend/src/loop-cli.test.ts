@@ -94,7 +94,8 @@ test('goal.yaml parsed at the edge, frozen by raw-byte hash in core (REQ-8.1)', 
       'goal: { id: DEMO-1, title: Demo, objective: make it pass }',
       'acceptance_criteria:',
       '  - { id: AC-1, description: impl correct, golden: true }',
-      'budget: { max_iterations_per_task: 8, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }',
+      'budget: { max_iterations_per_task: 8, max_hypotheses_per_failure: 3, max_total_tasks: 30,',
+      '          max_parallel_agents: 3, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }',
       'approval_policy: { require_human_approval: [auth_policy_change] }',
     ].join('\n'),
   );
@@ -102,8 +103,47 @@ test('goal.yaml parsed at the edge, frozen by raw-byte hash in core (REQ-8.1)', 
     const c = loadGoalContract(p);
     assert.equal(c.goal.id, 'DEMO-1');
     assert.equal(c.budget.maxIterations, 8);
+    assert.equal(c.budget.maxHypothesesPerFailure, 3);
+    assert.equal(c.budget.maxParallelAgents, 3);
+    assert.equal(c.risk, 'L2');
     assert.match(c.hash, /^[0-9a-f]{64}$/);
     assert.deepEqual(c.approvalPolicy, ['auth_policy_change']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('goal.yaml with shape errors is refused at the edge naming EVERY failing path, before freeze (phase5-stage2 REQ-2.1/2.2)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'goal-shape-'));
+  const p = join(root, 'goal.yaml');
+  writeFileSync(
+    p,
+    [
+      'goal: { id: DEMO-1 }',
+      'acceptance_criteria:',
+      '  - { id: AC-1, description: impl correct }',
+      // typo'd budget key + zero value + unknown top-level key + bad risk: four
+      // independent defects — the edge must name them all, not stop at the first.
+      'budget: { max_iteration_per_task: 8, max_hypotheses_per_failure: 0, max_total_tasks: 30,',
+      '          max_parallel_agents: 3, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }',
+      'aproval_policy: { require_human_approval: [] }',
+      'risk: TODO',
+    ].join('\n'),
+  );
+  try {
+    assert.throws(
+      () => loadGoalContract(p),
+      (e: unknown) => {
+        const msg = (e as Error).message;
+        return (
+          msg.includes('goal file failed schema validation') &&
+          msg.includes('max_iteration_per_task') && // unknown budget key named
+          msg.includes('/budget/max_hypotheses_per_failure') && // zero value path
+          msg.includes('aproval_policy') && // unknown top-level key named
+          msg.includes('/risk') // enum violation path
+        );
+      },
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

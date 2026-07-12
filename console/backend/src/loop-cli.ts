@@ -10,10 +10,21 @@ import { parse as parseYaml } from 'yaml';
 import { freezeContract, type TaskContract } from 'core';
 import { PASS_FAIL_PROBES, type ConformanceRecord } from 'aal';
 
-/** Parse goal.yaml at the edge and freeze it by raw-byte hash in core (REQ-8.1). */
+import { validateGoalShape } from './goal-schema.ts';
+
+/**
+ * Parse goal.yaml at the edge and freeze it by raw-byte hash in core (REQ-8.1).
+ * Schema validation runs here first (phase5-stage2 REQ-2.1) — shape errors surface
+ * with every failing path (REQ-2.2) before freeze; freezeContract stays the final
+ * semantic gate (REQ-2.4).
+ */
 export function loadGoalContract(path: string): TaskContract {
   const rawBytes = readFileSync(path);
   const parsed: unknown = parseYaml(rawBytes.toString('utf8'));
+  const shapeErrors = validateGoalShape(parsed);
+  if (shapeErrors.length > 0) {
+    throw new Error(`goal file failed schema validation:\n  ${shapeErrors.join('\n  ')}`);
+  }
   return freezeContract(rawBytes, parsed);
 }
 

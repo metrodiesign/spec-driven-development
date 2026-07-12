@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "feature": "platform-phase5-stage2",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 105,
+    "nodeId": "I_kwDOSt2IyM8AAAABIeUIbA",
+    "bodyHash": "sha256:d923a168388b24da07616da8a9b49f592173390e60d22128a50b90b30cf457db"
+  },
+  "tasks": {
+    "1": {
+      "issue": 106,
+      "nodeId": "I_kwDOSt2IyM8AAAABIeUMLA",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:1c98193cac5ebc1f657bfcef326b6a6c25d2b5ee183dcd1d7817b9a4ced70713",
+      "state": "closed"
+    },
+    "2": {
+      "issue": 107,
+      "nodeId": "I_kwDOSt2IyM8AAAABIeUP3g",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:00281f5cd77718abe8abfd5dbc307cccfd3ccb90b6a6fbbb549eda4fc439990b",
+      "state": "closed"
+    },
+    "3": {
+      "issue": 108,
+      "nodeId": "I_kwDOSt2IyM8AAAABIeUTAA",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:fa36f39f4a81b7f5245c77082092a92135d330790fbefc6ee8465db706f8a579",
+      "state": "closed"
+    },
+    "4": {
+      "issue": 109,
+      "nodeId": "I_kwDOSt2IyM8AAAABIeUWow",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:b745e3ea7e3a74017b83b1e4f24d79a377a1b91b1681c518dd44466b8cdb699e",
+      "state": "closed"
+    }
+  },
+  "lastSync": "2026-07-12T11:55:08+0700",
+  "labelsEnsured": [
+    "spec:platform-phase5-stage2",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

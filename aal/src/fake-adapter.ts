@@ -19,9 +19,13 @@ export type FakeBehavior =
   | 'ignore_schema' // fails P1/P3: structuredResult never conforms
   | 'double_burn' // fails P8: no replay cache, usage charged twice
   | 'schema_fail_first' // compliant-with-mistake: invalid first send, valid after (drives repair)
-  | 'repairable'; // writes the WRONG marker first (T1 fails -> DIAGNOSING), then the
-// correct one after a confirmed hypothesis — drives the full FAILED->DIAGNOSING->
-// REPAIRING->REVIEWING loop end to end (REQ-5 production).
+  | 'repairable' // writes the WRONG marker first (T1 fails -> DIAGNOSING), then the
+  // correct one after a confirmed hypothesis — drives the full FAILED->DIAGNOSING->
+  // REPAIRING->REVIEWING loop end to end (REQ-5 production).
+  | 'exhaust_hypotheses'; // always writes the WRONG marker and diagnoses with a
+// list of never-confirming hypotheses — drives the repair engine to its
+// max_hypotheses bound so a composition test can observe the contract's cap
+// (phase5-stage2 REQ-4.1/6.8).
 
 /**
  * Survivability fault knobs (REQ-1/2/3) — orthogonal to the conformance
@@ -172,6 +176,9 @@ export class FakeAdapter implements AdapterInterface {
       this.implWrites += 1;
       writeContent = this.implWrites === 1 ? 'wrong\n' : 'correct\n';
     }
+    // Never self-heals: the failure persists so the DIAGNOSING round is reached and
+    // the hypothesis cap is what ends the run (REQ-4.1/6.8).
+    if (this.behavior === 'exhaust_hypotheses') writeContent = 'wrong\n';
     const contentRef = this.putContent ? this.putContent(writeContent) : 'blob://fake-correct';
 
     // Build the structuredResult (task-result shape) per behavior.
@@ -308,16 +315,29 @@ export class FakeAdapter implements AdapterInterface {
    * satisfies the wire schema; the diagnostician proposes nothing to execute.
    */
   private diagnose(attempt: number): AgentResponse {
-    const hypotheses = [
-      {
-        statement: 'src/impl.txt still holds the pre-fix marker instead of the required token',
-        probes: [{ cmd: 'cat src/impl.txt', expected: 'wrong' }],
-        ifConfirmed: {
-          patchPlan: 'overwrite src/impl.txt so it contains the token "correct"',
-          estimatedBlastRadius: '1 file',
-        },
-      },
-    ];
+    // `exhaust_hypotheses`: more never-confirming hypotheses than any sane cap —
+    // every probe expects a marker that is never on disk, so the engine refutes
+    // one after another until max_hypotheses stops it (REQ-4.1/6.8 composition test).
+    const hypotheses =
+      this.behavior === 'exhaust_hypotheses'
+        ? Array.from({ length: 8 }, (_, i) => ({
+            statement: `bogus cause ${i + 1}: marker never present`,
+            probes: [{ cmd: 'cat src/impl.txt', expected: `never-matches-${i + 1}` }],
+            ifConfirmed: {
+              patchPlan: 'not reachable — the probe can never confirm',
+              estimatedBlastRadius: '0 files',
+            },
+          }))
+        : [
+            {
+              statement: 'src/impl.txt still holds the pre-fix marker instead of the required token',
+              probes: [{ cmd: 'cat src/impl.txt', expected: 'wrong' }],
+              ifConfirmed: {
+                patchPlan: 'overwrite src/impl.txt so it contains the token "correct"',
+                estimatedBlastRadius: '1 file',
+              },
+            },
+          ];
     return {
       structuredResult: { claim: 'WORKING', actionRequests: [], hypotheses },
       actionRequests: [],

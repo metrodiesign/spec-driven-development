@@ -103,3 +103,20 @@ test('one item AdapterError is captured in its result, never thrown across the b
   }
   assert.equal(results.filter((r) => r.outcome.ok === true).length, 2, 'the other items still succeeded');
 });
+
+test('governance ceiling clamps effective concurrency to min(maxParallel, ceiling) (phase5-stage2 REQ-4.2/6.9)', async () => {
+  const tracker = { inFlight: 0, max: 0 };
+  const a = trackingAdapter('a', tracker);
+  const items: DispatchItem[] = Array.from({ length: 8 }, (_v, i) => ({ adapter: a, request: req(`r${i}`) }));
+  const d = createDispatcher({ buckets: new Map(), maxParallel: 4, ceiling: 3 });
+  assert.equal(d.effectiveMaxParallel, 3, 'resolved concurrency is readable for the composition guard');
+  const results = await d.dispatchAll(items);
+  assert.equal(results.length, 8, 'every item resolved');
+  assert.equal(tracker.max, 3, 'the contract ceiling bound the fan-out');
+});
+
+test('ceiling absent or above maxParallel changes nothing (dormant, not dead)', () => {
+  assert.equal(createDispatcher({ buckets: new Map(), maxParallel: 2 }).effectiveMaxParallel, 2);
+  assert.equal(createDispatcher({ buckets: new Map(), maxParallel: 2, ceiling: 5 }).effectiveMaxParallel, 2);
+  assert.equal(createDispatcher({ buckets: new Map(), maxParallel: 4, ceiling: 0 }).effectiveMaxParallel, 1, 'floor stays 1 — dispatcher never deadlocks');
+});

@@ -37,6 +37,7 @@ import {
   runDeployStage,
   runManualRollback,
   runTaskLoop,
+  DEFAULT_REPAIR_POLICY,
   transition,
   type ApprovalPackage,
   type CalibrationResult,
@@ -48,7 +49,6 @@ import {
   type HandlerDeps,
   type LessonHitRateStats,
   type MappedAc,
-  type RiskClass,
   type Role,
   type TaskContract,
   type TaskState,
@@ -89,11 +89,6 @@ function gitOut(cwd: string, ...args: string[]): string {
 }
 function sha256(b: Uint8Array): string {
   return createHash('sha256').update(b).digest('hex');
-}
-
-/** Read the per-task risk class from the frozen contract; anything unrecognized → null (→ L2, REQ-7.6). */
-function parseRisk(v: unknown): RiskClass | null {
-  return v === 'L0' || v === 'L1' || v === 'L2' || v === 'L3' || v === 'L4' ? v : null;
 }
 
 /**
@@ -375,6 +370,21 @@ export async function runSupervisedLoop(opts: {
    */
   toolHandlers?: Record<string, ToolHandler>;
 }): Promise<LoopRunResult> {
+  // Fail-closed BEFORE any state is created: a planning dispatcher assembled wider
+  // than the contract's governance ceiling is a composition bug, refused up front —
+  // the dispatcher is opaque after construction, so it cannot be clamped here
+  // (phase5-stage2 REQ-4.2; the composed rule is createDispatcher's `ceiling`).
+  // Both flags, mirroring the dispatch condition below: with the planner trigger
+  // off this run performs no concurrent dispatch, so there is nothing to bound —
+  // REQ-4.2 is WHILE-dispatching (Codex review PR #110); a later run that flips
+  // the trigger on re-enters this guard at its own start.
+  if (opts.planning?.enabled === true && opts.planning.plannerRoleTrigger === true) {
+    const eff = opts.planning.dispatcher.effectiveMaxParallel;
+    const cap = opts.contract.budget.maxParallelAgents;
+    if (eff > cap) {
+      throw new Error(`planning dispatcher parallelism ${eff} exceeds contract max_parallel_agents ${cap}`);
+    }
+  }
   const fx = makeFixtureRepo();
   const clock = opts.clock;
   const stateDir = opts.persistDir ?? fx.root; // fixture root is rm'd in finally; persistDir survives
@@ -695,6 +705,9 @@ export async function runSupervisedLoop(opts: {
         // and reads their output from the evidence store (REQ-5).
         evidence,
         ids: { next: (prefix) => `${prefix}-${randomUUID()}` },
+        // The frozen contract's max_hypotheses_per_failure bounds the repair cycle
+        // (phase5-stage2 REQ-4.1) — the other two policy fields keep core defaults.
+        repairPolicy: { ...DEFAULT_REPAIR_POLICY, maxHypotheses: opts.contract.budget.maxHypothesesPerFailure },
         // Steering (REQ-10): the loop polls the control port at each boundary and
         // folds guidance injected while paused into the next round as marked data.
         control: controller.port,
@@ -730,7 +743,7 @@ export async function runSupervisedLoop(opts: {
           taskBranch: TASK_BRANCH,
           mainBranch: 'main',
           decision: {
-            riskClass: parseRisk(opts.contract.raw['risk']),
+            riskClass: opts.contract.risk,
             gatesGreen: true,
             acceptanceCriteria,
             depManifestPatterns: opts.autoMerge?.depManifestPatterns ?? [],

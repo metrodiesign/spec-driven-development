@@ -36,6 +36,7 @@ export { ACTIVE_STATES, resumeTransition, transition, type TransitionResult, typ
 export { createLoopController, type LoopController } from './orchestrator/control.ts';
 export {
   runTaskLoop,
+  DEFAULT_REPAIR_POLICY,
   type LoopOptions,
   type LoopResult,
   type RepairPolicy,

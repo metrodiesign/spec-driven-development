@@ -46,3 +46,6 @@
 | workflow-script-eslint-ignore | mechanized | eslint.config.mjs::workflows-ignore — ignores: [..., '.claude/workflows/**'] |
 | lesson-reintro-check-before-build | advisory | meta process discipline; REQ-3's retro classification step is the standing institutional answer, not a per-lesson executable check |
 | shared-iterator-boundary-altitude | mechanized | console/backend/src/spec-to-goal.e2e.test.ts — "spec-trace gate ... must NOT fake coverage" + "Evidence boundary: mid-line ... lowercase evidence: header still cuts" (ทั้งคู่แดงถ้า Evidence rule ถูก fork per-consumer, หลุด case-insensitivity, หรือกลับเป็น substring cut) |
+| supersede-old-guarantees-explicitly | advisory | ต้อง reasoning ข้าม spec รุ่นเก่า/archive ว่า guarantee ไหนถูกกลับด้าน — ไม่มี machine-checkable surface ทั่วไป |
+| guard-mirrors-action-condition | advisory | per-guard design judgment; เคส stage2 มี test คู่ negative แล้ว (loop-run.test.ts "guard mirrors the dispatch condition") แต่ตัว pattern ใช้กับ guard ใหม่ทุกตัวที่ยังไม่เกิด |
+| wiring-test-nondefault-value | advisory | test-authoring principle — เลือกค่า assert ต่อ test ใหม่เป็น judgment, lint ทั่วไปแยก default-collision ไม่ได้ |

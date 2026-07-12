@@ -6,13 +6,34 @@
 
 import { createHash } from 'node:crypto';
 
+import type { RiskClass } from '../human/approval.ts';
 import type { BudgetLimits } from '../types.ts';
+
+/**
+ * Contract-level budget (phase5-stage2 REQ-3.1): the tracker's BudgetLimits plus
+ * the three governance caps the YAML has always carried but freeze used to drop
+ * silently. All six YAML keys are required, integer >= 1 (REQ-3.2).
+ */
+export interface ContractBudget extends BudgetLimits {
+  /** Bounds the repair cycle — consumed as RepairPolicy.maxHypotheses (REQ-4.1). */
+  maxHypothesesPerFailure: number;
+  /**
+   * Stored, NOT enforced in this stage (REQ-4.3/4.4): no runtime consumer exists
+   * until the Stage 4 task graph lands (unified-platform-spec §14 Phase 5 Stage 4;
+   * single-task ceiling documented at console/backend/src/fusion.ts).
+   */
+  maxTotalTasks: number;
+  /** Governance ceiling on any concurrent agent dispatch (REQ-4.2). */
+  maxParallelAgents: number;
+}
 
 export interface TaskContract {
   hash: string;
   goal: { id: string; title: string; objective: string };
   acceptanceCriteria: { id: string; description: string; verification?: string; golden?: boolean }[];
-  budget: BudgetLimits;
+  budget: ContractBudget;
+  /** Per-goal risk class; absent in YAML -> L2, invalid -> rejected (REQ-3.3/3.4). */
+  risk: RiskClass;
   approvalPolicy: string[];
   /** Optional canary-deploy stage (design "B. Deploy plane", REQ-4). Absent -> no deploy stage. */
   deploy?: {
@@ -58,6 +79,17 @@ function reqNum(v: unknown, what: string): number {
   return v;
 }
 
+// Budget keys are counts/limits: fractional or non-positive values are refused at
+// freeze time, never mid-run (same posture as deploy.observe.probes — AZ-3).
+function reqPosInt(v: unknown, what: string): number {
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
+    throw new ContractInvalidError(`${what} must be an integer >= 1`);
+  }
+  return v;
+}
+
+const RISK_LEVELS: readonly RiskClass[] = ['L0', 'L1', 'L2', 'L3', 'L4'];
+
 export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContract {
   const root = asRecord(parsed, 'contract');
   const goal = asRecord(root['goal'], 'goal');
@@ -78,14 +110,28 @@ export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContr
     return out;
   });
 
+  // All six budget keys required, integer >= 1 (REQ-3.1/3.2) — the three caps the
+  // old mapping dropped silently are now typed and kept.
   const budgetRaw = asRecord(req(root['budget'], 'budget'), 'budget');
-  const budget: BudgetLimits = {
-    maxIterations: Number(req(budgetRaw['max_iterations_per_task'] as number | undefined, 'budget.max_iterations_per_task')),
-    maxCostUnits: Number(req(budgetRaw['max_cost_units_per_task'] as number | undefined, 'budget.max_cost_units_per_task')),
-    maxWallclockMs:
-      Number(req(budgetRaw['max_wallclock_per_task_min'] as number | undefined, 'budget.max_wallclock_per_task_min')) *
-      60_000,
+  const budget: ContractBudget = {
+    maxIterations: reqPosInt(budgetRaw['max_iterations_per_task'], 'budget.max_iterations_per_task'),
+    maxCostUnits: reqPosInt(budgetRaw['max_cost_units_per_task'], 'budget.max_cost_units_per_task'),
+    maxWallclockMs: reqPosInt(budgetRaw['max_wallclock_per_task_min'], 'budget.max_wallclock_per_task_min') * 60_000,
+    maxHypothesesPerFailure: reqPosInt(budgetRaw['max_hypotheses_per_failure'], 'budget.max_hypotheses_per_failure'),
+    maxTotalTasks: reqPosInt(budgetRaw['max_total_tasks'], 'budget.max_total_tasks'),
+    maxParallelAgents: reqPosInt(budgetRaw['max_parallel_agents'], 'budget.max_parallel_agents'),
   };
+
+  // risk: absent -> L2 default; present-but-invalid -> reject at freeze, never a
+  // silent downgrade (REQ-3.3/3.4 — supersedes the phase-4 unrecognized->L2 read).
+  const riskRaw = root['risk'];
+  let risk: RiskClass = 'L2';
+  if (riskRaw !== undefined) {
+    if (!RISK_LEVELS.includes(riskRaw as RiskClass)) {
+      throw new ContractInvalidError(`risk must be one of ${RISK_LEVELS.join('|')}`);
+    }
+    risk = riskRaw as RiskClass;
+  }
 
   let approvalPolicy: string[] = [];
   const ap = root['approval_policy'];
@@ -136,6 +182,7 @@ export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContr
     },
     acceptanceCriteria,
     budget,
+    risk,
     approvalPolicy,
     ...(deploy !== undefined ? { deploy } : {}),
     raw: root,

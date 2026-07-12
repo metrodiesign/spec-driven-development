@@ -422,8 +422,16 @@ Residual: backdoor เนียนใน L0–L2 auto-merge ยังเป็�
 ## §11 Contracts + Templates
 
 ### 11.1 Goal Contract (frozen — แก้ผ่าน versioned amendment)
+
+Canonical path = `.ai/specs/<feature>/goal.yaml` ต่อ feature (draft จาก generator =
+`goal.draft.yaml` โฟลเดอร์เดียวกัน; **promotion = human rename draft → `goal.yaml`
+เมื่ออนุมัติ** — Console loop-managed banner และ loop CLI อ่านเฉพาะ `goal.yaml`).
+Root `.ai/goal.yaml` เดิม **retired** ตั้งแต่ v1.5 (ไม่เคยมีไฟล์จริง — Phase 5 Stage 2).
+Shape ถูกบังคับสองชั้น: `goal.schema.json` (`.ai/schemas/`, strict — unknown key =
+reject ที่ edge) + `freezeContract` (semantics + cross-field + hash).
+
 ```yaml
-# .ai/goal.yaml
+# .ai/specs/<feature>/goal.yaml
 goal: { id: AUTH-001, title: Implement secure authentication, objective: "Email/password auth for web+API" }
 business_outcomes: [register, login/logout, refresh tokens, admin revoke sessions]
 scope: { include: [API, DB migration, Frontend login, tests], exclude: [Social login, MFA, Passwordless] }
@@ -441,6 +449,7 @@ quality_gates:
   fusion: .ai/policies/fusion-profiles.yaml                     # Phase 3
 budget: { max_iterations_per_task: 8, max_hypotheses_per_failure: 3, max_total_tasks: 30,
           max_parallel_agents: 3, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
+risk: L2            # L0..L4; ไม่ใส่ = default L2 ตอน freeze, ค่าอื่น = reject (v1.5)
 approval_policy:
   require_human_approval: [production_deployment, destructive_migration, auth_policy_change,
                            secret_or_permission_change, gate_loosening, flaky_quarantine_add]
@@ -556,7 +565,7 @@ platform/
 
 **Phase 5 — SDD Integration: spec ↔ Goal Contract binding** *(ใหม่ v1.4 — เชื่อมชั้น SDD spec artifacts (`.ai/specs/<feature>/{requirements,design,tasks}.md`) กับ Goal Contract §11.1 เป็น traceability สองทาง; INV ทุกตัวคงผลบังคับเดิม; derived specs ของ phase นี้ = `.ai/specs/platform-phase5-stage*/` ตาม glob ใน §0.1)*
 - **Stage 1 — spec-to-goal generator** (tooling, one-way, human-gated): `scripts/spec_to_goal.py` + wrapper แปลง requirements.md ที่ `Status: approved` เท่านั้น + `Verify:` lines จาก tasks.md → `.ai/specs/<feature>/goal.draft.yaml` — AC ต่อ criterion (`AC-N.M`, description = EARS text, verification = `Verify:` ของ task ที่ Satisfies แบบ unique ไม่งั้น `TODO`), budget scaffold ตาม intake, **ห้าม mark `golden`** (มนุษย์ตัดสินตอน freeze — §6.5) · ตาม precedent issue intake: draft รันไม่ได้จนมนุษย์เติม, **ห้าม auto-start** (INV-3/INV-16)
-- **Stage 2 — `goal.schema.json` + typed contract**: JSON Schema draft-07 ครอบ §11.1 เต็ม (รวม `risk`, budget ครบ 6 field, `provenance` จาก stage 3) ใน `.ai/schemas/` + embed copy + parity test ตาม convention เดิม · `freezeContract` เลิกทิ้ง field เงียบ: enforce `max_hypotheses_per_failure`/`max_total_tasks`/`max_parallel_agents` + `risk` เป็น typed field (default L2) · ตัดสินชะตา convention `.ai/goal.yaml` (loopManaged banner) ใน spec ของ stage นี้
+- **Stage 2 — `goal.schema.json` + typed contract** — **ส่งมอบแล้ว** (spec: `.ai/specs/platform-phase5-stage2/`): JSON Schema draft-07 ครอบ §11.1 เต็ม (รวม `risk`, budget ครบ 6 field, `provenance` จาก stage 3) ใน `.ai/schemas/` + embed copy + parity test ตาม convention เดิม · `freezeContract` เลิกทิ้ง field เงียบ: enforce `max_hypotheses_per_failure`/`max_total_tasks`/`max_parallel_agents` + `risk` เป็น typed field (default L2) · ชะตา convention `.ai/goal.yaml`: **retired** — canonical ต่อ feature + promotion rename (ดู §11.1 + changelog v1.5)
 - **Stage 3 — provenance + drift detection**: contract field optional `provenance: {spec_path, requirements_commit, generated_at}` — generator stamp, core validate shape · drift check เทียบ requirements.md ปัจจุบัน vs commit ที่ generate → เตือน (advisory ก่อน, block เมื่อพิสูจน์) · Console แสดง provenance ใน approval package (read-only)
 - **Stage 4 — Task Graph + planning gate (§11.2)**: multi-task contract + `task-graph.json` (DAG) + gate `uncovered_acs`/`orphan_tasks`/`max_diff_budget_per_task` · scheduler เลือก task ที่ READY + deps PASSED + risk permitted + budget + lease · ยก single-task ceiling ที่ documented ใน planner fusion · generator ขยาย emit task entries จาก tasks.md (`Satisfies:` → AC coverage ต่อ task) · fault-injection ต่อ task ตาม DoD มาตรฐานของ core
 - **Stage 5 — Evidence backflow**: ผล run (AC ผ่าน + evidence ref) ไหลกลับเป็น `Evidence:` block ใต้ task ที่เกี่ยวข้องใน tasks.md ของ spec ต้นทาง — **core เป็นผู้เขียนเท่านั้น ไม่ใช่ agent** (INV-1/INV-2 analog; agent ไม่มีเส้นทางเขียน spec file), เนื้อหาจาก evidence store (command + result + hash), เขียนหลัง COMPLETED + ผ่าน approval เท่านั้น · ทางเลือก design (เขียนตรง vs sidecar report ให้มนุษย์ apply) ตัดสินใน requirements phase ของ stage นี้
@@ -592,9 +601,10 @@ platform/
 
 ## §17 Changelog + จุดเริ่มงาน
 
-**จุดเริ่ม (v1.4):** Phase 0–4 ส่งมอบแล้ว (Phase 4 = PR #50 squash-merged 2026-07-10) → งานถัดไป = **Phase 5 ตาม §14** (derived specs: `.ai/specs/platform-phase5-stage*/` ทีละ stage ตาม dependency, เริ่ม stage 1) · เมื่อพบความไม่ตรงกับพฤติกรรมจริงของ Claude Code/SDK: บันทึก `docs/DEVIATIONS.md` ตาม §0.6
+**จุดเริ่ม (v1.5):** Phase 0–4 ส่งมอบแล้ว; Phase 5 stage 1 (PR #102) + stage 2 ส่งมอบแล้ว → งานถัดไป = **stage 3 (provenance + drift detection) ตาม §14** · เมื่อพบความไม่ตรงกับพฤติกรรมจริงของ Claude Code/SDK: บันทึก `docs/DEVIATIONS.md` ตาม §0.6
 
 **Changelog:**
+- **v1.5** — Phase 5 Stage 2 ส่งมอบ (spec: `.ai/specs/platform-phase5-stage2/`): `goal.schema.json` governance copy + embedded copy + ajv edge validation ใน `loadGoalContract` (ทุก failing path, console เท่านั้น — core/aal ไม่มี dep ใหม่) · typed contract เต็ม: budget ครบ 6 field (integer >= 1, `ContractBudget`) + `risk` typed (absent → L2, invalid → reject) · consumer wiring: `max_hypotheses_per_failure` → `RepairPolicy`, `max_parallel_agents` → dispatch ceiling + fail-closed planning guard; `max_total_tasks` stored-only รอ Stage 4 · **retire root `.ai/goal.yaml`**: canonical = `.ai/specs/<feature>/goal.yaml`, promotion = human rename จาก draft, `loopManaged` banner อ่าน per-feature path (draft ไม่นับ) · **supersede Phase-1 REQ-8.4** (preserve-and-ignore unknown keys → schema reject ที่ edge; forward-compat ผ่าน schema amendment; raw passthrough ใน freeze คงเดิม) · **supersede Stage-1 REQ-4.5** (resolved draft freeze ได้ทันที → ต้องตั้ง risk จริงก่อน เพราะ generator emit `risk: "TODO"` เป็น human gate) · risk semantics เข้มขึ้น: phase-4 "unrecognized → L2 เงียบ" ถูกแทนด้วย reject ตั้งแต่ edge/freeze
 - **v1.4** — sync สถานะส่งมอบ Phase 4 (merged เข้า develop, PR #50) + เพิ่ม **Phase 5 — SDD Integration**: เชื่อม SDD spec artifacts ↔ Goal Contract เป็น 5 stage ตาม dependency (spec-to-goal generator → goal.schema.json/typed contract → provenance/drift detection → Task Graph §11.2 → Evidence backflow) · ปิด gap ที่พบจากการ audit โค้ด: budget field ที่ `freezeContract` ทิ้งเงียบ 3 ตัว, `risk` untyped, ไม่มี goal.schema.json, convention `.ai/goal.yaml` กำพร้า · ยก single-task ceiling ใน stage 4 (implement §11.2 ที่ specced ไว้แต่ไม่มีโค้ด) · ขอบเขต INV คงเดิมทุกตัว: draft human-gated ห้าม auto-start (INV-3/16), Evidence backflow เขียนโดย core เท่านั้น (INV-1/2)
 - **v1.3** — sync สถานะส่งมอบ + rescope Phase 4: Phase 3 ส่งมอบแล้ว (merged เข้า develop, PR #47 + follow-up #48/#49) · ดูด backlog ค้าง 3 รายการจาก Phase 3 เข้า scope Phase 4 (approval pipeline production wiring · planner-role fusion auto-routing · fusion uplift number จริง) · เพิ่ม **DoD ของ Phase 4** ที่เดิมไม่มี · GLM-5.2 **ยังไม่มี access → deferred ต่อแบบมีเงื่อนไข ไม่อยู่ใน scope Phase 4** (ไม่ตัดเงียบ — แก้ cell ล้าสมัยใน §7.4 ที่เขียนว่า "กลับมา Phase 4" ให้ตรงจริง) · กำหนดขอบ Phase 4: issue intake เป็น local-only (ไม่มี GitHub webhook — ขัด §13.3), canary deploy เป็น command-level บน target repo ติดป้ายตาม §16, outcome-routing activation เป็นการตัดสินของมนุษย์ผ่าน governance (INV-16), F-Chat เข้าแบบเต็ม + i18n TH/EN
 - **v1.2** — sync สถานะส่งมอบ + rescope Phase 3: Phase 0–2 ส่งมอบแล้ว (Phase 2 merged เข้า develop, PR #45) · แก้ Phase column §8 ให้ตรงจริง (F-MCP/F-Hook/F-Sub/F-Skill/F-Sys = Phase 2, F-Sched = Phase 3 — §14 เป็น authoritative ตาม §0.3, column เดิมล้าสมัยก่อน re-plan) · Phase 3 = §14 เต็ม (multi-model + fusion + merge queue/T2 + auditor + outcome routing shadow + F-Loop + F-Sched + remote auth §13) โดย second lineage = **Codex เท่านั้น**; GLM-5.2 เลื่อนไป Phase 4 แบบมีเงื่อนไข access (บันทึกไว้ ไม่ตัดเงียบ) · ปรับ default §7.4/§7.6 ให้สอดคล้อง · ย้ำ gate §5.3 (ทบทวนนโยบาย non-interactive usage) ก่อนเปิด fusion ใน §14 Phase 3

@@ -42,7 +42,8 @@ export interface RepairPolicy {
   probeTimeoutMs: number;
 }
 
-const DEFAULT_REPAIR_POLICY: RepairPolicy = {
+/** Exported so the composition root can override single fields from the frozen contract (phase5-stage2 REQ-4.1). */
+export const DEFAULT_REPAIR_POLICY: RepairPolicy = {
   maxHypotheses: 3,
   maxProbesPerHypothesis: 5,
   probeTimeoutMs: 30_000,
