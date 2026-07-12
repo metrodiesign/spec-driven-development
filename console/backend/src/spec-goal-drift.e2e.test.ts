@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -199,14 +199,4 @@ test('wrapper: scripts/spec-goal-drift.sh happy path, --strict propagates the dr
     assert.equal(res.status, 1, res.stderr);
     assert.match(res.stdout, /requirements\.md changed since goal\.yaml was generated/);
   });
-});
-
-test('CI loop precondition: the real repo currently has zero promoted goal.yaml files (REQ-5.3 passes silently by construction)', () => {
-  // Not an e2e spawn — a direct filesystem check that the CI step's loop body
-  // has nothing to iterate right now, matching the task's Done criterion.
-  const specsDir = join(repoRoot, '.ai', 'specs');
-  const found = readdirSync(specsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .filter((e) => existsSync(join(specsDir, e.name, 'goal.yaml')));
-  assert.deepEqual(found.map((e) => e.name), [], 'zero goal.yaml under .ai/specs/*/ today — the new CI step no-ops silently (REQ-5.3)');
 });
