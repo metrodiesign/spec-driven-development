@@ -1,6 +1,7 @@
 # Design: Spec Context Loading Discipline (archive + per-task slice)
 
-> Status: approved 2026-07-11, amended 2026-07-11
+> Status: approved 2026-07-11, amended 2026-07-11, amended 2026-07-12 (quick, no
+> gates — REQ-3.6/3.7 bare-id matcher fix)
 
 ## Architecture Overview
 
@@ -102,12 +103,21 @@ Resolution rules (all deterministic, REQ-3.2):
 - REQ ids: every `REQ-<n>` token on the block's `Satisfies:` line(s);
   criterion-level ids (`REQ-1.2`) resolve to their parent `## REQ-1` block.
 - Design sections: rows of the `## Requirement Traceability` table whose REQ
-  column mentions any selected id; the row's design-element cell is matched
-  against `## ` headings by literal substring; a row whose cell matches no
-  heading resolves to `MISSING:` per REQ-3.4 (verified against all 8 design
-  docs in this batch: every traceability cell is a free-text summary, never a
-  heading name — a silent default here would make the full-read fallback
-  unreachable for design sections in every real spec, not an edge case).
+  column mentions any selected id — accepting both the `REQ-N` prefixed form
+  and a bare `N.M` dotted id in the same cell (REQ-3.6; real specs use either
+  style, and some tables use the bare style exclusively — a matcher that only
+  recognized the prefixed form matched zero rows for those tables and dropped
+  the whole design section with no signal at all, the bug amended 2026-07-12);
+  the row's design-element cell is matched against `## ` headings by literal
+  substring; a row whose cell matches no heading resolves to `MISSING:` per
+  REQ-3.4 (verified against all 8 design docs in this batch: every
+  traceability cell is a free-text summary, never a heading name — a silent
+  default here would make the full-read fallback unreachable for design
+  sections in every real spec, not an edge case). A selected REQ number that
+  matches zero rows in the table at all (not just a matched row with an
+  unresolved cell) resolves to its own `MISSING:` per REQ-3.7 — tracked
+  separately from the per-row check so a table written entirely in the bare
+  style still surfaces loudly instead of silently contributing nothing.
 - Unknown task id → exit 1 + `available: 1..N` list from the checkbox scan
   (REQ-3.3). Unresolvable REQ/section → `MISSING:` marker, exit 0 (REQ-3.4 —
   the marker, not the exit code, drives the fallback).
@@ -160,6 +170,8 @@ all gates unchanged.
 | destination exists | refuse (no overwrite) | 1.1 |
 | unknown task id | exit 1 + available ids | 3.3 |
 | REQ/section unresolved | MISSING: marker, still exit 0 | 3.4 |
+| traceability REQ column is `REQ-N` prefixed or bare `N.M` | both match the same requirement | 3.6 |
+| REQ matches zero traceability rows | MISSING: marker, still exit 0 | 3.7 |
 | slice script itself absent/broken | skill instruction: fall back to full read (slice is an optimization, never a gate) | 4.2, 4.4 |
 
 ## Testing Strategy
@@ -177,6 +189,9 @@ New `.claude/hooks/tests/spec-slice.test.sh` with a fixture feature under
 | slice unknown id | exit 1, lists available | 3.3 |
 | slice with Satisfies: naming absent REQ | `MISSING:` present, exit 0 | 3.4 |
 | slice where the traceability row's design-element cell matches no `## ` heading | `MISSING:` present for that design ref, exit 0 | 3.4 |
+| slice where the traceability REQ column uses a bare `N.M` id, no `REQ-` prefix anywhere in the table | matched design section returned, not silently dropped | 3.6 |
+| slice where a REQ matches zero traceability rows at all | `MISSING:` present for that REQ's design coverage, exit 0 | 3.7 |
+| slice where a traceability row mixes a `REQ-N.M` prefixed id with a bare one in the same cell | matched design section returned (regression) | 3.6 |
 | SessionStart command with archive present | output lacks `archive` | 2.1, 2.2 |
 
 ## Requirement Traceability
@@ -191,6 +206,8 @@ New `.claude/hooks/tests/spec-slice.test.sh` with a fixture feature under
 | slice output contract + resolution rules | REQ-3.1, 3.2, 3.5 |
 | unknown-id exit path | REQ-3.3 |
 | MISSING marker | REQ-3.4 |
+| bare `N.M` id accepted alongside `REQ-N` prefix | REQ-3.6 |
+| zero-row REQ match -> MISSING | REQ-3.7 |
 | spec-implement step-1 rewrite + fallback triggers | REQ-4.1, 4.2, 4.3 |
 | gates untouched (slice never enforces) | REQ-4.4 |
 | spec-slice.test.sh cases | REQ-5.1, 5.2 |
