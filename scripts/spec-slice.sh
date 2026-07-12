@@ -59,7 +59,12 @@ req_block() { # $1=file $2=req_number
 # the next "## " heading (exclusive) or EOF. Fence-aware (REQ-3.11), same as req_block().
 # $2 must be a real line from the file — see find_heading_line().
 section_from_heading() { # $1=file $2=exact_heading_line
-  awk -v h="$2" '
+  # $2 goes through ENVIRON, not `awk -v` — POSIX awk -v escape-processes its value
+  # (a literal `\n` becomes a real newline), but heading text read from the file
+  # ($0) is never escape-processed; ENVIRON keeps both sides byte-literal so the
+  # comparison stays exact (REQ-3.8) for headings containing backslash sequences.
+  SPEC_SLICE_H="$2" awk '
+    BEGIN { h = ENVIRON["SPEC_SLICE_H"] }
     /^```/ { fence = !fence }
     !started && !fence && $0 == h { started=1; print; next }
     started && !fence && /^## / { exit }
@@ -71,7 +76,11 @@ section_from_heading() { # $1=file $2=exact_heading_line
 # $2 — fence-aware (REQ-3.11) so a heading-shaped line inside a ``` block never matches.
 # Prints the exact verbatim line (for section_from_heading to key off), or nothing.
 find_heading_line() { # $1=file $2=heading_text (no "## " prefix, already trimmed)
-  awk -v want="$2" '
+  # $2 goes through ENVIRON, not `awk -v` — same byte-literal reasoning as
+  # section_from_heading() above (the deleted pre-diff code used `grep -F`, fully
+  # literal, for this comparison; ENVIRON restores that guarantee without it).
+  SPEC_SLICE_WANT="$2" awk '
+    BEGIN { want = ENVIRON["SPEC_SLICE_WANT"] }
     /^```/ { fence = !fence }
     !fence && /^## / {
       text = $0

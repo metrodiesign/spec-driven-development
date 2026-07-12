@@ -430,6 +430,44 @@ else
   fail=$((fail+1)); echo "FAIL: fenced heading-shaped lines must not truncate req_block/section_from_heading/trace-table extraction :: rc=$RC :: $OUT"
 fi
 
+echo "=== spec-slice: a heading and Section value byte-identical and containing a literal backslash sequence resolves (awk -v would escape-process one side and not the other) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/backslash-heading-fixture"
+cat > "$R/.ai/specs/backslash-heading-fixture/requirements.md" <<'EOF'
+# Requirements: Backslash Heading Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/backslash-heading-fixture/design.md" <<'EOF'
+# Design: Backslash Heading Fixture
+> Status: approved 2099-01-01
+## Config\normalization
+Content reached via a heading containing a literal backslash sequence.
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Config\normalization | REQ-1 |
+EOF
+cat > "$R/.ai/specs/backslash-heading-fixture/tasks.md" <<'EOF'
+# Tasks: Backslash Heading Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" backslash-heading-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -qF '== DESIGN ## Config\normalization' \
+  && printf '%s' "$OUT" | grep -q 'Content reached via a heading containing a literal backslash sequence' \
+  && ! printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: byte-identical heading/Section value with a literal backslash should resolve, not MISSING :: rc=$RC :: $OUT"
+fi
+
 echo "=== spec-slice: traceability table headed 'Satisfies' instead of 'REQ' still matches (real specs use both; REQ-3.12's header-lookup must not regress REQ-3.6/3.7 for the other convention) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/satisfies-header-fixture"
