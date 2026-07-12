@@ -5,46 +5,46 @@
   "epic": {
     "issue": 111,
     "nodeId": "I_kwDOSt2IyM8AAAABIgSZjw",
-    "bodyHash": "sha256:252a05f095f75418b157bc94b97e29342b19a2523ca96f79bfa74dbd5a0f2ce5"
+    "bodyHash": "sha256:86198680a1785988196c86296ed8dc12353a1cafba7fa707e580ef194a90055d"
   },
   "tasks": {
     "1": {
       "issue": 112,
       "nodeId": "I_kwDOSt2IyM8AAAABIgSZtQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:9010d81faa8166736b73f6b1d9094117d8996ee5c3e3e0781c972ca3eff08465",
-      "state": "open"
+      "bodyHash": "sha256:428c09b7e399838264446077cf2204b89da7d3e130e64f6aff29bbd57f1279f9",
+      "state": "closed"
     },
     "2": {
       "issue": 113,
       "nodeId": "I_kwDOSt2IyM8AAAABIgSZ7w",
       "subIssueLinked": true,
-      "bodyHash": "sha256:f55c4b0e59466f6c2b856540f260fa95cb6993aec76a25266dd532becc34bb6a",
-      "state": "open"
+      "bodyHash": "sha256:9742f6e77acb4e0a4517af392e6caf1923f2cd370c6ee0edbf5d5af30b1830b9",
+      "state": "closed"
     },
     "3": {
       "issue": 114,
       "nodeId": "I_kwDOSt2IyM8AAAABIgSaIg",
       "subIssueLinked": true,
-      "bodyHash": "sha256:ba9c7a3611bab4d1206ce26a7078bd5946c49079d671904664a1349efffc3ae4",
-      "state": "open"
+      "bodyHash": "sha256:6989dc364410fc5cb50b81d37875d2cdb4e2127a6ed51a411477d47ad689da19",
+      "state": "closed"
     },
     "4": {
       "issue": 115,
       "nodeId": "I_kwDOSt2IyM8AAAABIgSaXQ",
       "subIssueLinked": true,
-      "bodyHash": "sha256:5cc47d3be01a716611dc4275a768dd4fd05978836b8ed3458ee5b5a71002ed53",
-      "state": "open"
+      "bodyHash": "sha256:aca2059d1694421d96bf3e5067e2f844bf3693751ee49dbb89629e0ac42e083a",
+      "state": "closed"
     },
     "5": {
       "issue": 116,
       "nodeId": "I_kwDOSt2IyM8AAAABIgSapA",
       "subIssueLinked": true,
-      "bodyHash": "sha256:8b94f6d11e1f316093f3e441a00a99cebb269143f28ac94bddc0783727d43eb7",
-      "state": "open"
+      "bodyHash": "sha256:831d0d5dc56c170b1f4755b81bed445527470232054225c99fab9d1e67668ee4",
+      "state": "closed"
     }
   },
-  "lastSync": "2026-07-12T13:23:56+0700",
+  "lastSync": "2026-07-12T15:24:39+0700",
   "labelsEnsured": [
     "spec:platform-phase5-stage3",
     "spec-epic",
