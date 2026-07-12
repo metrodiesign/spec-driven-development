@@ -149,18 +149,18 @@ Row model (one per feature):
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| feature enumeration incl. archive + row model | REQ-1.1 |
-| approval-stamp parse + post-approval commit count + fix-PR grep | REQ-1.2 |
-| cost_lib import (no second parser) | REQ-1.3 |
-| stdlib-only offline CLI, exit contract | REQ-1.4 |
-| incomplete marker path | REQ-2.1 |
-| disclaimer header | REQ-2.2 |
-| ledger-absent n/a path | REQ-2.3 |
-| markdown default + --json | REQ-3.1 |
-| totals row | REQ-3.2 |
-| --feature per-task breakdown | REQ-3.3 |
-| spec-retro step addition | REQ-4.1 |
-| non-blocking failure note in retro | REQ-4.2 |
-| spec-metrics.test.sh fixture cases | REQ-5.1, 5.2 |
+| Design element | REQ | Section |
+|---|---|---|
+| feature enumeration incl. archive + row model | REQ-1.1 | Data Models & Interfaces |
+| approval-stamp parse + post-approval commit count + fix-PR grep | REQ-1.2 | Data Models & Interfaces |
+| cost_lib import (no second parser) | REQ-1.3 | Data Models & Interfaces |
+| stdlib-only offline CLI, exit contract | REQ-1.4 | Data Models & Interfaces |
+| incomplete marker path | REQ-2.1 | Data Models & Interfaces |
+| disclaimer header | REQ-2.2 | Data Models & Interfaces |
+| ledger-absent n/a path | REQ-2.3 | Data Models & Interfaces |
+| markdown default + --json | REQ-3.1 | Data Models & Interfaces |
+| totals row | REQ-3.2 | Data Models & Interfaces |
+| --feature per-task breakdown | REQ-3.3 | Data Models & Interfaces |
+| spec-retro step addition | REQ-4.1 | Data Models & Interfaces |
+| non-blocking failure note in retro | REQ-4.2 | Data Models & Interfaces |
+| spec-metrics.test.sh fixture cases | REQ-5.1, 5.2 | Testing Strategy |

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # spec-slice.sh — deterministic per-task slice of a spec's artifacts (REQ-3). Zero model
 # judgment: the task block -> its Satisfies: REQ blocks -> design sections mapped via the
-# design's own "## Requirement Traceability" table. An unresolved reference prints a
-# MISSING: marker (never silently omitted) so /spec-implement can fall back to a full read
-# (REQ-3.4, REQ-4.2) instead of guessing.
+# design's own "## Requirement Traceability" table, matched by an explicit Section column
+# (exact heading text, located by header name, not position — REQ-3.8/3.12) and fence-aware
+# so a heading-shaped line quoted inside a ``` block is never a false boundary (REQ-3.11).
+# An unresolved reference prints a MISSING: marker (never silently omitted) so
+# /spec-implement can fall back to a full read (REQ-3.4, REQ-4.2) instead of guessing.
 #
 # usage: spec-slice.sh <feature> <task-id>
 # exit: 0 (even with MISSING: markers present — the marker drives the fallback, not the
@@ -35,22 +37,63 @@ task_block() { # $1=file $2=task_id
 }
 
 # from a "## REQ-<n>:" heading (inclusive) to the next "## " heading (exclusive) or EOF.
+# Fence-aware (REQ-3.11): a "## "-looking line inside a ``` fenced block is never a
+# boundary — it toggles `fence` and is otherwise treated as inert content.
 req_block() { # $1=file $2=req_number
   awk -v n="$2" '
-    !started && $0 ~ ("^## REQ-" n ":") { started=1; print; next }
-    started && /^## / { exit }
+    /^```/ { fence = !fence }
+    !started && !fence && $0 ~ ("^## REQ-" n ":") { started=1; print; next }
+    started && !fence && /^## / { exit }
     started { print }
   ' "$1"
 }
 
 # from an EXACT heading line (inclusive, string equality — no regex escaping needed) to
-# the next "## " heading (exclusive) or EOF.
+# the next "## " heading (exclusive) or EOF. Fence-aware (REQ-3.11), same as req_block().
+# $2 must be a real line from the file — see find_heading_line().
 section_from_heading() { # $1=file $2=exact_heading_line
   awk -v h="$2" '
-    !started && $0 == h { started=1; print; next }
-    started && /^## / { exit }
+    /^```/ { fence = !fence }
+    !started && !fence && $0 == h { started=1; print; next }
+    started && !fence && /^## / { exit }
     started { print }
   ' "$1"
+}
+
+# the real "## " heading line whose text (after "## ", trimmed both sides) exactly equals
+# $2 — fence-aware (REQ-3.11) so a heading-shaped line inside a ``` block never matches.
+# Prints the exact verbatim line (for section_from_heading to key off), or nothing.
+find_heading_line() { # $1=file $2=heading_text (no "## " prefix, already trimmed)
+  awk -v want="$2" '
+    /^```/ { fence = !fence }
+    !fence && /^## / {
+      text = $0
+      sub(/^## /, "", text)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+      if (text == want) { print; exit }
+    }
+  ' "$1"
+}
+
+# 1-based index (among a table's real cells) of the column whose header text exactly
+# equals $2; 0 if absent. REQ-3.12: locate a column by its header name, never a fixed
+# position, so Section/REQ/Design-element may sit in any order.
+header_col() { # $1=header_row $2=column_name
+  awk -F'|' -v want="$2" '
+    {
+      for (i = 2; i < NF; i++) {
+        v = $i
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+        if (v == want) { print i - 1; found = 1; exit }
+      }
+    }
+    END { if (!found) print 0 }
+  ' <<< "$1"
+}
+
+# trimmed text of the N-th real cell (1-based) of a "| a | b | c |" row.
+cell_at() { # $1=row $2=column_index (1-based)
+  awk -F'|' -v i="$2" '{ v = $(i + 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); print v }' <<< "$1"
 }
 
 TASK_BLOCK=$(task_block "$TASKS_FILE" "$TASK_ID")
@@ -90,24 +133,43 @@ for n in $SATISFIES_NUMS; do
 done
 
 # Design sections: rows of design.md's own Requirement Traceability table whose REQ column
-# mentions any selected id, either "REQ-N" prefixed or a bare "N.M" dotted id (REQ-3.6); the
-# row's design-element cell is matched against "## " headings by literal substring (REQ-3.1).
-# A cell matching no heading -> MISSING (REQ-3.4). A REQ with zero matching rows at all ->
-# MISSING too (REQ-3.7) — a table written in one id style must never drop a whole design
-# section silently.
+# mentions any selected id, either "REQ-N" prefixed or a bare "N.M" dotted id (REQ-3.6). The
+# row's `Section` column — located by its header name via header_col(), never a fixed
+# position (REQ-3.12) — is matched against real "## " headings by case-sensitive exact
+# equality after trimming both sides (REQ-3.8), never literal substring against the
+# free-text design-element cell (the original REQ-3.1 mechanism, retired: a real spec's
+# design-element cell never literally equals its own heading). A Section value that is
+# absent (no such column, or a blank cell) or matches no heading resolves to MISSING
+# (REQ-3.9). Multiple rows sharing one non-empty Section value print that section's content
+# once (REQ-3.10, dedup by Section) — an absent Section is never deduped, so every such row
+# still surfaces its own MISSING rather than collapsing into one. A REQ with zero matching
+# rows at all -> MISSING too (REQ-3.7).
 if [ -f "$DESIGN_FILE" ]; then
   TRACE_BLOCK=$(awk '
-    !started && /^## Requirement Traceability/ { started=1; next }
-    started && /^## / { exit }
+    /^```/ { fence = !fence }
+    !started && !fence && /^## Requirement Traceability/ { started=1; next }
+    started && !fence && /^## / { exit }
     started { print }
   ' "$DESIGN_FILE")
 
+  HEADER_ROW=""
+  while IFS= read -r row; do
+    case "$row" in '|'*) HEADER_ROW="$row"; break ;; esac
+  done <<< "$TRACE_BLOCK"
+
+  REQ_COL=$(header_col "$HEADER_ROW" "REQ")
+  [ "$REQ_COL" -eq 0 ] && REQ_COL=$(header_col "$HEADER_ROW" "Satisfies")
+  SECTION_COL=$(header_col "$HEADER_ROW" "Section")
+
+  HEADER_SEEN=0
   while IFS= read -r row; do
     case "$row" in '|'*) ;; *) continue ;; esac
-    case "$row" in *'---'*|*'Design element'*) continue ;; esac
-    cell1=$(printf '%s' "$row" | awk -F'|' '{print $2}' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
-    cell2=$(printf '%s' "$row" | awk -F'|' '{print $3}' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
-    [ -z "$cell1" ] && continue
+    case "$row" in *'---'*) continue ;; esac
+    if [ "$HEADER_SEEN" -eq 0 ]; then HEADER_SEEN=1; continue; fi
+
+    cell2=""
+    [ "$REQ_COL" -gt 0 ] && cell2=$(cell_at "$row" "$REQ_COL")
+    [ -z "$cell2" ] && continue
 
     match=0
     for n in $SATISFIES_NUMS; do
@@ -118,20 +180,28 @@ if [ -f "$DESIGN_FILE" ]; then
     done
     [ "$match" -eq 1 ] || continue
 
-    already=0
-    for seen in "${DESIGN_ELEMENTS_SEEN[@]:-}"; do
-      [ "$seen" = "$cell1" ] && { already=1; break; }
-    done
-    [ "$already" -eq 1 ] && continue
-    DESIGN_ELEMENTS_SEEN+=("$cell1")
+    SECTION_VAL=""
+    [ "$SECTION_COL" -gt 0 ] && SECTION_VAL=$(cell_at "$row" "$SECTION_COL")
 
-    HEADING=$(grep '^## ' "$DESIGN_FILE" | grep -F -m1 -- "$cell1" || true)
-    if [ -z "$HEADING" ]; then
-      MISSING+=("MISSING: design section for \"$cell1\" (no ## heading contains it)")
+    if [ -z "$SECTION_VAL" ]; then
+      MISSING+=("MISSING: design section for REQ column \"$cell2\" (Section value empty or column absent)")
       continue
     fi
-    echo "== DESIGN $HEADING (design.md) =="
-    section_from_heading "$DESIGN_FILE" "$HEADING"
+
+    already=0
+    for seen in "${DESIGN_ELEMENTS_SEEN[@]:-}"; do
+      [ "$seen" = "$SECTION_VAL" ] && { already=1; break; }
+    done
+    [ "$already" -eq 1 ] && continue
+    DESIGN_ELEMENTS_SEEN+=("$SECTION_VAL")
+
+    HEADING_LINE=$(find_heading_line "$DESIGN_FILE" "$SECTION_VAL")
+    if [ -z "$HEADING_LINE" ]; then
+      MISSING+=("MISSING: design section for \"$SECTION_VAL\" (no ## heading matches it exactly)")
+      continue
+    fi
+    echo "== DESIGN $HEADING_LINE (design.md) =="
+    section_from_heading "$DESIGN_FILE" "$HEADING_LINE"
   done <<< "$TRACE_BLOCK"
 
   for n in $SATISFIES_NUMS; do

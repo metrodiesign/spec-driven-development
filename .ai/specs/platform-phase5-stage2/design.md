@@ -63,9 +63,7 @@ sequenceDiagram
     LR->>LR: loadGoalContract(.ai/specs/<f>/goal.yaml) → run
 ```
 
-## Data Models & Interfaces
-
-### C1 — `.ai/schemas/goal.schema.json` (shape เต็ม)
+## C1 — `.ai/schemas/goal.schema.json` (shape เต็ม)
 
 ตาม style precedent ของ `plan.schema.json`: `$schema` draft-07, `$id`
 `goal.schema.json`, `$comment` ชี้ §11.1 + embed site + supersession ของ P1 REQ-8.4.
@@ -156,7 +154,7 @@ sequenceDiagram
 หมายเหตุ shape: cross-field (`failure_threshold < probes`, probes >= 1) อยู่ freeze
 เท่านั้น (1.8) — schema ให้แค่ type integer เพื่อไม่ duplicate เกณฑ์สองที่.
 
-### C2 — `goal-schema.ts`
+## C2 — `goal-schema.ts`
 
 ```ts
 export const GOAL_SCHEMA: Record<string, unknown> = { /* deep-equal C1 — parity test */ };
@@ -166,7 +164,7 @@ export const GOAL_SCHEMA: Record<string, unknown> = { /* deep-equal C1 — parit
 export function validateGoalShape(parsed: unknown): string[];
 ```
 
-### C3 — `loadGoalContract` (แก้จุดเดียว)
+## C3 — `loadGoalContract` (แก้จุดเดียว)
 
 ```ts
 export function loadGoalContract(path: string): TaskContract {
@@ -180,7 +178,7 @@ export function loadGoalContract(path: string): TaskContract {
 }
 ```
 
-### C4 — `contract.ts`
+## C4 — `contract.ts`
 
 ```ts
 import type { RiskClass } from '../human/approval.ts';   // core-internal, มีอยู่แล้ว (approval.ts:6)
@@ -207,7 +205,7 @@ Freeze rules (helper ใหม่ `reqPosInt(v, what)` — precedent เดี�
 - `risk`: absent → `'L2'`; ไม่อยู่ใน enum → `ContractInvalidError` (3.4)
 - `raw`, sha256 hash, ลำดับ field อื่น — ไม่แตะ (3.6)
 
-### C5 — Repair wiring
+## C5 — Repair wiring
 
 `core/src/orchestrator/loop.ts`: export `DEFAULT_REPAIR_POLICY` (เดิมเป็น module const
 — เปลี่ยนเป็น export เดียว, ไม่มี logic ใหม่; `LoopOptions.repairPolicy` มีอยู่แล้ว)
@@ -234,7 +232,7 @@ Fixture hazard (AD1): `loop-run.test.ts` สร้าง `TaskContract` เป�
 ถ้าเผลอเติม `risk: 'L2'` ทั้งกระดาน L1 auto-merge case จะพลิกพฤติกรรมเงียบ (6.6
 ระบุ L1-stays-L1 แล้ว).
 
-### C6 — Dispatch ceiling
+## C6 — Dispatch ceiling
 
 `aal/src/dispatch.ts` (ตัวเลขล้วน — Ring 1 ไม่รู้จัก contract type, ไม่มี layering ใหม่):
 
@@ -276,7 +274,7 @@ test "EITHER axis off" รับรอง). Fail-closed ไม่เสีย: r
 guard ใหม่ตอนเริ่มของมันเอง; regression test คู่กัน (trigger off + over-wide
 dispatcher → รันสำเร็จ, PLAN_RESOLVED = 0).
 
-### C7 — loopManaged
+## C7 — loopManaged
 
 `claude-data.ts:79` เปลี่ยน predicate:
 
@@ -290,7 +288,7 @@ loopManaged: cwd !== null && hasPromotedGoal(cwd),
 //   goal.draft.yaml ไม่นับ (5.3); archive/<f>/goal.yaml อยู่สองระดับ — ไม่ match (5.2/L6)
 ```
 
-### C8 — Generator banner (text เท่านั้น)
+## C8 — Generator banner (text เท่านั้น)
 
 `spec_to_goal.py` เพิ่มบรรทัดสุดท้ายใน banner ทั้งสอง variant (unresolved/resolved):
 
@@ -306,7 +304,7 @@ risk จริงแล้ว ตามเจตนา D5 (risk = human gate). e
 draft freeze ผ่านทันทีต้องเขียนใหม่เป็นสองจังหวะ: reject ที่ `risk:"TODO"` → fill
 risk → freeze ผ่าน (อยู่ใน 6.6 sweep).
 
-### C9 — Spec doc amendment
+## C9 — Spec doc amendment
 
 - §11.1 บรรทัดแรกของ template: `# .ai/goal.yaml` → `# .ai/specs/<feature>/goal.yaml
   (draft: goal.draft.yaml — promote by renaming when approved)` + เพิ่มบรรทัด
@@ -383,25 +381,25 @@ CI: ทุกอย่างวิ่งใต้ `SDD_TYPECHECK_CMD`/`SDD_TEST_
 
 ## Requirement Traceability
 
-| Design element | Satisfies |
-|----------------|-----------|
-| C1 governance schema (shape ตามด้านบน) | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 |
-| C2 `goal-schema.ts` embedded + `validateGoalShape` | 2.5, 2.2 (allErrors) |
-| C3 `loadGoalContract` validate-then-freeze | 2.1, 2.2, 2.4, 2.6 |
-| ajv เฉพาะ console/backend | 2.3 |
-| C4 `ContractBudget` + `reqPosInt` + risk default/reject + raw/hash untouched | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 |
-| C4 comment ที่ `maxTotalTasks` | 4.3, 4.4 |
-| C8 สองจังหวะ freeze + e2e rewrite (supersede stage-1 REQ-4.5) | 3.7 |
-| C5 `repairPolicy` จาก contract + `DEFAULT_REPAIR_POLICY` export | 4.1 |
-| C5 แทน `parseRisk` ด้วย `contract.risk` | 3.5 (consumer สอดคล้อง) |
-| C6 ceiling + `effectiveMaxParallel` + planning guard | 4.2 |
-| C7 `hasPromotedGoal` one-level scan | 5.2, 5.3 |
-| C8 banner promotion step | 5.5 |
-| C9 §11.1 amendment + §17 v1.5 | 5.1, 5.4, 2.6 |
-| goal-schema.test.ts parity | 6.1 |
-| contract.test.ts + goal-schema.test.ts budget/risk ทั้งสองชั้น | 6.2, 6.3 |
-| spec-to-goal.e2e.test.ts unresolved/full-fill | 6.4, 6.5 |
-| fixture migration sweep (รายชื่อใน 6.6) | 6.6 |
-| claude-data.test.ts สี่เคส | 6.7 |
-| loop-run.test.ts hypothesis non-default | 6.8 |
-| dispatch.test.ts clamp + loop-run guard test | 6.9 |
+| Design element | Satisfies | Section |
+|----------------|-----------|---------|
+| C1 governance schema (shape ตามด้านบน) | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 | C1 — `.ai/schemas/goal.schema.json` (shape เต็ม) |
+| C2 `goal-schema.ts` embedded + `validateGoalShape` | 2.5, 2.2 (allErrors) | C2 — `goal-schema.ts` |
+| C3 `loadGoalContract` validate-then-freeze | 2.1, 2.2, 2.4, 2.6 | C3 — `loadGoalContract` (แก้จุดเดียว) |
+| ajv เฉพาะ console/backend | 2.3 | Architecture Overview |
+| C4 `ContractBudget` + `reqPosInt` + risk default/reject + raw/hash untouched | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 | C4 — `contract.ts` |
+| C4 comment ที่ `maxTotalTasks` | 4.3, 4.4 | C4 — `contract.ts` |
+| C8 สองจังหวะ freeze + e2e rewrite (supersede stage-1 REQ-4.5) | 3.7 | C8 — Generator banner (text เท่านั้น) |
+| C5 `repairPolicy` จาก contract + `DEFAULT_REPAIR_POLICY` export | 4.1 | C5 — Repair wiring |
+| C5 แทน `parseRisk` ด้วย `contract.risk` | 3.5 (consumer สอดคล้อง) | C5 — Repair wiring |
+| C6 ceiling + `effectiveMaxParallel` + planning guard | 4.2 | C6 — Dispatch ceiling |
+| C7 `hasPromotedGoal` one-level scan | 5.2, 5.3 | C7 — loopManaged |
+| C8 banner promotion step | 5.5 | C8 — Generator banner (text เท่านั้น) |
+| C9 §11.1 amendment + §17 v1.5 | 5.1, 5.4, 2.6 | C9 — Spec doc amendment |
+| goal-schema.test.ts parity | 6.1 | Testing Strategy |
+| contract.test.ts + goal-schema.test.ts budget/risk ทั้งสองชั้น | 6.2, 6.3 | Testing Strategy |
+| spec-to-goal.e2e.test.ts unresolved/full-fill | 6.4, 6.5 | Testing Strategy |
+| fixture migration sweep (รายชื่อใน 6.6) | 6.6 | Testing Strategy |
+| claude-data.test.ts สี่เคส | 6.7 | Testing Strategy |
+| loop-run.test.ts hypothesis non-default | 6.8 | Testing Strategy |
+| dispatch.test.ts clamp + loop-run guard test | 6.9 | Testing Strategy |
