@@ -18,6 +18,8 @@ export interface ApprovalPackage {
   attestations: string[];
   riskClass: RiskClass;
   createdAt: number;
+  /** Read-only provenance passthrough from the frozen contract (phase5-stage3 REQ-6). Absent -> not rendered. */
+  provenance?: { specPath: string; requirementsCommit: string; requirementsSha256?: string; generatedAt: string };
 }
 
 export interface ApprovalInput {
@@ -35,6 +37,8 @@ export interface ApprovalInput {
   unresolvedRisks: string[];
   riskClass: RiskClass;
   createdAt: number;
+  /** Read-only provenance passthrough from the frozen contract (phase5-stage3 REQ-6). Absent -> not rendered. */
+  provenance?: { specPath: string; requirementsCommit: string; requirementsSha256?: string; generatedAt: string };
 }
 
 export type ApprovalResult =
@@ -84,6 +88,10 @@ export function buildApprovalPackage(input: ApprovalInput): ApprovalResult {
       attestations: attestationsFor(input.riskClass),
       riskClass: input.riskClass,
       createdAt: input.createdAt,
+      // Enumerated field-by-field above -> an interface-only change would drop this
+      // silently, so the copy is explicit (A6). Conditional spread, not a plain key,
+      // because exactOptionalPropertyTypes rejects an explicit `provenance: undefined`.
+      ...(input.provenance !== undefined ? { provenance: input.provenance } : {}),
     },
   };
 }

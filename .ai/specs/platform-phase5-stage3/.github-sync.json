@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "feature": "platform-phase5-stage3",
+  "repo": "metrodiesign/spec-driven-development",
+  "epic": {
+    "issue": 111,
+    "nodeId": "I_kwDOSt2IyM8AAAABIgSZjw",
+    "bodyHash": "sha256:252a05f095f75418b157bc94b97e29342b19a2523ca96f79bfa74dbd5a0f2ce5"
+  },
+  "tasks": {
+    "1": {
+      "issue": 112,
+      "nodeId": "I_kwDOSt2IyM8AAAABIgSZtQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:9010d81faa8166736b73f6b1d9094117d8996ee5c3e3e0781c972ca3eff08465",
+      "state": "open"
+    },
+    "2": {
+      "issue": 113,
+      "nodeId": "I_kwDOSt2IyM8AAAABIgSZ7w",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:f55c4b0e59466f6c2b856540f260fa95cb6993aec76a25266dd532becc34bb6a",
+      "state": "open"
+    },
+    "3": {
+      "issue": 114,
+      "nodeId": "I_kwDOSt2IyM8AAAABIgSaIg",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:ba9c7a3611bab4d1206ce26a7078bd5946c49079d671904664a1349efffc3ae4",
+      "state": "open"
+    },
+    "4": {
+      "issue": 115,
+      "nodeId": "I_kwDOSt2IyM8AAAABIgSaXQ",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:5cc47d3be01a716611dc4275a768dd4fd05978836b8ed3458ee5b5a71002ed53",
+      "state": "open"
+    },
+    "5": {
+      "issue": 116,
+      "nodeId": "I_kwDOSt2IyM8AAAABIgSapA",
+      "subIssueLinked": true,
+      "bodyHash": "sha256:8b94f6d11e1f316093f3e441a00a99cebb269143f28ac94bddc0783727d43eb7",
+      "state": "open"
+    }
+  },
+  "lastSync": "2026-07-12T13:23:56+0700",
+  "labelsEnsured": [
+    "spec:platform-phase5-stage3",
+    "spec-epic",
+    "spec-task",
+    "req-spine"
+  ]
+}

@@ -153,6 +153,54 @@ test('provenance: optional, but when present requires all three string fields (R
   assert.match(validateGoalShape(missing).join('\n'), /\/provenance/);
 });
 
+test('provenance: 4-field (incl. requirements_sha256) passes; 3-field without it still passes — backward compat (phase5-stage3 REQ-1.3/1.4)', () => {
+  const fourField = {
+    ...minimalGoal(),
+    provenance: {
+      spec_path: '.ai/specs/x/requirements.md',
+      requirements_commit: 'abc1234',
+      requirements_sha256: 'deadbeef',
+      generated_at: '2026-07-12T00:00:00Z',
+    },
+  };
+  assert.deepEqual(validateGoalShape(fourField), []);
+
+  const threeField = {
+    ...minimalGoal(),
+    provenance: { spec_path: '.ai/specs/x/requirements.md', requirements_commit: 'abc1234', generated_at: '2026-07-12T00:00:00Z' },
+  };
+  assert.deepEqual(validateGoalShape(threeField), []);
+});
+
+test('provenance: empty-string field rejected for all four fields (phase5-stage3 REQ-1.1 minLength)', () => {
+  const base = {
+    spec_path: '.ai/specs/x/requirements.md',
+    requirements_commit: 'abc1234',
+    requirements_sha256: 'deadbeef',
+    generated_at: '2026-07-12T00:00:00Z',
+  };
+  for (const key of Object.keys(base)) {
+    const bad = { ...minimalGoal(), provenance: { ...base, [key]: '' } };
+    assert.match(validateGoalShape(bad).join('\n'), new RegExp(`/provenance/${key}`), `empty ${key} must fail`);
+  }
+});
+
+test('provenance: unknown key rejected with the key named (phase5-stage3 REQ-1.5)', () => {
+  const bad = {
+    ...minimalGoal(),
+    provenance: { spec_path: 'x', requirements_commit: 'y', generated_at: 'z', extra_field: 'nope' },
+  };
+  assert.match(validateGoalShape(bad).join('\n'), /\/provenance.*\(extra_field\)/);
+});
+
+test('provenance: requirements_sha256 wrong type rejected (phase5-stage3 REQ-1.1)', () => {
+  const bad = {
+    ...minimalGoal(),
+    provenance: { spec_path: 'x', requirements_commit: 'y', generated_at: 'z', requirements_sha256: 12345 },
+  };
+  assert.match(validateGoalShape(bad).join('\n'), /\/provenance\/requirements_sha256/);
+});
+
 test('deploy: four command strings (non-empty) + observe required; extra observe key rejected (REQ-1.8)', () => {
   const emptyCmd = {
     ...minimalGoal(),

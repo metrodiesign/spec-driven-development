@@ -46,3 +46,21 @@ test('over the diff budget -> NO package, escalate split_required (REQ-9.2)', ()
   assert.equal(r.kind, 'escalate');
   if (r.kind === 'escalate') assert.equal(r.reason, 'split_required');
 });
+
+test('input with provenance -> the package carries it verbatim (phase5-stage3 REQ-6.1)', () => {
+  const provenance = {
+    specPath: '.ai/specs/fixture/requirements.md',
+    requirementsCommit: 'abc1234',
+    requirementsSha256: 'deadbeef',
+    generatedAt: '2026-07-12T00:00:00Z',
+  };
+  const r = buildApprovalPackage({ ...input(false), provenance });
+  assert.equal(r.kind, 'package');
+  if (r.kind === 'package') assert.deepEqual(r.package.provenance, provenance);
+});
+
+test('input without provenance -> the package has no provenance key at all (phase5-stage3 REQ-6.1)', () => {
+  const r = buildApprovalPackage(input(false));
+  assert.equal(r.kind, 'package');
+  if (r.kind === 'package') assert.ok(!('provenance' in r.package), 'key absent, not merely undefined');
+});

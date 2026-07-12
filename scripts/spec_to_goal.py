@@ -51,6 +51,7 @@ BANNER_UNRESOLVED = [
     "#        (4) write goal.objective (one sentence) + fill scope/forbidden",
     "#        (5) when approved: rename goal.draft.yaml -> goal.yaml (promotion —",
     "#            the Console loop-managed banner and the loop CLI read only goal.yaml)",
+    "#        do not hand-edit or reflow the machine-stamped provenance: line below",
 ]
 
 BANNER_RESOLVED = [
@@ -59,6 +60,7 @@ BANNER_RESOLVED = [
     "#        (3) write goal.objective (one sentence) + fill scope/forbidden",
     "#        (4) when approved: rename goal.draft.yaml -> goal.yaml (promotion —",
     "#            the Console loop-managed banner and the loop CLI read only goal.yaml)",
+    "#        do not hand-edit or reflow the machine-stamped provenance: line below",
 ]
 
 
@@ -128,17 +130,21 @@ def ac_line(ac):
             f"verification: {json.dumps(verification, ensure_ascii=False)} }}")
 
 
-def emit(feature, title, acs, src_path, sha, head_commit, generated_at):
+def emit(feature, title, acs, spec_path, sha, head_commit, generated_at):
     unresolved = sum(1 for a in acs if a["verification"] is None)
     goal_id = re.sub(r"[^A-Za-z0-9-]", "-", feature).upper() + "-001"
-    lines = [
-        "# spec-to-goal draft — DO NOT run as-is",
-        f"# source: {src_path}",
-        f"# requirements_sha256: {sha}",
-        f"# head_commit: {head_commit}",
-        f"# generated_at: {generated_at}",
-    ]
+    # single-line flow mapping, every key + string value JSON-quoted so the
+    # `{...}` remainder parses with json.loads (REQ-2.1); top-level key,
+    # column 0, ahead of goal: (drift checker anchors on `^provenance:` — task 4)
+    provenance_line = (
+        f'provenance: {{ "spec_path": {json.dumps(spec_path)}, '
+        f'"requirements_commit": {json.dumps(head_commit)}, '
+        f'"requirements_sha256": {json.dumps(sha)}, '
+        f'"generated_at": {json.dumps(generated_at)} }}'
+    )
+    lines = ["# spec-to-goal draft — DO NOT run as-is"]
     lines += BANNER_UNRESOLVED if unresolved else BANNER_RESOLVED
+    lines.append(provenance_line)
     lines += [
         f"goal: {{ id: {json.dumps(goal_id)}, "
         f"title: {json.dumps(title, ensure_ascii=False)}, objective: \"TODO\" }}",
@@ -187,7 +193,8 @@ def main(argv=None):
 
     raw = req_path.read_bytes()
     # hash + decode จาก buffer เดียวกัน — ห้าม read_text().encode() (newline
-    # translation ทำ sha256 anchor เพี้ยนบนไฟล์ CRLF/BOM; REQ-3.5)
+    # translation ทำ sha256 anchor เพี้ยนบนไฟล์ CRLF/BOM; supersedes stage-1
+    # REQ-3.5, now phase5-stage3 REQ-2.6)
     sha = hashlib.sha256(raw).hexdigest()
     text = raw.decode("utf-8")
 
@@ -233,7 +240,7 @@ def main(argv=None):
         maps = []
     acs = build_acs(criteria, maps)
 
-    # --- provenance (REQ-3.5) ---
+    # --- provenance (phase5-stage3 REQ-2) ---
     head_commit = "unknown"
     try:
         proc = subprocess.run(["git", "-C", str(feature_dir), "rev-parse", "HEAD"],
@@ -247,13 +254,22 @@ def main(argv=None):
               file=sys.stderr)
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # spec_path: repo-root-relative when requirements.md lies inside the repo;
+    # outside (e.g. a temp --specs-dir in tests) -> the path as given, as-is.
+    # Human-facing metadata only — the drift checker never resolves it (A1).
+    repo_root = Path(__file__).resolve().parent.parent
+    try:
+        spec_path = str(req_path.resolve().relative_to(repo_root))
+    except ValueError:
+        spec_path = str(req_path)
+
     # --- output gate หลัง validation ทั้งหมด (user เห็น error ของ spec ก่อนเรื่อง --force) ---
     out_path = feature_dir / "goal.draft.yaml"
     if out_path.exists() and not args.force:
         return fail(f"error: {out_path} already exists — pass --force to overwrite")
 
     content = emit(args.feature, title_from_h1(text, args.feature), acs,
-                   str(req_path), sha, head_commit, generated_at)
+                   spec_path, sha, head_commit, generated_at)
 
     # atomic write: temp ในโฟลเดอร์เดียวกัน + os.replace — ไม่มี partial file
     # ค้างให้ชน REQ-4.2 รอบถัดไป

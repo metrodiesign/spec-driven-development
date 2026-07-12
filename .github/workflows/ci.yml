@@ -137,3 +137,16 @@ jobs:
             echo "::endgroup::"
           done
           exit "$status"
+      - name: Spec-goal drift (advisory)
+        # Phase 5 Stage 3 (REQ-5): advisory only — warnings surface in the log, never
+        # fail the build. Escalation to blocking = add --strict to this one invocation.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for dir in .ai/specs/*/; do
+            [ -f "${dir}goal.yaml" ] || continue
+            feature="$(basename "$dir")"
+            echo "::group::spec-goal-drift ${feature}"
+            scripts/spec-goal-drift.sh "$feature"
+            echo "::endgroup::"
+          done

@@ -114,6 +114,26 @@ function generate(specsDir: string, feature: string) {
   return { ...run, draftPath };
 }
 
+// Rooted inside the repo (unlike withSpecsDir's os.tmpdir()) so the generator's
+// spec_path relative_to(repo_root) succeeds — exercises the "in-repo" branch of
+// critique D1, the twin of withSpecsDir's "outside repo" branch.
+function withInRepoSpecsDir<T>(fn: (dir: string) => T): T {
+  const dir = mkdtempSync(join(repoRoot, '.tmp-spec2goal-'));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+type Provenance = { spec_path: string; requirements_commit: string; requirements_sha256: string; generated_at: string };
+
+function extractProvenance(text: string): Provenance {
+  const line = text.split('\n').find((l) => l.startsWith('provenance:'));
+  assert.ok(line, 'draft has a top-level provenance: line at column 0');
+  return JSON.parse(line!.slice('provenance:'.length).trim()) as Provenance;
+}
+
 test('complete spec: exit 0, active ACs pass freezeContract, 1:1 mapping, no pending/golden (REQ-2.1/2.2/2.4/2.6/3.7/4.5/5.2)', { skip }, () => {
   withSpecsDir((dir) => {
     writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
@@ -356,11 +376,14 @@ test('draft shape: goal id/title, TODO placeholders, budget scaffold, provenance
     );
     assert.deepEqual(doc.approval_policy, { require_human_approval: ['TODO'] });
 
+    // Provenance now a structured `provenance:` flow mapping, not comment lines
+    // (supersedes stage-1 REQ-3.5's comment form — phase5-stage3 REQ-2.1/2.2/2.6).
     const sha = createHash('sha256').update(readFileSync(join(specDir, 'requirements.md'))).digest('hex');
-    assert.ok(text.includes(`# requirements_sha256: ${sha}`), 'sha256 of the exact bytes read (REQ-3.5)');
-    assert.match(text, /# source: .*requirements\.md/);
-    assert.match(text, /# head_commit: /);
-    assert.match(text, /# generated_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/);
+    const provenance = extractProvenance(text);
+    assert.equal(provenance.requirements_sha256, sha, 'sha256 of the exact bytes read (REQ-2.6)');
+    assert.match(provenance.spec_path, /requirements\.md$/);
+    assert.match(provenance.generated_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    assert.ok(provenance.requirements_commit.length > 0);
 
     // HUMAN banner: every remaining decision listed (REQ-3.6) + the promotion step
     // (stage-2 REQ-5.5) and the stage-2-accurate structural-gate warning.
@@ -371,6 +394,65 @@ test('draft shape: goal id/title, TODO placeholders, budget scaffold, provenance
     assert.match(text, /set risk \(L0-L4\), decide golden flags, set approval_policy/);
     assert.match(text, /write goal\.objective \(one sentence\) \+ fill scope\/forbidden/);
     assert.match(text, /rename goal\.draft\.yaml -> goal\.yaml \(promotion —/, 'promotion is the final banner step (REQ-5.5)');
+    assert.match(text, /do not hand-edit or reflow the machine-stamped provenance: line/, 'no-reflow instruction (phase5-stage3 REQ-2.3)');
+  });
+});
+
+test('provenance: single-line JSON-parseable flow mapping at column 0, exactly the four keys, ahead of goal:, old comment-form header gone, no provenance shape errors (phase5-stage3 REQ-2.1/2.2/2.4/2.6)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const specDir = writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    const text = readFileSync(res.draftPath, 'utf8');
+    const lines = text.split('\n');
+
+    const provenanceLines = lines.filter((l) => l.startsWith('provenance:'));
+    assert.equal(provenanceLines.length, 1, 'exactly one top-level provenance: line (column 0)');
+    const provenance = extractProvenance(text);
+    assert.deepEqual(
+      Object.keys(provenance).sort(),
+      ['generated_at', 'requirements_commit', 'requirements_sha256', 'spec_path'],
+      'exactly the four defined fields (REQ-2.1)',
+    );
+
+    for (const gone of ['# source:', '# requirements_sha256:', '# head_commit:', '# generated_at:']) {
+      assert.ok(!text.includes(gone), `old comment-form line removed (REQ-2.2): ${gone}`);
+    }
+    assert.ok(text.startsWith('# spec-to-goal draft — DO NOT run as-is\n'), 'DO-NOT-run banner retained (REQ-2.2)');
+
+    const provIdx = lines.findIndex((l) => l.startsWith('provenance:'));
+    const goalIdx = lines.findIndex((l) => l.startsWith('goal:'));
+    assert.ok(provIdx >= 0 && goalIdx > provIdx, 'provenance: is the first real YAML key, ahead of goal: (REQ-2.1)');
+
+    const sha = createHash('sha256').update(readFileSync(join(specDir, 'requirements.md'))).digest('hex');
+    assert.equal(provenance.requirements_sha256, sha, 'sha256 of the exact bytes read (REQ-2.6)');
+
+    const doc = parseYaml(text) as Record<string, unknown>;
+    const shapeErrors = validateGoalShape(doc);
+    assert.ok(
+      !shapeErrors.some((e) => e.startsWith('/provenance')),
+      `no provenance-related shape errors (REQ-2.4), got: ${shapeErrors.join(' | ')}`,
+    );
+  });
+});
+
+test('spec_path: outside-repo temp dir falls back to the path as given (absolute); in-repo dir resolves repo-root-relative with no leading / (design critique D1, phase5-stage3 REQ-2.1)', { skip }, () => {
+  withSpecsDir((dir) => {
+    writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    const provenance = extractProvenance(readFileSync(res.draftPath, 'utf8'));
+    assert.ok(provenance.spec_path.startsWith('/'), `outside-repo temp dir falls back to an absolute as-given path, got: ${provenance.spec_path}`);
+    assert.match(provenance.spec_path, /requirements\.md$/);
+  });
+
+  withInRepoSpecsDir((dir) => {
+    writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    const provenance = extractProvenance(readFileSync(res.draftPath, 'utf8'));
+    assert.ok(!provenance.spec_path.startsWith('/'), `in-repo dir resolves relative to repo root, got: ${provenance.spec_path}`);
+    assert.match(provenance.spec_path, /requirements\.md$/);
   });
 });
 

@@ -778,6 +778,9 @@ export async function runSupervisedLoop(opts: {
             unresolvedRisks: [],
             riskClass: merge.effectiveRisk,
             createdAt: clock.now(),
+            // phase5-stage3 REQ-6.2: conditional spread — exactOptionalPropertyTypes
+            // rejects an explicit `provenance: undefined`.
+            ...(opts.contract.provenance !== undefined ? { provenance: opts.contract.provenance } : {}),
           });
 
           const escalateTask = (why: string, extra?: Record<string, unknown>): void => {
@@ -861,6 +864,10 @@ export async function runSupervisedLoop(opts: {
             attestations: attestationsFor('L4'),
             riskClass: 'L4',
             createdAt: clock.now(),
+            // phase5-stage3 REQ-6.2 (critique D3 — this site builds the ApprovalPackage
+            // literal directly, not via ApprovalInput, so the spread target differs from
+            // the task-approval site above).
+            ...(opts.contract.provenance !== undefined ? { provenance: opts.contract.provenance } : {}),
           };
           audit({ event: 'deploy_package_created', taskId: TASK_ID, approvalId: currentDeployApproval.id });
 
