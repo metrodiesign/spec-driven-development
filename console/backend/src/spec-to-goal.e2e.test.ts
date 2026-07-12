@@ -16,6 +16,8 @@ import { test } from 'node:test';
 import { parse as parseYaml } from 'yaml';
 import { ContractInvalidError, freezeContract } from 'core';
 
+import { validateGoalShape } from './goal-schema.ts';
+
 const repoRoot = join(import.meta.dirname, '..', '..', '..');
 const generator = join(repoRoot, 'scripts', 'spec_to_goal.py');
 const wrapper = join(repoRoot, 'scripts', 'spec-to-goal.sh');
@@ -135,8 +137,20 @@ test('complete spec: exit 0, active ACs pass freezeContract, 1:1 mapping, no pen
     assert.equal(byId.get('AC-1.2')?.description, 'WHEN asked THE SYSTEM SHALL join wrapped continuation lines รวมข้อความไทย', 'continuation lines joined (REQ-2.2)');
     for (const ac of acs) assert.ok(!('golden' in ac), `no golden key on ${ac.id} (REQ-2.6)`);
 
-    const frozen = freezeContract(Buffer.from(text, 'utf8'), doc);
-    assert.equal(frozen.acceptanceCriteria.length, 5, 'draft passes freezeContract unchanged (REQ-4.5)');
+    // Two-beat freeze (stage-2 REQ-3.7 supersedes stage-1 REQ-4.5): the generator
+    // always emits risk "TODO", so even a fully-resolved draft freezes ONLY after
+    // the human sets a valid risk level — the risk gate is intentional (D5).
+    assert.throws(
+      () => freezeContract(Buffer.from(text, 'utf8'), doc),
+      (e: unknown) => e instanceof ContractInvalidError && e.message.includes('risk'),
+      'resolved draft is still risk-gated as-is (REQ-3.7)',
+    );
+    const filled = { ...doc, risk: 'L2' };
+    assert.deepEqual(validateGoalShape(filled), [], 'risk-filled resolved draft is schema-clean (REQ-6.5)');
+    const frozen = freezeContract(Buffer.from(JSON.stringify(filled), 'utf8'), filled);
+    assert.equal(frozen.acceptanceCriteria.length, 5, 'freezes once the human fills risk (REQ-3.7/6.5)');
+    assert.equal(frozen.risk, 'L2');
+    assert.match(text, /rename goal\.draft\.yaml -> goal\.yaml \(promotion —/, 'resolved banner carries the promotion step too (REQ-5.5)');
   });
 });
 
@@ -217,6 +231,32 @@ test('unresolved criteria: empty active array, full pending list, freezeContract
     assert.equal(byId.get('AC-2.1'), 'TODO', 'covering task without Verify -> unresolved (REQ-2.5)');
 
     assert.throws(() => freezeContract(Buffer.from(text, 'utf8'), doc), ContractInvalidError, 'draft is structurally un-runnable as-is (REQ-4.4)');
+
+    // Stage-2 REQ-6.4: schema rejection must include the empty-acceptance_criteria
+    // violation SPECIFICALLY (the stage-1 human gate) — not merely any incidental
+    // reason (`pending_...` unknown key, risk "TODO").
+    const shapeErrors = validateGoalShape(doc);
+    assert.ok(
+      shapeErrors.some((e) => e.startsWith('/acceptance_criteria')),
+      `empty-AC violation named among: ${shapeErrors.join(' | ')}`,
+    );
+    assert.ok(shapeErrors.some((e) => e.includes('pending_acceptance_criteria')), 'unknown pending key also named');
+    assert.ok(shapeErrors.some((e) => e.startsWith('/risk')), 'risk TODO also named');
+
+    // Stage-2 REQ-6.5 (full human fill, unresolved level): fill every TODO
+    // verification, rename pending -> acceptance_criteria (drop the empty
+    // placeholder), set risk — the result passes schema validation AND freezes.
+    const pendingList = doc.pending_acceptance_criteria as { id: string; verification: string }[];
+    const humanFilled = {
+      ...doc,
+      acceptance_criteria: pendingList.map((a) => ({ ...a, verification: a.verification === 'TODO' ? 'pnpm test filled' : a.verification })),
+      risk: 'L1',
+    } as Record<string, unknown>;
+    delete humanFilled['pending_acceptance_criteria'];
+    assert.deepEqual(validateGoalShape(humanFilled), [], 'human-filled draft is schema-clean (REQ-6.5)');
+    const frozen = freezeContract(Buffer.from(JSON.stringify(humanFilled), 'utf8'), humanFilled);
+    assert.equal(frozen.acceptanceCriteria.length, 3, 'human-filled draft freezes (REQ-6.5)');
+    assert.equal(frozen.risk, 'L1');
   });
 });
 
@@ -322,12 +362,15 @@ test('draft shape: goal id/title, TODO placeholders, budget scaffold, provenance
     assert.match(text, /# head_commit: /);
     assert.match(text, /# generated_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/);
 
-    // HUMAN banner: all four remaining decisions listed (REQ-3.6).
+    // HUMAN banner: every remaining decision listed (REQ-3.6) + the promotion step
+    // (stage-2 REQ-5.5) and the stage-2-accurate structural-gate warning.
     assert.match(text, /# HUMAN: \(1\) review pending_acceptance_criteria \+ fill every TODO verification/);
     assert.match(text, /rename pending_acceptance_criteria -> acceptance_criteria/);
-    assert.match(text, /WARNING: freezeContract does NOT reject "TODO" strings/);
+    assert.match(text, /WARNING: freezeContract does NOT reject "TODO" \*verification\* strings/);
+    assert.match(text, /risk "TODO" placeholder \(schema \+ freezeContract both reject it/);
     assert.match(text, /set risk \(L0-L4\), decide golden flags, set approval_policy/);
     assert.match(text, /write goal\.objective \(one sentence\) \+ fill scope\/forbidden/);
+    assert.match(text, /rename goal\.draft\.yaml -> goal\.yaml \(promotion —/, 'promotion is the final banner step (REQ-5.5)');
   });
 });
 

@@ -14,12 +14,24 @@ const GOAL = {
   ],
   budget: {
     max_iterations_per_task: 8,
+    max_hypotheses_per_failure: 3,
+    max_total_tasks: 30,
+    max_parallel_agents: 3,
     max_cost_units_per_task: 500,
     max_wallclock_per_task_min: 30,
   },
   approval_policy: { require_human_approval: ['auth_policy_change'] },
   some_future_key: { nested: true },
 };
+
+const BUDGET_KEYS = [
+  'max_iterations_per_task',
+  'max_hypotheses_per_failure',
+  'max_total_tasks',
+  'max_parallel_agents',
+  'max_cost_units_per_task',
+  'max_wallclock_per_task_min',
+] as const;
 
 function bytesOf(obj: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(obj));
@@ -40,6 +52,70 @@ test('freeze parses the object, maps budget, preserves unknown keys', () => {
 
 test('freeze rejects a contract missing required fields', () => {
   assert.throws(() => freezeContract(bytesOf({ goal: {} }), { goal: {} }), ContractInvalidError);
+});
+
+// ---------------------------------------------------------------------------
+// Typed budget — all six keys (phase5-stage2 REQ-3.1/3.2, freeze layer of 6.2).
+// ---------------------------------------------------------------------------
+
+test('freeze carries the three previously-dropped budget caps as typed values (REQ-3.1)', () => {
+  const c = freezeContract(bytesOf(GOAL), GOAL);
+  assert.equal(c.budget.maxHypothesesPerFailure, 3);
+  assert.equal(c.budget.maxTotalTasks, 30);
+  assert.equal(c.budget.maxParallelAgents, 3);
+});
+
+test('freeze rejects each missing budget key, naming it (REQ-3.2)', () => {
+  for (const key of BUDGET_KEYS) {
+    const budget: Record<string, unknown> = { ...GOAL.budget };
+    delete budget[key];
+    const goal = { ...GOAL, budget };
+    assert.throws(
+      () => freezeContract(bytesOf(goal), goal),
+      (e: unknown) => e instanceof ContractInvalidError && e.message.includes(key),
+      `missing ${key} must name the key`,
+    );
+  }
+});
+
+test('freeze rejects zero / negative / fractional / string budget values (REQ-3.2, freeze layer of 6.2)', () => {
+  for (const key of BUDGET_KEYS) {
+    for (const bad of [0, -1, 2.5, '8']) {
+      const goal = { ...GOAL, budget: { ...GOAL.budget, [key]: bad } };
+      assert.throws(
+        () => freezeContract(bytesOf(goal), goal),
+        (e: unknown) => e instanceof ContractInvalidError && e.message.includes(key),
+        `${key}=${JSON.stringify(bad)} must be rejected`,
+      );
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Typed risk (phase5-stage2 REQ-3.3/3.4/3.5, freeze layer of 6.3).
+// ---------------------------------------------------------------------------
+
+test('freeze: risk absent -> L2 default (REQ-3.3)', () => {
+  const c = freezeContract(bytesOf(GOAL), GOAL);
+  assert.equal(c.risk, 'L2');
+});
+
+test('freeze: every valid risk level round-trips (REQ-3.5)', () => {
+  for (const level of ['L0', 'L1', 'L2', 'L3', 'L4'] as const) {
+    const goal = { ...GOAL, risk: level };
+    assert.equal(freezeContract(bytesOf(goal), goal).risk, level);
+  }
+});
+
+test('freeze: invalid risk is rejected, never silently downgraded (REQ-3.4)', () => {
+  for (const bad of ['l2', 'TODO', 'L5', 2, null]) {
+    const goal = { ...GOAL, risk: bad };
+    assert.throws(
+      () => freezeContract(bytesOf(goal), goal),
+      (e: unknown) => e instanceof ContractInvalidError && e.message.includes('risk'),
+      `risk=${JSON.stringify(bad)} must be rejected`,
+    );
+  }
 });
 
 test('contractChanged detects a mid-run byte mutation', () => {

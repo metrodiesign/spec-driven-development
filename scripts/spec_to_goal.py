@@ -42,18 +42,23 @@ BANNER_UNRESOLVED = [
     "# HUMAN: (1) review pending_acceptance_criteria + fill every TODO verification",
     "#        (2) rename pending_acceptance_criteria -> acceptance_criteria",
     "#            and delete the empty acceptance_criteria line below",
-    '#            WARNING: freezeContract does NOT reject "TODO" strings — renaming',
-    "#            without doing step (1) produces a freezable contract with fake",
-    "#            verifications; steps are advisory ordering, the only structural",
-    "#            gate is the empty acceptance_criteria below",
+    '#            WARNING: freezeContract does NOT reject "TODO" *verification* strings',
+    "#            — renaming without doing step (1) produces fake verifications; the",
+    "#            structural gates are the empty acceptance_criteria below and the",
+    '#            risk "TODO" placeholder (schema + freezeContract both reject it',
+    "#            since phase5-stage2)",
     "#        (3) set risk (L0-L4), decide golden flags, set approval_policy",
     "#        (4) write goal.objective (one sentence) + fill scope/forbidden",
+    "#        (5) when approved: rename goal.draft.yaml -> goal.yaml (promotion —",
+    "#            the Console loop-managed banner and the loop CLI read only goal.yaml)",
 ]
 
 BANNER_RESOLVED = [
     "# HUMAN: (1) review acceptance_criteria — every verification was prefilled from the spec",
     "#        (2) set risk (L0-L4), decide golden flags, set approval_policy",
     "#        (3) write goal.objective (one sentence) + fill scope/forbidden",
+    "#        (4) when approved: rename goal.draft.yaml -> goal.yaml (promotion —",
+    "#            the Console loop-managed banner and the loop CLI read only goal.yaml)",
 ]
 
 
@@ -150,7 +155,8 @@ def emit(feature, title, acs, src_path, sha, head_commit, generated_at):
                      "# gate: freezeContract rejects empty — activate per HUMAN step (2)")
         lines.append("pending_acceptance_criteria:")
     else:
-        # REQ-4.5: resolved ครบ — เกณฑ์ทั้งหมด active, ผ่าน freezeContract ได้ทันที
+        # REQ-4.5 (superseded by stage-2 REQ-3.7): resolved ครบ — เกณฑ์ทั้งหมด active;
+        # freeze ยังปฏิเสธที่ risk "TODO" จนกว่า human ตั้งค่าจริง (D5 human gate)
         lines.append("acceptance_criteria:")
     lines += [ac_line(a) for a in acs]
     lines += [

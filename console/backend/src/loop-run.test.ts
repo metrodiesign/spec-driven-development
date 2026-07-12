@@ -38,7 +38,15 @@ const CONTRACT: TaskContract = {
   hash: 'a'.repeat(64),
   goal: { id: 'DEMO-1', title: 'demo', objective: 'edit src/impl.txt so the tests pass' },
   acceptanceCriteria: [{ id: 'AC-1', description: 'src/impl.txt contains correct', golden: true }],
-  budget: { maxIterations: 4, maxCostUnits: 500, maxWallclockMs: 60_000 },
+  budget: {
+    maxIterations: 4,
+    maxCostUnits: 500,
+    maxWallclockMs: 60_000,
+    maxHypothesesPerFailure: 3,
+    maxTotalTasks: 30,
+    maxParallelAgents: 3,
+  },
+  risk: 'L2',
   approvalPolicy: [],
   raw: {},
 };
@@ -427,8 +435,9 @@ test('planner-fusion panel builds peek the SAME wrapped router (REQ-16.2) but re
 });
 
 // An L1 task (declared risk in the frozen contract) with a golden-backed AC — the
-// input the auto-merge gate needs to fire (REQ-7.2).
-const L1_CONTRACT: TaskContract = { ...CONTRACT, raw: { risk: 'L1' } };
+// input the auto-merge gate needs to fire (REQ-7.2). Risk is a typed field on the
+// frozen contract since phase5-stage2 (REQ-3.5) — no longer read from raw.
+const L1_CONTRACT: TaskContract = { ...CONTRACT, risk: 'L1' };
 
 // Deploy config whose commands always succeed — reaches EXPANDED (REQ-6). Tiny
 // probes/interval so the composition tests below stay fast.
@@ -1148,4 +1157,59 @@ test('wrapRouterForShadow reuses an injected round stats cache instead of indepe
     'highest_reviewing_rate',
     'reflects the injected stats, not an independent (empty) log recompute',
   );
+});
+
+// ---------------------------------------------------------------------------
+// phase5-stage2 consumer wiring (REQ-4.1/4.2, tests 6.8/6.9).
+// ---------------------------------------------------------------------------
+
+test(
+  'the contract\'s max_hypotheses_per_failure observably bounds the repair cycle — a NON-default cap of 5 evaluates 5 hypotheses, not the static default 3 (REQ-4.1/6.8)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-exhaust-'));
+    try {
+      const out = await runSupervisedLoop({
+        contract: { ...CONTRACT, budget: { ...CONTRACT.budget, maxHypothesesPerFailure: 5 } },
+        // Never self-heals + diagnoses with 8 never-confirming hypotheses: only the
+        // contract cap can end the cycle. With the wire disconnected the engine
+        // would stop at the core default (3) and this test would fail.
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', behavior: 'exhaust_hypotheses', putContent: put }),
+        clock,
+        persistDir,
+      });
+      assert.equal(out.finalState, 'ESCALATED');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(log.all({ type: 'PROBE_RUN' }).length, 5, 'exactly cap-many probes ran (one per evaluated hypothesis)');
+        assert.equal(log.all({ type: 'HYPOTHESIS_CONFIRMED' }).length, 0, 'nothing ever confirms');
+        const escalated = log.all({ type: 'ESCALATED' }).at(-1);
+        assert.equal(escalated?.payload['reason'], 'max_hypotheses', 'the cycle ended at the contract cap, not all_refuted');
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test('a planning dispatcher assembled WIDER than the contract\'s max_parallel_agents is refused before the run starts (REQ-4.2/6.9)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-guard-'));
+  try {
+    await assert.rejects(
+      runSupervisedLoop({
+        contract: { ...CONTRACT, budget: { ...CONTRACT.budget, maxParallelAgents: 1 } },
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        approval: { timeoutMs: 100 },
+        planning: { enabled: true, plannerRoleTrigger: true, profile: PLAN_PROFILE, dispatcher: createDispatcher({ buckets: new Map(), maxParallel: 2 }) },
+      }),
+      /exceeds contract max_parallel_agents 1/,
+    );
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
 });

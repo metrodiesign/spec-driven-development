@@ -11,6 +11,7 @@
 goal: { id: CALIB-LESSON, title: Calibration fixture (lesson), objective: "fix src/impl.txt so the project's test suite (run-tests.sh) passes" }
 acceptance_criteria:
   - { id: AC-1, description: "src/impl.txt satisfies run-tests.sh", verification: "sh run-tests.sh", golden: true }
-budget: { max_iterations_per_task: 4, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
+budget: { max_iterations_per_task: 4, max_hypotheses_per_failure: 3, max_total_tasks: 30,
+          max_parallel_agents: 3, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
 approval_policy: { require_human_approval: [auth_policy_change] }
 risk: L1

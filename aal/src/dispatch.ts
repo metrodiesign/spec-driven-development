@@ -14,6 +14,13 @@ export interface DispatcherOptions {
   buckets: Map<string, TokenBucket>;
   /** Maximum sends in flight at once (from routing.json). */
   maxParallel: number;
+  /**
+   * Governance ceiling on concurrent sends (the frozen contract's
+   * max_parallel_agents — phase5-stage2 REQ-4.2). Effective concurrency =
+   * min(maxParallel, ceiling); absent = no extra bound. Kept numeric so Ring 1
+   * never learns the contract type.
+   */
+  ceiling?: number;
   /** Poll delay while an adapter's bucket is empty (default 5ms). Injected for deterministic tests. */
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
@@ -33,12 +40,15 @@ const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r
 
 export function createDispatcher(opts: DispatcherOptions): {
   dispatchAll(items: DispatchItem[]): Promise<DispatchResult[]>;
+  /** Resolved concurrency after the governance ceiling — readable so a composition guard can refuse a misassembled dispatcher (REQ-4.2). */
+  effectiveMaxParallel: number;
 } {
   const sleep = opts.sleep ?? realSleep;
   const waitMs = opts.waitMs ?? 5;
-  const maxParallel = Math.max(1, opts.maxParallel);
+  const maxParallel = Math.max(1, Math.min(opts.maxParallel, opts.ceiling ?? opts.maxParallel));
 
   return {
+    effectiveMaxParallel: maxParallel,
     async dispatchAll(items) {
       const results = new Array<DispatchResult>(items.length);
       let next = 0;

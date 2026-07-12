@@ -46,6 +46,24 @@ function scanJsonl(file: string): { entries: Record<string, unknown>[]; malforme
   return { entries, malformed };
 }
 
+/**
+ * Loop-managed = at least one PROMOTED goal contract at `.ai/specs/<feature>/goal.yaml`
+ * (phase5-stage2 REQ-5.2/5.3): drafts (`goal.draft.yaml`) are pre-approval and never
+ * count; the retired root `.ai/goal.yaml` is no longer consulted; `.ai/specs/archive/`
+ * sits two levels down so the one-level scan structurally skips it. try/catch whole:
+ * most home-dir projects have no `.ai/specs` at all — ENOENT is the common case.
+ */
+function hasPromotedGoal(cwd: string): boolean {
+  const specsDir = join(cwd, '.ai', 'specs');
+  try {
+    return readdirSync(specsDir, { withFileTypes: true }).some(
+      (d) => d.isDirectory() && existsSync(join(specsDir, d.name, 'goal.yaml')),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function readProjects(homeDir: string): { projects: ProjectEntry[]; guidance: string | null } {
   const dir = projectsDir(homeDir);
   if (!existsSync(dir)) {
@@ -76,7 +94,7 @@ export function readProjects(homeDir: string): { projects: ProjectEntry[]; guida
       id: entry.name,
       cwd,
       sessionCount: jsonlFiles.length,
-      loopManaged: cwd !== null && existsSync(join(cwd, '.ai', 'goal.yaml')),
+      loopManaged: cwd !== null && hasPromotedGoal(cwd),
     });
   }
   return { projects, guidance: null };
