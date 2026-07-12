@@ -297,6 +297,43 @@ else
   fail=$((fail+1)); echo "FAIL: shared Section value should print once, printed $COUNT times :: rc=$RC :: $OUT"
 fi
 
+echo "=== spec-slice: two REQs sharing one UNRESOLVABLE Section value each get their own MISSING, not just the first (dedup cache must key off successful resolution, not the raw Section text) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/bad-shared-section-fixture"
+cat > "$R/.ai/specs/bad-shared-section-fixture/requirements.md" <<'EOF'
+# Requirements: Bad Shared Section Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+## REQ-2: Second requirement
+Text.
+EOF
+cat > "$R/.ai/specs/bad-shared-section-fixture/design.md" <<'EOF'
+# Design: Bad Shared Section Fixture
+> Status: approved 2099-01-01
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Broken Section Name | REQ-1 |
+| Broken Section Name | REQ-2 |
+EOF
+cat > "$R/.ai/specs/bad-shared-section-fixture/tasks.md" <<'EOF'
+# Tasks: Bad Shared Section Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1, REQ-2
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" bad-shared-section-fixture 1 2>&1 ); RC=$?
+COUNT=$(printf '%s' "$OUT" | grep -c 'MISSING: design section for "Broken Section Name" (no ## heading matches it exactly)')
+if [ "$RC" -eq 0 ] && [ "$COUNT" -eq 2 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: two REQs sharing one unresolvable Section value should each print their own MISSING, got $COUNT :: rc=$RC :: $OUT"
+fi
+
 echo "=== spec-slice: table with no Section column at all -> each matched row MISSING distinctly, not collapsed (REQ-3.9) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/no-section-column-fixture"
@@ -393,6 +430,210 @@ else
   fail=$((fail+1)); echo "FAIL: fenced heading-shaped lines must not truncate req_block/section_from_heading/trace-table extraction :: rc=$RC :: $OUT"
 fi
 
+# ============================================================================
+# Unclosed (unbalanced) fence -> loud MISSING, never silent over-inclusion.
+# Mirror image of the REQ-3.11 fixture above (a *closed* fence must never be a
+# boundary); here a fence that never re-closes must never let a boundary scan
+# run past the intended end and merge in unrequested content. Exercised at 3 of
+# the 4 shared call sites (req_block, section_from_heading, the trace-table
+# extraction) — find_heading_line's own clean-pass is exercised incidentally by
+# the section_from_heading fixture below (it must resolve the heading before
+# section_from_heading's scan can even run).
+# ============================================================================
+echo "=== spec-slice: an unclosed fence in a REQ block never merges in the next REQ's content (req_block site) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/unclosed-fence-req-fixture"
+cat > "$R/.ai/specs/unclosed-fence-req-fixture/requirements.md" <<'EOF'
+# Requirements: Unclosed Fence Req Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+REQ-1 line before the unclosed fence.
+```
+fenced content that never closes
+## REQ-2: this heading must never leak into REQ-1's block
+REQ-2 body text that must never appear under REQ-1.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-req-fixture/tasks.md" <<'EOF'
+# Tasks: Unclosed Fence Req Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" unclosed-fence-req-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && ! printf '%s' "$OUT" | grep -q 'REQ-2 body text that must never appear under REQ-1' \
+  && printf '%s' "$OUT" | grep -qi 'MISSING: REQ-1.*unclosed'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: unclosed fence in a REQ block must not merge in the next REQ, and must fail loud :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: an unclosed fence inside a design section never merges in the next section (section_from_heading/find_heading_line site) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/unclosed-fence-design-fixture"
+cat > "$R/.ai/specs/unclosed-fence-design-fixture/requirements.md" <<'EOF'
+# Requirements: Unclosed Fence Design Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-design-fixture/design.md" <<'EOF'
+# Design: Unclosed Fence Design Fixture
+> Status: approved 2099-01-01
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Target Section | REQ-1 |
+## Target Section
+DESIGN line before the unclosed fence.
+```
+fenced content that never closes
+## Swallowed Section
+This must never appear under Target Section.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-design-fixture/tasks.md" <<'EOF'
+# Tasks: Unclosed Fence Design Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" unclosed-fence-design-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && ! printf '%s' "$OUT" | grep -q 'This must never appear under Target Section' \
+  && ! printf '%s' "$OUT" | grep -q '== DESIGN ## Target Section' \
+  && printf '%s' "$OUT" | grep -qi 'MISSING:.*Target Section.*unclosed'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: unclosed fence inside a design section must not merge in the next section, and must fail loud :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: an unclosed fence inside the Requirement Traceability table itself fails loud, not silently mis-parsed (trace-table extraction site) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/unclosed-fence-trace-fixture"
+cat > "$R/.ai/specs/unclosed-fence-trace-fixture/requirements.md" <<'EOF'
+# Requirements: Unclosed Fence Trace Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-trace-fixture/design.md" <<'EOF'
+# Design: Unclosed Fence Trace Fixture
+> Status: approved 2099-01-01
+## Real Section
+Real content that must never appear (the table above it is unparsable).
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Real Section | REQ-1 |
+```
+fence opens here and never closes
+EOF
+cat > "$R/.ai/specs/unclosed-fence-trace-fixture/tasks.md" <<'EOF'
+# Tasks: Unclosed Fence Trace Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" unclosed-fence-trace-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && ! printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section' \
+  && printf '%s' "$OUT" | grep -qi 'MISSING: Requirement Traceability table.*unclosed'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: unclosed fence inside the trace table must fail loud, not silently mis-parse the table :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: a fenced example table before the real Requirement Traceability table is never read as the real header or data (REQ column order swapped, fake REQ-99) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/fenced-example-table-fixture"
+cat > "$R/.ai/specs/fenced-example-table-fixture/requirements.md" <<'EOF'
+# Requirements: Fenced Example Table Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/fenced-example-table-fixture/design.md" <<'EOF'
+# Design: Fenced Example Table Fixture
+> Status: approved 2099-01-01
+## Real Section
+Real content correctly reached via the real table below.
+## Requirement Traceability
+Example (illustrative only, columns in the OTHER order):
+```
+| REQ | Section |
+|---|---|
+| REQ-99 | Nonexistent Example Section |
+```
+| Section | REQ |
+|---|---|
+| Real Section | REQ-1 |
+EOF
+cat > "$R/.ai/specs/fenced-example-table-fixture/tasks.md" <<'EOF'
+# Tasks: Fenced Example Table Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" fenced-example-table-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section' \
+  && printf '%s' "$OUT" | grep -q 'Real content correctly reached via the real table below' \
+  && ! printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: fenced example table before the real table must not poison header/data detection :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: a heading and Section value byte-identical and containing a literal backslash sequence resolves (awk -v would escape-process one side and not the other) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/backslash-heading-fixture"
+cat > "$R/.ai/specs/backslash-heading-fixture/requirements.md" <<'EOF'
+# Requirements: Backslash Heading Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/backslash-heading-fixture/design.md" <<'EOF'
+# Design: Backslash Heading Fixture
+> Status: approved 2099-01-01
+## Config\normalization
+Content reached via a heading containing a literal backslash sequence.
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Config\normalization | REQ-1 |
+EOF
+cat > "$R/.ai/specs/backslash-heading-fixture/tasks.md" <<'EOF'
+# Tasks: Backslash Heading Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" backslash-heading-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -qF '== DESIGN ## Config\normalization' \
+  && printf '%s' "$OUT" | grep -q 'Content reached via a heading containing a literal backslash sequence' \
+  && ! printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: byte-identical heading/Section value with a literal backslash should resolve, not MISSING :: rc=$RC :: $OUT"
+fi
+
 echo "=== spec-slice: traceability table headed 'Satisfies' instead of 'REQ' still matches (real specs use both; REQ-3.12's header-lookup must not regress REQ-3.6/3.7 for the other convention) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/satisfies-header-fixture"
@@ -428,6 +669,84 @@ if [ "$RC" -eq 0 ] \
   pass=$((pass+1))
 else
   fail=$((fail+1)); echo "FAIL: 'Satisfies'-headed traceability table should still match REQ column :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: header row without a trailing pipe still resolves its last column (header_col() off-by-one) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/no-trailing-pipe-fixture"
+cat > "$R/.ai/specs/no-trailing-pipe-fixture/requirements.md" <<'EOF'
+# Requirements: No Trailing Pipe Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/no-trailing-pipe-fixture/design.md" <<'EOF'
+# Design: No Trailing Pipe Fixture
+> Status: approved 2099-01-01
+## Real Section
+Content reached via a header row with no trailing pipe.
+## Requirement Traceability
+| Design element | REQ | Section
+|---|---|---
+| Real Section design | REQ-1 | Real Section
+EOF
+cat > "$R/.ai/specs/no-trailing-pipe-fixture/tasks.md" <<'EOF'
+# Tasks: No Trailing Pipe Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" no-trailing-pipe-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section' \
+  && ! printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: header row without a trailing pipe should still resolve its last (Section) column :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: a second header/separator-shaped row in the traceability table still resolves correctly or fails loud, never silently wrong (regression coverage for the header-detection rewrite) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/duplicate-header-row-fixture"
+cat > "$R/.ai/specs/duplicate-header-row-fixture/requirements.md" <<'EOF'
+# Requirements: Duplicate Header Row Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/duplicate-header-row-fixture/design.md" <<'EOF'
+# Design: Duplicate Header Row Fixture
+> Status: approved 2099-01-01
+## Real Section
+Content reached despite a duplicate header/separator pair earlier in the table.
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Section | REQ |
+|---|---|
+| Real Section | REQ-1 |
+EOF
+cat > "$R/.ai/specs/duplicate-header-row-fixture/tasks.md" <<'EOF'
+# Tasks: Duplicate Header Row Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" duplicate-header-row-fixture 1 2>&1 ); RC=$?
+# Safe outcomes only: either REQ-1 correctly resolves to Real Section, or it MISSINGs
+# loudly — never silently wrong content (e.g. never resolving to some other heading).
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section'; then
+  pass=$((pass+1))
+elif [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: duplicate header/separator row should degrade safely (correct DESIGN or loud MISSING), got neither :: rc=$RC :: $OUT"
 fi
 
 echo "---"
