@@ -111,7 +111,7 @@ if [ -f "$DESIGN_FILE" ]; then
 
     match=0
     for n in $SATISFIES_NUMS; do
-      if printf '%s' "$cell2" | grep -qE "REQ-${n}([^0-9]|\$)|(^|[,[:space:]])${n}\.[0-9]"; then
+      if printf '%s' "$cell2" | grep -qE "REQ-${n}([^0-9]|\$)|(^|[^A-Za-z0-9_.])${n}\.[0-9]"; then
         match=1
         DESIGN_REQS_MATCHED+=("$n")
       fi

@@ -167,6 +167,8 @@ Some text for REQ-1.
 Some text for REQ-2.
 ## REQ-3: Third requirement
 Some text for REQ-3.
+## REQ-4: Fourth requirement
+Some text for REQ-4.
 EOF
 cat > "$R/.ai/specs/bare-id-fixture/design.md" <<'EOF'
 # Design: Bare Id Fixture
@@ -175,11 +177,14 @@ cat > "$R/.ai/specs/bare-id-fixture/design.md" <<'EOF'
 Design content reached only via a bare dotted id in the traceability table.
 ## Mixed Style
 Design content reached via a row mixing a REQ-prefixed id with a bare one.
+## Punctuation Wrapped
+Design content reached via bare ids wrapped in normal markdown punctuation.
 ## Requirement Traceability
 | Design element | REQ |
 |---|---|
 | Data Models | 1.1 |
 | Mixed Style | REQ-3.1, 3.2 |
+| Punctuation Wrapped | `4.1`, (4.2) |
 EOF
 cat > "$R/.ai/specs/bare-id-fixture/tasks.md" <<'EOF'
 # Tasks: Bare Id Fixture
@@ -192,6 +197,9 @@ cat > "$R/.ai/specs/bare-id-fixture/tasks.md" <<'EOF'
      Verify: something
 - [ ] 3. Third task
      Satisfies: REQ-3
+     Verify: something
+- [ ] 4. Fourth task
+     Satisfies: REQ-4
      Verify: something
 EOF
 ( cd "$R" && git add -A && git commit -q -m base )
@@ -217,6 +225,14 @@ if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '== DESIGN ## Mixed Style'; t
   pass=$((pass+1))
 else
   fail=$((fail+1)); echo "FAIL: mixed-style row (REQ-3.1, 3.2) should match :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: bare id wrapped in backtick/parens still matches (Codex P2, PR #118, REQ-3.6) ==="
+OUT=$( cd "$R" && "$SLICE" bare-id-fixture 4 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '== DESIGN ## Punctuation Wrapped'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: punctuation-wrapped bare id (\`4.1\`, (4.2)) should match :: rc=$RC :: $OUT"
 fi
 
 echo "---"

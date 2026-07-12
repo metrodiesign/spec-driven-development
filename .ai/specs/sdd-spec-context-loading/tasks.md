@@ -67,10 +67,20 @@
          against a new `bare-id-fixture`; confirmed RED against the pre-fix
          matcher (2 of 3 failed exactly as diagnosed — bare id silently
          matched nothing, zero-row case produced no MISSING); applied the fix
-         (regex alternation accepting `(^|[,[:space:]])N\.[0-9]` alongside the
-         existing `REQ-N` alternative, plus a `DESIGN_REQS_MATCHED` sweep
-         after the row loop); reran -> `pass=12 fail=0`. Full guard-suite
-         sweep (11 `.claude/hooks/tests/*.test.sh` files) -> all exit 0.
+         (regex alternation accepting a bare `N\.[0-9]` alongside the existing
+         `REQ-N` alternative, plus a `DESIGN_REQS_MATCHED` sweep after the row
+         loop); reran -> `pass=12 fail=0`. Codex P2 review on PR #118 (real,
+         not refuted) then found the bare-id left-boundary
+         (`[,[:space:]]`) too narrow — a bare id wrapped in normal markdown
+         punctuation (`` `4.1` ``, `(4.2)`) didn't match, unlike
+         `scripts/spec_trace.py`'s own token-boundary regex, which this
+         design already cites as the pattern to mirror. Added a 4th
+         punctuation-wrapped case to the same fixture, confirmed RED, widened
+         the boundary to `(^|[^A-Za-z0-9_.])` (excludes only alnum/underscore/
+         dot immediately before the number, matching `spec_trace.py`'s
+         `(?<![A-Za-z0-9_.])` semantics as closely as POSIX ERE without
+         lookbehind allows) -> `pass=13 fail=0`. Full guard-suite sweep (11
+         `.claude/hooks/tests/*.test.sh` files) -> all exit 0.
          `scripts/spec-trace.sh sdd-spec-context-loading` -> OK, 20 criteria.
          `scripts/lessons-coverage-check.sh` -> OK, slugs synced. Live
          verification against the two real specs that exposed the bug:
