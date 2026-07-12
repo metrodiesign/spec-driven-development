@@ -37,7 +37,10 @@ Then write `.ai/specs/<feature>/design.md`:
   ## Technology Decisions         — choices + rationale (prefer tech.md)
   ## Error Handling Strategy      — how each error case is handled
   ## Testing Strategy             — unit/integration/property; map to REQ IDs
-  ## Requirement Traceability     — table: design element → REQ-x.y it satisfies
+  ## Requirement Traceability     — table: | Design element | REQ | Section |; Section
+                                    MUST be the exact text of a real `## ` heading
+                                    elsewhere in this same design.md (scripts/spec-slice.sh
+                                    matches it by exact string equality, not substring)
 
 Sync mode: if design.md already exists and requirements.md changed after it was
 written, do NOT regenerate the whole file — patch only the sections affected by
