@@ -49,3 +49,6 @@
 | supersede-old-guarantees-explicitly | advisory | ต้อง reasoning ข้าม spec รุ่นเก่า/archive ว่า guarantee ไหนถูกกลับด้าน — ไม่มี machine-checkable surface ทั่วไป |
 | guard-mirrors-action-condition | advisory | per-guard design judgment; เคส stage2 มี test คู่ negative แล้ว (loop-run.test.ts "guard mirrors the dispatch condition") แต่ตัว pattern ใช้กับ guard ใหม่ทุกตัวที่ยังไม่เกิด |
 | wiring-test-nondefault-value | advisory | test-authoring principle — เลือกค่า assert ต่อ test ใหม่เป็น judgment, lint ทั่วไปแยก default-collision ไม่ได้ |
+| slice-tool-verify-not-just-missing-marker | mechanizable | not yet built — flagged in retrospectives/2026-07/12/15.25_phase5-stage3-impl.md Next Steps; fix = spec-slice.sh's design-table row matcher should also accept bare N.M ids (not just REQ-N) when checking a task's Satisfies REQs, and warn loudly on zero matches instead of silent drop |
+| test-not-real-repo-incidental-state | advisory | test-authoring judgment call (what counts as "incidental" repo state vs. a real invariant) — no generic lint distinguishes them |
+| autobg-notification-not-manual-wait | advisory | harness tool-usage guidance for the assistant itself, not a repo-checkable code pattern |

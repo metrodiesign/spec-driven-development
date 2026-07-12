@@ -7,6 +7,7 @@ import {
   canRollbackDeploy,
   deployCardVisible,
   deployProbeSummary,
+  goalProvenanceLine,
   isGovernanceProposal,
   latestTaskState,
   nextSince,
@@ -78,6 +79,23 @@ test('canApprove requires every attestation checked (mirrors the server gate)', 
   assert.equal(canApprove(p, []), false);
   assert.equal(canApprove(p, ['a']), false);
   assert.equal(canApprove(p, ['a', 'b']), true);
+});
+
+test('goalProvenanceLine: null when the package carries no provenance (REQ-6.4)', () => {
+  assert.equal(goalProvenanceLine(pkg([])), null);
+});
+
+test('goalProvenanceLine: specPath @ requirementsCommit · generatedAt, values verbatim (REQ-6.3)', () => {
+  const withProvenance: LoopApprovalPackage = {
+    ...pkg([]),
+    provenance: {
+      specPath: '.ai/specs/fixture/requirements.md',
+      requirementsCommit: 'abc1234',
+      requirementsSha256: 'deadbeef',
+      generatedAt: '2026-07-12T00:00:00Z',
+    },
+  };
+  assert.equal(goalProvenanceLine(withProvenance), '.ai/specs/fixture/requirements.md @ abc1234 · 2026-07-12T00:00:00Z');
 });
 
 test('steeringControls: ended or unknown state -> everything disabled', () => {

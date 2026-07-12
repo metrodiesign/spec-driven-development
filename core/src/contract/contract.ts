@@ -43,6 +43,13 @@ export interface TaskContract {
     rollbackCmd: string;
     observe: { probes: number; failureThreshold: number; intervalMs: number };
   };
+  /** Optional generator-stamped origin record (phase5-stage3 REQ-3). Absent -> no validation runs. */
+  provenance?: {
+    specPath: string;
+    requirementsCommit: string;
+    requirementsSha256?: string;
+    generatedAt: string;
+  };
   raw: Record<string, unknown>;
 }
 
@@ -173,6 +180,23 @@ export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContr
     };
   }
 
+  // Optional provenance record (REQ-3). Unknown keys inside it are NOT rejected
+  // here — that stays at the ajv edge (stage-2 D1); freeze's raw passthrough
+  // treats provenance like every other block, no special strictness (A5).
+  let provenance: TaskContract['provenance'];
+  const provRaw = root['provenance'];
+  if (provRaw !== undefined) {
+    const p = asRecord(provRaw, 'provenance');
+    provenance = {
+      specPath: reqNonEmptyStr(p['spec_path'], 'provenance.spec_path'),
+      requirementsCommit: reqNonEmptyStr(p['requirements_commit'], 'provenance.requirements_commit'),
+      generatedAt: reqNonEmptyStr(p['generated_at'], 'provenance.generated_at'),
+    };
+    if (p['requirements_sha256'] !== undefined) {
+      provenance.requirementsSha256 = reqNonEmptyStr(p['requirements_sha256'], 'provenance.requirements_sha256');
+    }
+  }
+
   return {
     hash: sha256Hex(rawBytes),
     goal: {
@@ -185,6 +209,7 @@ export function freezeContract(rawBytes: Uint8Array, parsed: unknown): TaskContr
     risk,
     approvalPolicy,
     ...(deploy !== undefined ? { deploy } : {}),
+    ...(provenance !== undefined ? { provenance } : {}),
     raw: root,
   };
 }

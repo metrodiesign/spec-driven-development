@@ -19,6 +19,9 @@ export interface LoopApprovalPackage {
   riskClass: string;
   assumptions: string[];
   unresolvedRisks: string[];
+  // Duplicated from core's ApprovalPackage by convention — web has no dependency on
+  // core (phase5-stage3 REQ-6.3).
+  provenance?: { specPath: string; requirementsCommit: string; requirementsSha256?: string; generatedAt: string };
 }
 
 /** Governance proposals share the /approvals list but carry `kind`; task packages never do (core's own discriminator, REQ-9.4). */
@@ -65,6 +68,13 @@ export function attestationChecklist(pkg: LoopApprovalPackage, checkedIds: reado
 export function canApprove(pkg: LoopApprovalPackage, checkedIds: readonly string[]): boolean {
   const checked = new Set(checkedIds);
   return pkg.attestations.every((a) => checked.has(a));
+}
+
+/** Display line for a package's provenance, or null when absent (REQ-6.3/6.4). Values verbatim — audit data, never through t(). */
+export function goalProvenanceLine(pkg: LoopApprovalPackage): string | null {
+  const p = pkg.provenance;
+  if (p === undefined) return null;
+  return `${p.specPath} @ ${p.requirementsCommit} · ${p.generatedAt}`;
 }
 
 // Mirrors core/src/human/api.ts's STEERABLE set (the pre-merge working states +

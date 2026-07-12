@@ -224,3 +224,97 @@ test('freeze: deploy section bytes are covered by the frozen hash (REQ-4.4)', ()
     'a mid-run deploy-section edit is detectable as contract_changed',
   );
 });
+
+// ---------------------------------------------------------------------------
+// Provenance contract section (phase5-stage3 REQ-3).
+// ---------------------------------------------------------------------------
+
+const PROVENANCE = {
+  spec_path: '.ai/specs/fixture-feat/requirements.md',
+  requirements_commit: 'abc1234',
+  requirements_sha256: 'deadbeef',
+  generated_at: '2026-07-12T00:00:00Z',
+};
+
+test('freeze: provenance absent -> undefined, GOAL fixture still freezes unchanged (REQ-3.3)', () => {
+  const c = freezeContract(bytesOf(GOAL), GOAL);
+  assert.equal(c.provenance, undefined);
+});
+
+test('freeze: provenance 4-field -> typed camelCase surface (REQ-3.1/3.2)', () => {
+  const withProv = { ...GOAL, provenance: PROVENANCE };
+  const c = freezeContract(bytesOf(withProv), withProv);
+  assert.deepEqual(c.provenance, {
+    specPath: '.ai/specs/fixture-feat/requirements.md',
+    requirementsCommit: 'abc1234',
+    requirementsSha256: 'deadbeef',
+    generatedAt: '2026-07-12T00:00:00Z',
+  });
+});
+
+test('freeze: provenance 3-field (no requirements_sha256) -> field absent on the typed surface, others still typed (REQ-3.1/3.2)', () => {
+  const { requirements_sha256: _drop, ...threeField } = PROVENANCE;
+  const withProv = { ...GOAL, provenance: threeField };
+  const c = freezeContract(bytesOf(withProv), withProv);
+  assert.deepEqual(c.provenance, {
+    specPath: '.ai/specs/fixture-feat/requirements.md',
+    requirementsCommit: 'abc1234',
+    generatedAt: '2026-07-12T00:00:00Z',
+  });
+  assert.ok(!('requirementsSha256' in (c.provenance ?? {})), 'key absent, not merely undefined (exactOptionalPropertyTypes)');
+});
+
+test('freeze: provenance rejects a non-object (REQ-3.4)', () => {
+  for (const bad of ['x', 42, [], null]) {
+    const withProv = { ...GOAL, provenance: bad };
+    assert.throws(
+      () => freezeContract(bytesOf(withProv), withProv),
+      (e: unknown) => e instanceof ContractInvalidError && e.message.includes('provenance'),
+      `provenance=${JSON.stringify(bad)} must be rejected`,
+    );
+  }
+});
+
+test('freeze: provenance rejects a missing/empty required field, naming the path (REQ-3.4)', () => {
+  for (const key of ['spec_path', 'requirements_commit', 'generated_at']) {
+    const missing = { ...GOAL, provenance: { ...PROVENANCE, [key]: undefined } };
+    assert.throws(
+      () => freezeContract(bytesOf(missing), missing),
+      (e: unknown) => e instanceof ContractInvalidError && e.message.includes(`provenance.${key}`),
+      `missing ${key} must name provenance.${key}`,
+    );
+
+    const empty = { ...GOAL, provenance: { ...PROVENANCE, [key]: '   ' } };
+    assert.throws(
+      () => freezeContract(bytesOf(empty), empty),
+      (e: unknown) => e instanceof ContractInvalidError && e.message.includes(`provenance.${key}`),
+      `empty ${key} must name provenance.${key}`,
+    );
+  }
+});
+
+test('freeze: provenance rejects a wrong-type requirements_sha256 when present (REQ-3.4)', () => {
+  const withBad = { ...GOAL, provenance: { ...PROVENANCE, requirements_sha256: 12345 } };
+  assert.throws(
+    () => freezeContract(bytesOf(withBad), withBad),
+    (e: unknown) => e instanceof ContractInvalidError && e.message.includes('provenance.requirements_sha256'),
+  );
+});
+
+test('freeze: an unknown provenance key is NOT rejected — that stays at the ajv edge, never freeze (A5, REQ-3.5)', () => {
+  const withUnknown = { ...GOAL, provenance: { ...PROVENANCE, extra_field: 'nope' } };
+  const c = freezeContract(bytesOf(withUnknown), withUnknown);
+  assert.equal(c.provenance?.specPath, PROVENANCE.spec_path);
+});
+
+test('freeze: provenance section bytes are covered by the frozen hash', () => {
+  const withProv = { ...GOAL, provenance: PROVENANCE };
+  const c = freezeContract(bytesOf(withProv), withProv);
+  assert.equal(contractChanged(bytesOf(withProv), c.hash), false, 'identical bytes -> unchanged');
+  const mutated = { ...withProv, provenance: { ...PROVENANCE, requirements_commit: 'def5678' } };
+  assert.equal(
+    contractChanged(bytesOf(mutated), c.hash),
+    true,
+    'a mid-run provenance-section edit is detectable as contract_changed',
+  );
+});

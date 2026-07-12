@@ -141,9 +141,10 @@ export const GOAL_SCHEMA: Record<string, unknown> = {
       additionalProperties: false,
       required: ['spec_path', 'requirements_commit', 'generated_at'],
       properties: {
-        spec_path: { type: 'string' },
-        requirements_commit: { type: 'string' },
-        generated_at: { type: 'string' },
+        spec_path: { type: 'string', minLength: 1 },
+        requirements_commit: { type: 'string', minLength: 1 },
+        requirements_sha256: { type: 'string', minLength: 1 },
+        generated_at: { type: 'string', minLength: 1 },
       },
     },
   },

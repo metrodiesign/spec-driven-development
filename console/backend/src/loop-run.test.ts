@@ -66,6 +66,7 @@ interface ApprovalPackageJSON {
   diffRef: string;
   evidence: { gateReports: string[]; worktreeHash: string };
   attestations: string[];
+  provenance?: { specPath: string; requirementsCommit: string; requirementsSha256?: string; generatedAt: string };
 }
 
 /** Poll `fn` until it returns non-null, or throw after `timeoutMs` (default 5s). */
@@ -450,6 +451,18 @@ const DEPLOY_OK: NonNullable<TaskContract['deploy']> = {
 };
 const L1_CONTRACT_DEPLOY: TaskContract = { ...L1_CONTRACT, deploy: DEPLOY_OK };
 
+// phase5-stage3 REQ-6.2: both approval-package construction sites (task-approval
+// via ApprovalInput, deploy-approval via a direct literal — critique D3) must pass
+// contract.provenance through unchanged.
+const PROVENANCE: NonNullable<TaskContract['provenance']> = {
+  specPath: '.ai/specs/fixture/requirements.md',
+  requirementsCommit: 'abc1234',
+  requirementsSha256: 'deadbeef',
+  generatedAt: '2026-07-12T00:00:00Z',
+};
+const CONTRACT_WITH_PROVENANCE: TaskContract = { ...CONTRACT, provenance: PROVENANCE };
+const L1_CONTRACT_DEPLOY_WITH_PROVENANCE: TaskContract = { ...L1_CONTRACT_DEPLOY, provenance: PROVENANCE };
+
 test('E2E (REQ-18.4): an L1 task auto-merges + the sampled audit reproduces -> COMPLETED', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-e2e-'));
   try {
@@ -655,6 +668,29 @@ test('a non-golden / no-risk task builds a real approval package with the core-c
   }
 });
 
+test('contract.provenance flows through to the task approval package (phase5-stage3 REQ-6.2)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-appkg-prov-'));
+  try {
+    const resultPromise = runSupervisedLoop({
+      contract: CONTRACT_WITH_PROVENANCE,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 5000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    const pkg = await waitForApprovalPackage(url, token);
+    assert.deepEqual(pkg.provenance, PROVENANCE);
+
+    await decide(url, token, pkg.id, 'approve', pkg.attestations);
+    const out = await resultPromise;
+    assert.equal(out.finalState, 'COMPLETED');
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
 test('a human reject ends the run CHANGES_REQUESTED — terminal, no retry (REQ-3.3)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-reject-'));
   try {
@@ -760,6 +796,34 @@ test(
       } finally {
         log.close();
       }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'contract.provenance flows through to the deploy approval package too — direct-literal site, critique D3 (phase5-stage3 REQ-6.2)',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-prov-'));
+    try {
+      const resultPromise = runSupervisedLoop({
+        contract: L1_CONTRACT_DEPLOY_WITH_PROVENANCE,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 5000 },
+        deploy: { expandedWindowMs: 50 },
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      assert.deepEqual(pending.approval?.provenance, PROVENANCE);
+
+      await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      const out = await resultPromise;
+      assert.equal(out.finalState, 'COMPLETED');
     } finally {
       rmSync(persistDir, { recursive: true, force: true });
     }

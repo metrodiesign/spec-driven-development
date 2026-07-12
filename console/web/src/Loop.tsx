@@ -10,6 +10,7 @@ import {
   canRollbackDeploy,
   deployCardVisible,
   deployProbeSummary,
+  goalProvenanceLine,
   latestTaskState,
   nextSince,
   stateBadge,
@@ -279,6 +280,11 @@ function ApprovalCard({
         {t('loopAcsInfix')} {pkg.acIds.join(', ')}
       </p>
       <p>{pkg.goalExcerpt}</p>
+      {goalProvenanceLine(pkg) !== null && (
+        <p>
+          {t('loopProvenanceHeading')} <code>{goalProvenanceLine(pkg)}</code>
+        </p>
+      )}
       {pkg.unresolvedRisks.length > 0 && (
         <p role="status">
           {t('loopUnresolvedPrefix')} {pkg.unresolvedRisks.join('; ')}
