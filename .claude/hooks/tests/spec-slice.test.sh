@@ -430,6 +430,172 @@ else
   fail=$((fail+1)); echo "FAIL: fenced heading-shaped lines must not truncate req_block/section_from_heading/trace-table extraction :: rc=$RC :: $OUT"
 fi
 
+# ============================================================================
+# Unclosed (unbalanced) fence -> loud MISSING, never silent over-inclusion.
+# Mirror image of the REQ-3.11 fixture above (a *closed* fence must never be a
+# boundary); here a fence that never re-closes must never let a boundary scan
+# run past the intended end and merge in unrequested content. Exercised at 3 of
+# the 4 shared call sites (req_block, section_from_heading, the trace-table
+# extraction) — find_heading_line's own clean-pass is exercised incidentally by
+# the section_from_heading fixture below (it must resolve the heading before
+# section_from_heading's scan can even run).
+# ============================================================================
+echo "=== spec-slice: an unclosed fence in a REQ block never merges in the next REQ's content (req_block site) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/unclosed-fence-req-fixture"
+cat > "$R/.ai/specs/unclosed-fence-req-fixture/requirements.md" <<'EOF'
+# Requirements: Unclosed Fence Req Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+REQ-1 line before the unclosed fence.
+```
+fenced content that never closes
+## REQ-2: this heading must never leak into REQ-1's block
+REQ-2 body text that must never appear under REQ-1.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-req-fixture/tasks.md" <<'EOF'
+# Tasks: Unclosed Fence Req Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" unclosed-fence-req-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && ! printf '%s' "$OUT" | grep -q 'REQ-2 body text that must never appear under REQ-1' \
+  && printf '%s' "$OUT" | grep -qi 'MISSING: REQ-1.*unclosed'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: unclosed fence in a REQ block must not merge in the next REQ, and must fail loud :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: an unclosed fence inside a design section never merges in the next section (section_from_heading/find_heading_line site) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/unclosed-fence-design-fixture"
+cat > "$R/.ai/specs/unclosed-fence-design-fixture/requirements.md" <<'EOF'
+# Requirements: Unclosed Fence Design Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-design-fixture/design.md" <<'EOF'
+# Design: Unclosed Fence Design Fixture
+> Status: approved 2099-01-01
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Target Section | REQ-1 |
+## Target Section
+DESIGN line before the unclosed fence.
+```
+fenced content that never closes
+## Swallowed Section
+This must never appear under Target Section.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-design-fixture/tasks.md" <<'EOF'
+# Tasks: Unclosed Fence Design Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" unclosed-fence-design-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && ! printf '%s' "$OUT" | grep -q 'This must never appear under Target Section' \
+  && ! printf '%s' "$OUT" | grep -q '== DESIGN ## Target Section' \
+  && printf '%s' "$OUT" | grep -qi 'MISSING:.*Target Section.*unclosed'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: unclosed fence inside a design section must not merge in the next section, and must fail loud :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: an unclosed fence inside the Requirement Traceability table itself fails loud, not silently mis-parsed (trace-table extraction site) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/unclosed-fence-trace-fixture"
+cat > "$R/.ai/specs/unclosed-fence-trace-fixture/requirements.md" <<'EOF'
+# Requirements: Unclosed Fence Trace Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/unclosed-fence-trace-fixture/design.md" <<'EOF'
+# Design: Unclosed Fence Trace Fixture
+> Status: approved 2099-01-01
+## Real Section
+Real content that must never appear (the table above it is unparsable).
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Real Section | REQ-1 |
+```
+fence opens here and never closes
+EOF
+cat > "$R/.ai/specs/unclosed-fence-trace-fixture/tasks.md" <<'EOF'
+# Tasks: Unclosed Fence Trace Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" unclosed-fence-trace-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && ! printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section' \
+  && printf '%s' "$OUT" | grep -qi 'MISSING: Requirement Traceability table.*unclosed'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: unclosed fence inside the trace table must fail loud, not silently mis-parse the table :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: a fenced example table before the real Requirement Traceability table is never read as the real header or data (REQ column order swapped, fake REQ-99) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/fenced-example-table-fixture"
+cat > "$R/.ai/specs/fenced-example-table-fixture/requirements.md" <<'EOF'
+# Requirements: Fenced Example Table Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/fenced-example-table-fixture/design.md" <<'EOF'
+# Design: Fenced Example Table Fixture
+> Status: approved 2099-01-01
+## Real Section
+Real content correctly reached via the real table below.
+## Requirement Traceability
+Example (illustrative only, columns in the OTHER order):
+```
+| REQ | Section |
+|---|---|
+| REQ-99 | Nonexistent Example Section |
+```
+| Section | REQ |
+|---|---|
+| Real Section | REQ-1 |
+EOF
+cat > "$R/.ai/specs/fenced-example-table-fixture/tasks.md" <<'EOF'
+# Tasks: Fenced Example Table Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" fenced-example-table-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section' \
+  && printf '%s' "$OUT" | grep -q 'Real content correctly reached via the real table below' \
+  && ! printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: fenced example table before the real table must not poison header/data detection :: rc=$RC :: $OUT"
+fi
+
 echo "=== spec-slice: a heading and Section value byte-identical and containing a literal backslash sequence resolves (awk -v would escape-process one side and not the other) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/backslash-heading-fixture"

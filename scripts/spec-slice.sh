@@ -45,13 +45,19 @@ task_block() { # $1=file $2=task_id
 
 # from a "## REQ-<n>:" heading (inclusive) to the next "## " heading (exclusive) or EOF.
 # Fence-aware (REQ-3.11): a "## "-looking line inside a ``` fenced block is never a
-# boundary — it toggles `fence` and is otherwise treated as inert content.
+# boundary — it toggles `fence` and is otherwise treated as inert content. If the fence
+# never re-closes, the boundary check can never fire again and this would otherwise run
+# to EOF silently absorbing whatever came after — so on top of REQ-3.11's original
+# "ignore a fenced boundary" rule, an unclosed fence still open at EOF prints
+# FENCE_UNCLOSED_MARK instead, so the caller can turn it into a loud MISSING/ERROR rather
+# than a silent over-inclusion (this is a distinct rule from REQ-3.11's; both fixed here).
 req_block() { # $1=file $2=req_number
-  awk -v n="$2" '
+  awk -v n="$2" -v mark="$FENCE_UNCLOSED_MARK" '
     /^```/ { fence = !fence }
     !started && !fence && $0 ~ ("^## REQ-" n ":") { started=1; print; next }
     started && !fence && /^## / { exit }
     started { print }
+    END { if (started && fence) print mark }
   ' "$1"
 }
 
@@ -63,12 +69,17 @@ section_from_heading() { # $1=file $2=exact_heading_line
   # (a literal `\n` becomes a real newline), but heading text read from the file
   # ($0) is never escape-processed; ENVIRON keeps both sides byte-literal so the
   # comparison stays exact (REQ-3.8) for headings containing backslash sequences.
-  SPEC_SLICE_H="$2" awk '
+  # An unclosed fence (never re-closes before EOF) would otherwise let this run past
+  # the section's real end and silently absorb whatever comes after (REQ-3.11's
+  # boundary rule can't fire while `fence` stays truthy) — print FENCE_UNCLOSED_MARK
+  # instead so the caller reports it loudly rather than over-including content.
+  SPEC_SLICE_H="$2" awk -v mark="$FENCE_UNCLOSED_MARK" '
     BEGIN { h = ENVIRON["SPEC_SLICE_H"] }
     /^```/ { fence = !fence }
     !started && !fence && $0 == h { started=1; print; next }
     started && !fence && /^## / { exit }
     started { print }
+    END { if (started && fence) print mark }
   ' "$1"
 }
 
@@ -79,7 +90,12 @@ find_heading_line() { # $1=file $2=heading_text (no "## " prefix, already trimme
   # $2 goes through ENVIRON, not `awk -v` — same byte-literal reasoning as
   # section_from_heading() above (the deleted pre-diff code used `grep -F`, fully
   # literal, for this comparison; ENVIRON restores that guarantee without it).
-  SPEC_SLICE_WANT="$2" awk '
+  # If `fence` is still open at true EOF, some earlier ``` was never closed and every
+  # "## " line downstream of it was invisible to the match check above — we cannot tell
+  # a genuinely-absent heading from one hidden behind that fence, so print
+  # FENCE_UNCLOSED_MARK (never reached on a successful match: `exit` fires immediately
+  # after `print`, while `fence` is still 0 — the match condition required `!fence`).
+  SPEC_SLICE_WANT="$2" awk -v mark="$FENCE_UNCLOSED_MARK" '
     BEGIN { want = ENVIRON["SPEC_SLICE_WANT"] }
     /^```/ { fence = !fence }
     !fence && /^## / {
@@ -88,6 +104,7 @@ find_heading_line() { # $1=file $2=heading_text (no "## " prefix, already trimme
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
       if (text == want) { print; exit }
     }
+    END { if (fence) print mark }
   ' "$1"
 }
 
@@ -141,7 +158,9 @@ for n in $SATISFIES_NUMS; do
   echo "== REQ-$n (requirements.md) =="
   REQ_BLK=""
   [ -f "$REQ_FILE" ] && REQ_BLK=$(req_block "$REQ_FILE" "$n")
-  if [ -z "$REQ_BLK" ]; then
+  if printf '%s\n' "$REQ_BLK" | grep -qxF -- "$FENCE_UNCLOSED_MARK"; then
+    MISSING+=("MISSING: REQ-$n (unclosed \`\`\` fence in requirements.md — cannot safely bound the section)")
+  elif [ -z "$REQ_BLK" ]; then
     MISSING+=("MISSING: REQ-$n (not found in requirements.md)")
   else
     printf '%s\n' "$REQ_BLK"
@@ -161,12 +180,26 @@ done
 # still surfaces its own MISSING rather than collapsing into one. A REQ with zero matching
 # rows at all -> MISSING too (REQ-3.7).
 if [ -f "$DESIGN_FILE" ]; then
-  TRACE_BLOCK=$(awk '
+  # `started && !fence { print }` (not just `started { print }`) also drops any
+  # *nested*, properly-closed fenced span from TRACE_BLOCK entirely — a fenced
+  # illustrative example table inside this section must never reach the header/data
+  # loops below and be misread as the real table. The END block covers the other
+  # failure mode: a fence that never re-closes, which would otherwise let the scan
+  # run past this section's real end and silently absorb whatever design.md content
+  # comes next; FENCE_UNCLOSED_MARK lets the caller turn that into a loud MISSING
+  # instead (same rule as req_block()/section_from_heading()/find_heading_line()).
+  TRACE_BLOCK=$(awk -v mark="$FENCE_UNCLOSED_MARK" '
     /^```/ { fence = !fence }
     !started && !fence && /^## Requirement Traceability/ { started=1; next }
     started && !fence && /^## / { exit }
-    started { print }
+    started && !fence { print }
+    END { if (started && fence) print mark }
   ' "$DESIGN_FILE")
+
+  if printf '%s\n' "$TRACE_BLOCK" | grep -qxF -- "$FENCE_UNCLOSED_MARK"; then
+    MISSING+=("MISSING: Requirement Traceability table (unclosed \`\`\` fence in design.md — cannot safely bound the table)")
+    TRACE_BLOCK=""
+  fi
 
   HEADER_ROW=""
   while IFS= read -r row; do
@@ -211,6 +244,10 @@ if [ -f "$DESIGN_FILE" ]; then
     [ "$already" -eq 1 ] && continue
 
     HEADING_LINE=$(find_heading_line "$DESIGN_FILE" "$SECTION_VAL")
+    if [ "$HEADING_LINE" = "$FENCE_UNCLOSED_MARK" ]; then
+      MISSING+=("MISSING: design section for \"$SECTION_VAL\" (unclosed \`\`\` fence in design.md — cannot safely resolve heading)")
+      continue
+    fi
     if [ -z "$HEADING_LINE" ]; then
       MISSING+=("MISSING: design section for \"$SECTION_VAL\" (no ## heading matches it exactly)")
       continue
@@ -219,8 +256,14 @@ if [ -f "$DESIGN_FILE" ]; then
     # the same *unresolvable* Section value must still get its own MISSING above,
     # not be swallowed by a dedup keyed on a value that never actually resolved).
     SECTION_VALS_SEEN+=("$SECTION_VAL")
+
+    SECTION_BODY=$(section_from_heading "$DESIGN_FILE" "$HEADING_LINE")
+    if printf '%s\n' "$SECTION_BODY" | grep -qxF -- "$FENCE_UNCLOSED_MARK"; then
+      MISSING+=("MISSING: design section \"$HEADING_LINE\" (unclosed \`\`\` fence in design.md — cannot safely bound the section)")
+      continue
+    fi
     echo "== DESIGN $HEADING_LINE (design.md) =="
-    section_from_heading "$DESIGN_FILE" "$HEADING_LINE"
+    printf '%s\n' "$SECTION_BODY"
   done <<< "$TRACE_BLOCK"
 
   for n in $SATISFIES_NUMS; do
