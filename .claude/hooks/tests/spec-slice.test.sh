@@ -297,6 +297,43 @@ else
   fail=$((fail+1)); echo "FAIL: shared Section value should print once, printed $COUNT times :: rc=$RC :: $OUT"
 fi
 
+echo "=== spec-slice: two REQs sharing one UNRESOLVABLE Section value each get their own MISSING, not just the first (dedup cache must key off successful resolution, not the raw Section text) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/bad-shared-section-fixture"
+cat > "$R/.ai/specs/bad-shared-section-fixture/requirements.md" <<'EOF'
+# Requirements: Bad Shared Section Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+## REQ-2: Second requirement
+Text.
+EOF
+cat > "$R/.ai/specs/bad-shared-section-fixture/design.md" <<'EOF'
+# Design: Bad Shared Section Fixture
+> Status: approved 2099-01-01
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Broken Section Name | REQ-1 |
+| Broken Section Name | REQ-2 |
+EOF
+cat > "$R/.ai/specs/bad-shared-section-fixture/tasks.md" <<'EOF'
+# Tasks: Bad Shared Section Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1, REQ-2
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" bad-shared-section-fixture 1 2>&1 ); RC=$?
+COUNT=$(printf '%s' "$OUT" | grep -c 'MISSING: design section for "Broken Section Name" (no ## heading matches it exactly)')
+if [ "$RC" -eq 0 ] && [ "$COUNT" -eq 2 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: two REQs sharing one unresolvable Section value should each print their own MISSING, got $COUNT :: rc=$RC :: $OUT"
+fi
+
 echo "=== spec-slice: table with no Section column at all -> each matched row MISSING distinctly, not collapsed (REQ-3.9) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/no-section-column-fixture"

@@ -23,6 +23,13 @@ TASKS_FILE="$FDIR/tasks.md"
 [ -d "$FDIR" ] || { echo "spec-slice: no such feature dir: $FDIR" >&2; exit 1; }
 [ -f "$TASKS_FILE" ] || { echo "spec-slice: $FEATURE has no tasks.md" >&2; exit 1; }
 
+# Sentinel a fence-aware boundary scan prints (instead of silently running past
+# EOF still "inside" an unclosed ``` fence) so its bash caller can turn an
+# unbalanced fence into a loud MISSING/ERROR instead of swallowing whatever
+# came after it (REQ-3.11's "loud, not silent" contract). Never a real
+# requirements.md/design.md line, so a literal string match is safe.
+FENCE_UNCLOSED_MARK='@@SPEC-SLICE:UNCLOSED-FENCE@@'
+
 status_line() { # $1=file -> first "> Status:" line, or a placeholder
   [ -f "$1" ] && grep -m1 '^> Status:' "$1" 2>/dev/null || echo "(no Status header)"
 }
@@ -118,7 +125,7 @@ echo "== TASK $TASK_ID (tasks.md, verbatim) =="
 printf '%s\n' "$TASK_BLOCK"
 
 MISSING=()
-DESIGN_ELEMENTS_SEEN=()
+SECTION_VALS_SEEN=() # Section-column values already resolved to design content (REQ-3.10 dedup)
 DESIGN_REQS_MATCHED=()
 
 for n in $SATISFIES_NUMS; do
@@ -189,17 +196,20 @@ if [ -f "$DESIGN_FILE" ]; then
     fi
 
     already=0
-    for seen in "${DESIGN_ELEMENTS_SEEN[@]:-}"; do
+    for seen in "${SECTION_VALS_SEEN[@]:-}"; do
       [ "$seen" = "$SECTION_VAL" ] && { already=1; break; }
     done
     [ "$already" -eq 1 ] && continue
-    DESIGN_ELEMENTS_SEEN+=("$SECTION_VAL")
 
     HEADING_LINE=$(find_heading_line "$DESIGN_FILE" "$SECTION_VAL")
     if [ -z "$HEADING_LINE" ]; then
       MISSING+=("MISSING: design section for \"$SECTION_VAL\" (no ## heading matches it exactly)")
       continue
     fi
+    # Cache as seen only now that resolution succeeded (a second REQ row sharing
+    # the same *unresolvable* Section value must still get its own MISSING above,
+    # not be swallowed by a dedup keyed on a value that never actually resolved).
+    SECTION_VALS_SEEN+=("$SECTION_VAL")
     echo "== DESIGN $HEADING_LINE (design.md) =="
     section_from_heading "$DESIGN_FILE" "$HEADING_LINE"
   done <<< "$TRACE_BLOCK"
