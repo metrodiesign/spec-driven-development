@@ -182,20 +182,20 @@ PR description carries the call-site inventory (REQ-4.3):
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| check-evidence.sh single awk core, two modes | REQ-1.1 |
-| gate-task.sh + pre-commit delegation | REQ-1.2 |
-| per-mode parity fixtures (baseline → refactor) | REQ-1.3 |
-| -x guard + exit-code case pattern + empty/missing FILE split | REQ-1.4 |
-| GO in lib-guard.sh consumed by both git guards | REQ-2.1 |
-| Thai "edit both" comments removed (tested by Thai-string grep) | REQ-2.2 |
-| fail-closed sourcing (dirname for siblings; rev-parse only in pre-commit) | REQ-2.3 |
-| GUARD + redirect pattern extension | REQ-2.4 |
-| matcher/CB reuse in gate-task + pre-commit; task-gate pointer comment | REQ-3.1 |
-| python pointer comments (no unification) | REQ-3.2 |
-| existing suites unmodified | REQ-4.1 |
-| additive new cases only | REQ-4.2 |
-| call-site inventory in PR body | REQ-4.3 |
-| engine-data/caller-message split + message-snapshot tests | REQ-4.4 |
-| baseline-first pre-commit fixtures | REQ-4.5 |
+| Design element | REQ | Section |
+|---|---|---|
+| check-evidence.sh single awk core, two modes | REQ-1.1 | Data Models & Interfaces |
+| gate-task.sh + pre-commit delegation | REQ-1.2 | Data Models & Interfaces |
+| per-mode parity fixtures (baseline → refactor) | REQ-1.3 | Data Models & Interfaces |
+| -x guard + exit-code case pattern + empty/missing FILE split | REQ-1.4 | Data Models & Interfaces |
+| GO in lib-guard.sh consumed by both git guards | REQ-2.1 | Data Models & Interfaces |
+| Thai "edit both" comments removed (tested by Thai-string grep) | REQ-2.2 | Data Models & Interfaces |
+| fail-closed sourcing (dirname for siblings; rev-parse only in pre-commit) | REQ-2.3 | Data Models & Interfaces |
+| GUARD + redirect pattern extension | REQ-2.4 | Data Models & Interfaces |
+| matcher/CB reuse in gate-task + pre-commit; task-gate pointer comment | REQ-3.1 | Data Models & Interfaces |
+| python pointer comments (no unification) | REQ-3.2 | Data Models & Interfaces |
+| existing suites unmodified | REQ-4.1 | Testing Strategy |
+| additive new cases only | REQ-4.2 | Testing Strategy |
+| call-site inventory in PR body | REQ-4.3 | Testing Strategy |
+| engine-data/caller-message split + message-snapshot tests | REQ-4.4 | Testing Strategy |
+| baseline-first pre-commit fixtures | REQ-4.5 | Testing Strategy |

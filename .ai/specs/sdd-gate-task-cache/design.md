@@ -191,19 +191,19 @@ destructive strings via files per LESSONS.md:24.
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| temp-index add -A + spec-dir rm --cached + write-tree | REQ-1.1, 1.3 |
-| resolved-command + toolchain salt via hash-object | REQ-1.2, 1.5 |
-| empty-KEY-disables-cache flag flow | REQ-1.4 |
-| `.gitmodules` guard | REQ-1.6 |
-| append-only-on-green; red writes nothing | REQ-2.1, 2.2 |
-| `git rev-parse --git-dir` cache path | REQ-2.3 |
-| validated-line read filter | REQ-2.4 |
-| mktemp+mv atomic append with dedup | REQ-2.5 |
-| exact-match skip + audit log line | REQ-3.1, 3.2, 3.3 |
-| single-exit flow; Evidence unconditional | REQ-3.4 |
-| post-write contract in engine header | REQ-3.5 |
-| SDD_GATE_NO_CACHE guard | REQ-4.1 |
-| dedup + tail-7 cap | REQ-4.2 |
-| isolated-git-fixture test cases | REQ-5.1, 5.2 |
+| Design element | REQ | Section |
+|---|---|---|
+| temp-index add -A + spec-dir rm --cached + write-tree | REQ-1.1, 1.3 | Data Models & Interfaces |
+| resolved-command + toolchain salt via hash-object | REQ-1.2, 1.5 | Data Models & Interfaces |
+| empty-KEY-disables-cache flag flow | REQ-1.4 | Data Models & Interfaces |
+| `.gitmodules` guard | REQ-1.6 | Data Models & Interfaces |
+| append-only-on-green; red writes nothing | REQ-2.1, 2.2 | Data Models & Interfaces |
+| `git rev-parse --git-dir` cache path | REQ-2.3 | Data Models & Interfaces |
+| validated-line read filter | REQ-2.4 | Data Models & Interfaces |
+| mktemp+mv atomic append with dedup | REQ-2.5 | Data Models & Interfaces |
+| exact-match skip + audit log line | REQ-3.1, 3.2, 3.3 | Data Models & Interfaces |
+| single-exit flow; Evidence unconditional | REQ-3.4 | Data Models & Interfaces |
+| post-write contract in engine header | REQ-3.5 | Data Models & Interfaces |
+| SDD_GATE_NO_CACHE guard | REQ-4.1 | Data Models & Interfaces |
+| dedup + tail-7 cap | REQ-4.2 | Data Models & Interfaces |
+| isolated-git-fixture test cases | REQ-5.1, 5.2 | Testing Strategy |

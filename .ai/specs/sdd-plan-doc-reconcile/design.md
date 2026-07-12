@@ -103,13 +103,13 @@ Doc-only feature — verification is the pointer check plus review:
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| status vocabulary + per-item pass | REQ-1.1, 1.2, 1.4 |
-| status-only edits (no deletion/restructure) | REQ-1.3 |
-| `Last reconciled` stamp | REQ-2.1 |
-| Open-items summary | REQ-2.2 |
-| sdd-* spec cross-references | REQ-2.3 |
-| test -e pointer resolution | REQ-3.1 |
-| unproven-stays-open rule | REQ-3.2 |
-| one-shot check recorded in Evidence | REQ-3.3 |
+| Design element | REQ | Section |
+|---|---|---|
+| status vocabulary + per-item pass | REQ-1.1, 1.2, 1.4 | Data Models & Interfaces |
+| status-only edits (no deletion/restructure) | REQ-1.3 | Data Models & Interfaces |
+| `Last reconciled` stamp | REQ-2.1 | Data Models & Interfaces |
+| Open-items summary | REQ-2.2 | Data Models & Interfaces |
+| sdd-* spec cross-references | REQ-2.3 | Data Models & Interfaces |
+| test -e pointer resolution | REQ-3.1 | Data Models & Interfaces |
+| unproven-stays-open rule | REQ-3.2 | Data Models & Interfaces |
+| one-shot check recorded in Evidence | REQ-3.3 | Data Models & Interfaces |

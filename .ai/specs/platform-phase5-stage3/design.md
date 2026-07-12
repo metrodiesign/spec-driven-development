@@ -101,9 +101,7 @@ sequenceDiagram
     W->>W: pkg.provenance ? render read-only : เหมือนเดิม
 ```
 
-## Data Models & Interfaces
-
-### Schema (governance + embedded — byte-identical)
+## Schema (governance + embedded — byte-identical)
 
 ```json
 "provenance": {
@@ -123,7 +121,7 @@ sequenceDiagram
 ไม่มี hex pattern โดยเจตนา (Edge Cases: malformed sha = mismatch = drift warning,
 fail-safe โดยไม่เพิ่มกติกา).
 
-### Generator output (แทน comment header เดิม)
+## Generator output (แทน comment header เดิม)
 
 ```yaml
 # spec-to-goal draft — DO NOT run as-is
@@ -141,7 +139,7 @@ goal: { id: ..., ... }
 - sha คำนวณจาก raw bytes buffer เดิม (ห้าม `read_text().encode()` — comment
   ในโค้ดเดิมคงไว้)
 
-### Core typed field
+## Core typed field
 
 ```ts
 // contract.ts — TaskContract เพิ่ม (วางใต้ deploy?, convention เดียวกัน)
@@ -177,7 +175,7 @@ if (provRaw !== undefined) {
 (เข้มกว่า schema `minLength` เล็กน้อย, ทิศทางเดียวกับ deploy fields เดิม).
 ไม่มี unknown-key check ใน core (A5 — ajv edge จัดการ, raw passthrough คงเดิม).
 
-### Approval package (core + web)
+## Approval package (core + web)
 
 ```ts
 // core/src/human/approval.ts — ทั้ง ApprovalPackage และ ApprovalInput เพิ่ม
@@ -226,7 +224,7 @@ REQ-6 user story; sha อยู่ใน package payload ครบถ้าอ�
 ทั้งคู่ conditional spread (`tsconfig.base.json` เปิด
 `exactOptionalPropertyTypes` — verified).
 
-### Drift checker CLI
+## Drift checker CLI
 
 ```
 usage: spec-goal-drift.sh <feature> [--specs-dir DIR] [--strict]
@@ -248,7 +246,7 @@ usage: spec-goal-drift.sh <feature> [--specs-dir DIR] [--strict]
 ceiling documented: goal.yaml ที่คน reflow บรรทัด provenance จะเข้าโหมด
 no-parseable ซึ่ง fail-safe).
 
-### CI step
+## CI step
 
 ```yaml
 - name: Spec-goal drift (advisory)
@@ -344,32 +342,32 @@ Test คู่กับโค้ดที่มันทดสอบ (co-located
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| D1 schema `requirements_sha256` + `minLength:1` (governance) | 1.1 |
-| D1 embedded `GOAL_SCHEMA` ขยับพร้อมกัน + parity | 1.2 |
-| D1 ajv รับ 4-field / 3-field / reject unknown+empty | 1.3, 1.4, 1.5 |
-| D2 `provenance:` flow line JSON-quoted + spec_path relative | 2.1 |
-| D2 ลบ comment header 4 บรรทัด (banner คง) | 2.2 |
-| D2 HUMAN banner + no-reflow instruction | 2.3 |
-| D2 draft ผ่าน `validateGoalShape` ส่วน provenance | 2.4 |
-| D2 git fallback `"unknown"` + warn | 2.5 |
-| D2 sha จาก raw bytes buffer เดิม | 2.6 |
-| D3 `TaskContract.provenance?` typed | 3.1, 3.2 |
-| D3 absent → พฤติกรรมเดิมเป๊ะ | 3.3 |
-| D3 reject non-object/missing/empty/ผิด type | 3.4 |
-| D3 ไม่มี unknown-key check ที่ freeze (pin ด้วย test) | 3.5 |
-| D4 script + wrapper + CLI contract | 4.1 |
-| D4 `^provenance:` column-0 + json.loads + hash เทียบใน dir เดียวกัน | 4.2 |
-| D4 เงียบเมื่อตรง / warning modes / exit semantics | 4.3, 4.4, 4.5, 4.6, 4.7 |
-| D4 "not applicable" / usage exit 2 | 4.8, 4.9 |
-| D5 CI advisory step + glob ชั้นเดียว + ศูนย์ไฟล์เงียบ + ไม่มี --strict | 5.1, 5.3, 5.4 |
-| D5 draft/archive อยู่นอก loop โดย construction | 5.2 |
-| D6 core ApprovalPackage/Input + explicit copy | 6.1 |
-| D6 loop-run สองจุดส่ง contract.provenance | 6.2 |
-| D6 web render + i18n key เดียว en+th + values verbatim | 6.3 |
-| D6 absent-tolerant / display-only | 6.4, 6.5 |
-| D7 §11.1 example + §14 note + §17 v1.6 + banner fix | 7.1, 7.2, 7.3, 7.4 |
+| Design element | REQ | Section |
+|---|---|---|
+| D1 schema `requirements_sha256` + `minLength:1` (governance) | 1.1 | Schema (governance + embedded — byte-identical) |
+| D1 embedded `GOAL_SCHEMA` ขยับพร้อมกัน + parity | 1.2 | Schema (governance + embedded — byte-identical) |
+| D1 ajv รับ 4-field / 3-field / reject unknown+empty | 1.3, 1.4, 1.5 | Schema (governance + embedded — byte-identical) |
+| D2 `provenance:` flow line JSON-quoted + spec_path relative | 2.1 | Generator output (แทน comment header เดิม) |
+| D2 ลบ comment header 4 บรรทัด (banner คง) | 2.2 | Generator output (แทน comment header เดิม) |
+| D2 HUMAN banner + no-reflow instruction | 2.3 | Generator output (แทน comment header เดิม) |
+| D2 draft ผ่าน `validateGoalShape` ส่วน provenance | 2.4 | Generator output (แทน comment header เดิม) |
+| D2 git fallback `"unknown"` + warn | 2.5 | Generator output (แทน comment header เดิม) |
+| D2 sha จาก raw bytes buffer เดิม | 2.6 | Generator output (แทน comment header เดิม) |
+| D3 `TaskContract.provenance?` typed | 3.1, 3.2 | Core typed field |
+| D3 absent → พฤติกรรมเดิมเป๊ะ | 3.3 | Core typed field |
+| D3 reject non-object/missing/empty/ผิด type | 3.4 | Core typed field |
+| D3 ไม่มี unknown-key check ที่ freeze (pin ด้วย test) | 3.5 | Core typed field |
+| D4 script + wrapper + CLI contract | 4.1 | Drift checker CLI |
+| D4 `^provenance:` column-0 + json.loads + hash เทียบใน dir เดียวกัน | 4.2 | Drift checker CLI |
+| D4 เงียบเมื่อตรง / warning modes / exit semantics | 4.3, 4.4, 4.5, 4.6, 4.7 | Drift checker CLI |
+| D4 "not applicable" / usage exit 2 | 4.8, 4.9 | Drift checker CLI |
+| D5 CI advisory step + glob ชั้นเดียว + ศูนย์ไฟล์เงียบ + ไม่มี --strict | 5.1, 5.3, 5.4 | CI step |
+| D5 draft/archive อยู่นอก loop โดย construction | 5.2 | CI step |
+| D6 core ApprovalPackage/Input + explicit copy | 6.1 | Approval package (core + web) |
+| D6 loop-run สองจุดส่ง contract.provenance | 6.2 | Approval package (core + web) |
+| D6 web render + i18n key เดียว en+th + values verbatim | 6.3 | Approval package (core + web) |
+| D6 absent-tolerant / display-only | 6.4, 6.5 | Approval package (core + web) |
+| D7 §11.1 example + §14 note + §17 v1.6 + banner fix | 7.1, 7.2, 7.3, 7.4 | Architecture Overview |
 
 ## Critique log — spec-architect round 1 (2026-07-12, applied ทั้งหมด)
 

@@ -184,23 +184,23 @@ part of this task's closing Evidence (ARC-F12 resolved).
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| `--range` gather with both-end verify + error-vs-empty split | REQ-1.1 |
-| single rule path across modes | REQ-1.2 |
-| logged `exec $0 --all` fallbacks | REQ-1.3 |
-| skip honored only in staged mode + CI env clear | REQ-1.4 |
-| ci-secret-scope PR branch → `--range` | REQ-2.1 |
-| push branch → `--all` unchanged | REQ-2.2 |
-| exit-2 contract preserved | REQ-2.3 |
-| fetch-depth 0 both jobs + fallback cause log | REQ-2.4 |
-| merge-ref merge-base filter (PR-as-merged) | REQ-3.1 |
-| push branch full `pnpm test` | REQ-3.2 |
-| zero-affected logged skip with counts | REQ-3.3 |
-| unconditional typecheck/lint/vendor/guards/trace | REQ-3.4 |
-| root-file guard from pnpm-workspace.yaml | REQ-3.5 |
-| captured-exit probe + full-on-failure | REQ-3.6 |
-| scope log lines from the scanned/tested sets | REQ-4.1 |
-| workflow comments (scoped PR vs floor; merge-ref rationale) | REQ-4.2 |
-| secrets-guard + ci-scope test cases | REQ-5.1, 5.2 |
-| orchestration in scripts/ + dry-run seam | REQ-5.3 |
+| Design element | REQ | Section |
+|---|---|---|
+| `--range` gather with both-end verify + error-vs-empty split | REQ-1.1 | Data Models & Interfaces |
+| single rule path across modes | REQ-1.2 | Data Models & Interfaces |
+| logged `exec $0 --all` fallbacks | REQ-1.3 | Data Models & Interfaces |
+| skip honored only in staged mode + CI env clear | REQ-1.4 | Data Models & Interfaces |
+| ci-secret-scope PR branch → `--range` | REQ-2.1 | Data Models & Interfaces |
+| push branch → `--all` unchanged | REQ-2.2 | Data Models & Interfaces |
+| exit-2 contract preserved | REQ-2.3 | Data Models & Interfaces |
+| fetch-depth 0 both jobs + fallback cause log | REQ-2.4 | Data Models & Interfaces |
+| merge-ref merge-base filter (PR-as-merged) | REQ-3.1 | Data Models & Interfaces |
+| push branch full `pnpm test` | REQ-3.2 | Data Models & Interfaces |
+| zero-affected logged skip with counts | REQ-3.3 | Data Models & Interfaces |
+| unconditional typecheck/lint/vendor/guards/trace | REQ-3.4 | Data Models & Interfaces |
+| root-file guard from pnpm-workspace.yaml | REQ-3.5 | Data Models & Interfaces |
+| captured-exit probe + full-on-failure | REQ-3.6 | Data Models & Interfaces |
+| scope log lines from the scanned/tested sets | REQ-4.1 | Data Models & Interfaces |
+| workflow comments (scoped PR vs floor; merge-ref rationale) | REQ-4.2 | Data Models & Interfaces |
+| secrets-guard + ci-scope test cases | REQ-5.1, 5.2 | Testing Strategy |
+| orchestration in scripts/ + dry-run seam | REQ-5.3 | Data Models & Interfaces |

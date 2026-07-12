@@ -143,15 +143,15 @@ The feature's own tests (REQ-2.1/4) ARE the deliverable; meta-coverage:
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| LESSONS-COVERAGE.md table + slug key | REQ-1.1, 1.2 |
-| advisory reason column | REQ-1.3 |
-| per-lesson guard/tripwire cases | REQ-2.1 |
-| file::case convention + slug comments | REQ-2.2 |
-| tripwire placement rule for non-bash surfaces | REQ-2.3 |
-| annotation-only LESSONS.md change | REQ-2.4 |
-| retro skill classification step | REQ-3.1, 3.3 |
-| follow-up work item requirement | REQ-3.2 |
-| verdict-null case | REQ-4.1 |
-| read-vs-write case | REQ-4.2 |
+| Design element | REQ | Section |
+|---|---|---|
+| LESSONS-COVERAGE.md table + slug key | REQ-1.1, 1.2 | Data Models & Interfaces |
+| advisory reason column | REQ-1.3 | Data Models & Interfaces |
+| per-lesson guard/tripwire cases | REQ-2.1 | Data Models & Interfaces |
+| file::case convention + slug comments | REQ-2.2 | Data Models & Interfaces |
+| tripwire placement rule for non-bash surfaces | REQ-2.3 | Data Models & Interfaces |
+| annotation-only LESSONS.md change | REQ-2.4 | Data Models & Interfaces |
+| retro skill classification step | REQ-3.1, 3.3 | Data Models & Interfaces |
+| follow-up work item requirement | REQ-3.2 | Data Models & Interfaces |
+| verdict-null case | REQ-4.1 | Testing Strategy |
+| read-vs-write case | REQ-4.2 | Testing Strategy |

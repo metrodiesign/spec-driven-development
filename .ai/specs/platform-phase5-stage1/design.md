@@ -57,9 +57,7 @@ sequenceDiagram
     Note over Op,FS: แล้วค่อย platform loop run --goal ... (นอก scope generator)
 ```
 
-## Data Models & Interfaces
-
-### CLI (REQ-5.1)
+## CLI (REQ-5.1)
 
 ```
 scripts/spec-to-goal.sh <feature> [--force] [--specs-dir <path>]
@@ -71,7 +69,7 @@ scripts/spec-to-goal.sh <feature> [--force] [--specs-dir <path>]
 
 parse ด้วย `argparse` (stdlib) — positional `feature`, flag `--force`, option `--specs-dir`.
 
-### Internal model
+## Internal model
 
 ```python
 # หลัง parse + map
@@ -104,7 +102,7 @@ Architecture Overview):
 - criterion `(a,b)` resolved เมื่อ: จำนวน block ที่ cover == 1 AND block นั้นมี
   verify_cmd ไม่ว่าง (REQ-2.4/2.5)
 
-### Output: `goal.draft.yaml`
+## Output: `goal.draft.yaml`
 
 String ทุกตัว emit ผ่าน `json.dumps()` — JSON string = valid YAML double-quoted flow
 scalar (precedent: `goalDraftYaml` ใน `issues.ts` ใช้ `JSON.stringify` ด้วยเหตุผลเดียวกัน)
@@ -254,19 +252,19 @@ Property-style เสริมใน case แรก: ทุก criterion จา�
 
 ## Requirement Traceability
 
-| Design element | Satisfies |
-|---|---|
-| CLI (`argparse`: positional feature, `--force`, `--specs-dir`) + wrapper `spec-to-goal.sh` | REQ-1.1, REQ-1.2, REQ-5.1 |
-| Gate chain ใน `main()`: missing-file, header-prefix check, no-REQ-heading, dup-ID, empty-REQ | REQ-1.3, REQ-1.4, REQ-1.5, REQ-1.7, REQ-1.8 |
-| tasks.md-absent path (warn + all-unresolved) | REQ-1.6 |
-| Mapper: `import spec_trace` (`parse_requirements`/`expand_refs`/`iter_task_blocks` helper ใหม่ที่ `satisfies_text` refactor ไปใช้ร่วม) + Verify-extraction + unique-cover rule | REQ-2.1, REQ-2.2, REQ-2.3, REQ-2.4, REQ-2.5 |
-| Emitter: AC dict ไม่มี `golden` key | REQ-2.6 |
-| Emitter: goal block (`id` slug-upper-001, `title` จาก H1), scope/forbidden TODO, budget literal, provenance header (path+HEAD+sha256+timestamp), HUMAN banner, `json.dumps` ทุก scalar | REQ-3.1, REQ-3.2, REQ-3.3, REQ-3.4, REQ-3.5, REQ-3.6, REQ-3.7 |
-| Output path คงที่ `<feature>/goal.draft.yaml` ใต้ specs dir | REQ-4.1 |
-| Exists-check ก่อนเขียน + `--force` branch + atomic temp/replace | REQ-4.2, REQ-4.3 |
-| Empty-active + `pending_acceptance_criteria` shape / all-resolved active shape | REQ-4.4, REQ-4.5 |
-| `main()` เขียนไฟล์เดียว + stdout/stderr เท่านั้น — ไม่ import/เรียก runtime ใด; ข้อยกเว้นเดียว: `git rev-parse HEAD` (read-only subprocess เพื่อ provenance ตาม REQ-3.5, analyze log) | REQ-4.6 |
-| Summary line + exit-code discipline | REQ-5.2, REQ-5.3 |
+| Design element | Satisfies | Section |
+|---|---|---|
+| CLI (`argparse`: positional feature, `--force`, `--specs-dir`) + wrapper `spec-to-goal.sh` | REQ-1.1, REQ-1.2, REQ-5.1 | CLI (REQ-5.1) |
+| Gate chain ใน `main()`: missing-file, header-prefix check, no-REQ-heading, dup-ID, empty-REQ | REQ-1.3, REQ-1.4, REQ-1.5, REQ-1.7, REQ-1.8 | Error Handling Strategy |
+| tasks.md-absent path (warn + all-unresolved) | REQ-1.6 | Error Handling Strategy |
+| Mapper: `import spec_trace` (`parse_requirements`/`expand_refs`/`iter_task_blocks` helper ใหม่ที่ `satisfies_text` refactor ไปใช้ร่วม) + Verify-extraction + unique-cover rule | REQ-2.1, REQ-2.2, REQ-2.3, REQ-2.4, REQ-2.5 | Internal model |
+| Emitter: AC dict ไม่มี `golden` key | REQ-2.6 | Output: `goal.draft.yaml` |
+| Emitter: goal block (`id` slug-upper-001, `title` จาก H1), scope/forbidden TODO, budget literal, provenance header (path+HEAD+sha256+timestamp), HUMAN banner, `json.dumps` ทุก scalar | REQ-3.1, REQ-3.2, REQ-3.3, REQ-3.4, REQ-3.5, REQ-3.6, REQ-3.7 | Output: `goal.draft.yaml` |
+| Output path คงที่ `<feature>/goal.draft.yaml` ใต้ specs dir | REQ-4.1 | Output: `goal.draft.yaml` |
+| Exists-check ก่อนเขียน + `--force` branch + atomic temp/replace | REQ-4.2, REQ-4.3 | Error Handling Strategy |
+| Empty-active + `pending_acceptance_criteria` shape / all-resolved active shape | REQ-4.4, REQ-4.5 | Output: `goal.draft.yaml` |
+| `main()` เขียนไฟล์เดียว + stdout/stderr เท่านั้น — ไม่ import/เรียก runtime ใด; ข้อยกเว้นเดียว: `git rev-parse HEAD` (read-only subprocess เพื่อ provenance ตาม REQ-3.5, analyze log) | REQ-4.6 | Architecture Overview |
+| Summary line + exit-code discipline | REQ-5.2, REQ-5.3 | Error Handling Strategy |
 
 ## Deviations / Notes
 

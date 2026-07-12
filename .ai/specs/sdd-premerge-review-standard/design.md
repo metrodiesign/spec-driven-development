@@ -129,17 +129,17 @@ Process feature → verification is procedural + one fixture check:
 
 ## Requirement Traceability
 
-| Design element | REQ |
-|---|---|
-| phase-close label + all-[x] heuristic | REQ-1.1 |
-| diffThreshold from review-standard.json | REQ-1.2 |
-| no-trigger fast path | REQ-1.3 |
-| merge-pr step 1.5 record check | REQ-2.1 |
-| STOP + run-or-override prompt | REQ-2.2 |
-| override record written before merge | REQ-2.3 |
-| gate never auto-runs the review | REQ-2.4 |
-| record file format + location | REQ-3.1 |
-| review-fanout output contract addition | REQ-3.2 |
-| head-sha staleness rule | REQ-3.3 |
-| REVIEW_PROTOCOL canonical section | REQ-4.1 |
-| skill references protocol | REQ-4.2 |
+| Design element | REQ | Section |
+|---|---|---|
+| phase-close label + all-[x] heuristic | REQ-1.1 | Data Models & Interfaces |
+| diffThreshold from review-standard.json | REQ-1.2 | Data Models & Interfaces |
+| no-trigger fast path | REQ-1.3 | Data Models & Interfaces |
+| merge-pr step 1.5 record check | REQ-2.1 | Data Models & Interfaces |
+| STOP + run-or-override prompt | REQ-2.2 | Data Models & Interfaces |
+| override record written before merge | REQ-2.3 | Data Models & Interfaces |
+| gate never auto-runs the review | REQ-2.4 | Data Models & Interfaces |
+| record file format + location | REQ-3.1 | Data Models & Interfaces |
+| review-fanout output contract addition | REQ-3.2 | Data Models & Interfaces |
+| head-sha staleness rule | REQ-3.3 | Data Models & Interfaces |
+| REVIEW_PROTOCOL canonical section | REQ-4.1 | Data Models & Interfaces |
+| skill references protocol | REQ-4.2 | Data Models & Interfaces |
