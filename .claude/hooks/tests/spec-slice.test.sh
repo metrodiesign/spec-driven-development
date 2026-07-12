@@ -671,6 +671,84 @@ else
   fail=$((fail+1)); echo "FAIL: 'Satisfies'-headed traceability table should still match REQ column :: rc=$RC :: $OUT"
 fi
 
+echo "=== spec-slice: header row without a trailing pipe still resolves its last column (header_col() off-by-one) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/no-trailing-pipe-fixture"
+cat > "$R/.ai/specs/no-trailing-pipe-fixture/requirements.md" <<'EOF'
+# Requirements: No Trailing Pipe Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/no-trailing-pipe-fixture/design.md" <<'EOF'
+# Design: No Trailing Pipe Fixture
+> Status: approved 2099-01-01
+## Real Section
+Content reached via a header row with no trailing pipe.
+## Requirement Traceability
+| Design element | REQ | Section
+|---|---|---
+| Real Section design | REQ-1 | Real Section
+EOF
+cat > "$R/.ai/specs/no-trailing-pipe-fixture/tasks.md" <<'EOF'
+# Tasks: No Trailing Pipe Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" no-trailing-pipe-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section' \
+  && ! printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: header row without a trailing pipe should still resolve its last (Section) column :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-slice: a second header/separator-shaped row in the traceability table still resolves correctly or fails loud, never silently wrong (regression coverage for the header-detection rewrite) ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/duplicate-header-row-fixture"
+cat > "$R/.ai/specs/duplicate-header-row-fixture/requirements.md" <<'EOF'
+# Requirements: Duplicate Header Row Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+Text.
+EOF
+cat > "$R/.ai/specs/duplicate-header-row-fixture/design.md" <<'EOF'
+# Design: Duplicate Header Row Fixture
+> Status: approved 2099-01-01
+## Real Section
+Content reached despite a duplicate header/separator pair earlier in the table.
+## Requirement Traceability
+| Section | REQ |
+|---|---|
+| Section | REQ |
+|---|---|
+| Real Section | REQ-1 |
+EOF
+cat > "$R/.ai/specs/duplicate-header-row-fixture/tasks.md" <<'EOF'
+# Tasks: Duplicate Header Row Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+( cd "$R" && git add -A && git commit -q -m base )
+
+OUT=$( cd "$R" && "$SLICE" duplicate-header-row-fixture 1 2>&1 ); RC=$?
+# Safe outcomes only: either REQ-1 correctly resolves to Real Section, or it MISSINGs
+# loudly — never silently wrong content (e.g. never resolving to some other heading).
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '== DESIGN ## Real Section'; then
+  pass=$((pass+1))
+elif [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '== MISSING =='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: duplicate header/separator row should degrade safely (correct DESIGN or loud MISSING), got neither :: rc=$RC :: $OUT"
+fi
+
 echo "---"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

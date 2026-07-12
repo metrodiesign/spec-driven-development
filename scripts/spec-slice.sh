@@ -112,9 +112,12 @@ find_heading_line() { # $1=file $2=heading_text (no "## " prefix, already trimme
 # equals $2; 0 if absent. REQ-3.12: locate a column by its header name, never a fixed
 # position, so Section/REQ/Design-element may sit in any order.
 header_col() { # $1=header_row $2=column_name
+  # i <= NF, not i < NF: a header row with a trailing "|" splits into one extra
+  # (empty) trailing field, but valid GFM allows omitting it — without the
+  # trailing pipe the last real column sits at $NF, and `i < NF` skipped it.
   awk -F'|' -v want="$2" '
     {
-      for (i = 2; i < NF; i++) {
+      for (i = 2; i <= NF; i++) {
         v = $i
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
         if (v == want) { print i - 1; found = 1; exit }
