@@ -3,7 +3,7 @@
 
 ## Scope
 
-แก้เฉพาะ defect 8 กลุ่มที่ยืนยันใน Phase 1:
+แก้ defect 8 กลุ่มที่ยืนยันใน Phase 1 และ production advisory ที่ blocking CI เปิดเผย:
 
 1. bypass guard ไม่ normalize รูปแบบ executable ของ `git`
 2. destructive guard ตรวจ `WHERE` รวมหลาย `DELETE` span
@@ -13,13 +13,19 @@
 6. ESLint สแกน local harness worktree ที่ Git ignore
 7. CI ไม่มี production dependency audit และ security documentation ไม่ตรง repo
 8. tracked source มี literal NUL ทำให้ secret scan เตือน
+9. production dependency graph resolve `fast-uri@3.1.3` ซึ่งอยู่ใน vulnerable range ของ
+   `GHSA-v2hh-gcrm-f6hx`
 
-ห้ามเพิ่ม dependency ใหม่ ห้ามแก้ `pnpm-lock.yaml` และห้ามแก้ reported-only candidates:
+ห้ามเพิ่ม direct dependency ใหม่ และห้ามแก้ reported-only candidates:
 
 - `scripts/spec-slice.sh`
 - `adapters/src/codex-live.ts`
 - `scripts/spec-archive.sh`
 - retention behavior ใน `console/backend/src/app.ts`
+
+> Amendment approved 2026-07-23: operator อนุมัติ exception ต่อ B17 หลัง PR CI พิสูจน์
+> production high-severity advisory จริง ให้เพิ่ม exact pnpm override `fast-uri@3.1.4` และ update
+> `pnpm-lock.yaml` เฉพาะ resolution นี้ได้
 
 ## Current Behavior (Defect)
 
@@ -121,6 +127,15 @@ WHEN รัน `scripts/ci-secret-scope.sh push develop` THEN scan ผ่าน�
 
 tracked literal NUL อยู่ใน `console/backend/src/govern.ts` ภายใน glob sentinel
 
+### D9 — production dependency audit พบ high-severity advisory
+
+WHEN PR CI รัน `pnpm audit --prod --audit-level high` THEN platform job fail เพราะ
+`fast-uri@3.1.3` อยู่ใน vulnerable range `>=3.0.0 <=3.1.3` ของ
+`GHSA-v2hh-gcrm-f6hx`
+
+dependency path ผ่าน `@anthropic-ai/claude-agent-sdk` ไป
+`@modelcontextprotocol/sdk`, `ajv` และ `fast-uri`; patched version คือ `>=3.1.4`
+
 ## Expected Behavior
 
 - F1 WHEN bypass guard รับ command ที่ executable token resolve เป็น `git` ไม่ว่ามี shell quoting,
@@ -146,6 +161,8 @@ tracked literal NUL อยู่ใน `console/backend/src/govern.ts` ภาย
 - F13 THE SYSTEM SHALL document CI, package manifests, lint และ runtime dependency state ให้ตรง
   repository ปัจจุบัน
 - F14 WHEN full-tree secret scan อ่าน tracked source THE SYSTEM SHALL จบโดยไม่มี null-byte warning
+- F15 WHEN production dependency graph resolve `fast-uri` THE SYSTEM SHALL resolve exact patched
+  version `3.1.4` และ production audit threshold `high` SHALL pass
 
 ## Unchanged Behavior
 
@@ -178,5 +195,7 @@ tracked literal NUL อยู่ใน `console/backend/src/govern.ts` ภาย
 - B16 WHEN reported-only candidate อยู่ใน scope scan THE SYSTEM SHALL CONTINUE TO leave
   `scripts/spec-slice.sh`, `adapters/src/codex-live.ts`, `scripts/spec-archive.sh` และ retention
   behavior unchanged
-- B17 WHEN implementation เสร็จ THE SYSTEM SHALL CONTINUE TO ใช้ dependency graph และ lockfile เดิม
-  โดยไม่เพิ่ม dependency หรือแก้ `pnpm-lock.yaml`
+- B17 Superseded by amendment approved 2026-07-23: guarantee ว่า `pnpm-lock.yaml` ไม่เปลี่ยน
+  ไม่ใช้กับ exact `fast-uri@3.1.4` security override ที่ CI proof บังคับ
+- B18 WHEN security override ถูก apply THE SYSTEM SHALL CONTINUE TO ไม่เพิ่ม direct dependency และ
+  ไม่เปลี่ยน package resolution อื่นนอกจาก `fast-uri`

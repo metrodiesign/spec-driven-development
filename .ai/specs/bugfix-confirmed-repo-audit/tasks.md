@@ -5,6 +5,9 @@
 > ทุก task เป็น cohesive behavior slice ใช้ regression test ที่ RED ก่อน fix และ GREEN หลัง fix
 > โดยไม่เพิ่ม dependency หรือแก้ reported-only candidates
 
+> Amendment approved 2026-07-23: เพิ่ม Task 6 สำหรับ exact `fast-uri@3.1.4` security override และ
+> lockfile update หลัง PR CI พิสูจน์ `GHSA-v2hh-gcrm-f6hx`
+
 - [x] 1. Guard normalization — เพิ่ม adversarial regression cases สำหรับ quoted, escaped และ
      absolute-path `git` executable; ตรวจทุก `DELETE FROM` span แยกกัน; แก้ root cause ใน
      `check-bypass.sh` และ `check-destructive.sh` โดยคง allow/block behavior เดิม
@@ -47,7 +50,7 @@
      Evidence:
        - test: tests-only RED — policy test -> 10 passed / 5 failed; full ESLint -> 1 parsing error จาก ignored worktree; หลังแก้ GREEN — policy test -> 17 passed / 0 failed รวม clean-verify-job-safe check ที่ไม่ import dependencies; `CI=true rtk proxy pnpm lint` -> exit 0
        - viewports: n/a — repository config/CI policy/docs
-       - deviations: local `pnpm audit --prod --audit-level high` ยืนยันผล advisory ไม่ได้ เพราะ sandbox DNS `ENOTFOUND` และ network escalation ถูกปฏิเสธ; command ถูก wire เป็น blocking CI step และต้องพิสูจน์จาก PR check
+       - deviations: ณ task boundary เดิม local advisory egress ใช้ไม่ได้; PR #121 พิสูจน์ว่า blocking step ทำงานและพบ `GHSA-v2hh-gcrm-f6hx`; remediation บันทึกใน Task 6
 
 - [x] 5. Null-byte cleanup + full assembly — เปลี่ยน source sentinel ให้ไม่มี literal NUL โดยคง
      permission glob semantics; เพิ่ม no-warning regression; รัน spec trace, full shell suite,
@@ -61,9 +64,22 @@
        - test: full gates หลัง review fixes — `scripts/check-core-vendor-free.sh` -> OK; `CI=true rtk proxy pnpm install --frozen-lockfile` -> 311 packages reused, lockfile current; `CI=true rtk proxy pnpm typecheck` -> 6 workspace projects passed; `CI=true rtk proxy pnpm lint` -> exit 0; `CI=true rtk proxy pnpm -r test` -> 6 workspace projects passed, 0 failed รวม console/backend 344/0 และ console/web 74/0; full `.claude/hooks/tests/*.test.sh` sweep -> 14 files passed; `scripts/lessons-coverage-check.sh` -> OK; `scripts/ci-secret-scope.sh push develop` -> exit 0 without warning; tracked shell `bash -n` sweep -> exit 0
        - review: code/security review รอบแรกพบ 3 blockers — clean verify job dependency, unbounded LCS allocation และ split-quoted short-flag bypass; แก้พร้อม regression tests แล้ว review รอบสองไม่พบ actionable finding
        - viewports: n/a — logic/config/CI changes only
-       - deviations: `scripts/spec-trace.sh` exits 0 แต่ประกาศ skip bugfix specs; supplemental stable-ID audit พบ F/B IDs 31/31 อยู่ใน `Satisfies:` ครบ ไม่มี missing; local dependency audit result ยังรอ PR CI ตาม Task 4
+       - deviations: `scripts/spec-trace.sh` exits 0 แต่ประกาศ skip bugfix specs; supplemental stable-ID audit พบ F/B IDs 31/31 อยู่ใน `Satisfies:` ครบ ไม่มี missing; dependency audit follow-up ปิดใน Task 6
+
+- [x] 6. Remediate CI-proven production advisory — เพิ่ม exact pnpm override
+     `fast-uri@3.1.4`; refresh lockfile เฉพาะ resolution นี้; ยืนยัน production audit, frozen
+     install และ enforcement floor โดยไม่เพิ่ม direct dependency หรือแตะ reported-only behavior
+     Satisfies: F12, F15, B13, B17, B18.
+     Depends on: 5.
+     Verify: `pnpm audit --prod --audit-level high`, `pnpm install --frozen-lockfile`,
+     `pnpm -r typecheck`, `pnpm lint` และ `pnpm -r test`
+     Evidence:
+       - test: `pnpm audit --prod --audit-level high` -> exit 0, 0 high/critical, 1 moderate; `pnpm install --frozen-lockfile` -> exit 0; `pnpm -r typecheck` -> 6 workspace projects passed; `pnpm lint` -> no issues; `pnpm -r test` นอก sandbox -> 6 workspace projects passed, 0 failed; full `.claude/hooks/tests/*.test.sh` sweep -> 14 files passed; policy/vendor/spec/lessons/secret checks -> passed
+       - review: code review -> no findings; security review -> approve, exact registry integrity ตรง lockfileและ dependency graph resolve `fast-uri@3.1.4` version เดียว
+       - viewports: n/a — dependency/config-only
+       - deviations: pnpm 11 อ่าน workspace override จาก `pnpm-workspace.yaml` ไม่อ่าน `package.json#pnpm`; production graph ยังมี moderate `GHSA-frvp-7c67-39w9` ใน `@hono/node-server@1.19.14` ซึ่งต่ำกว่า approved high threshold ตาม B13
 
 ## Suggested execution batch
 
-Tasks 1-5 เป็น audit bugfix batch เดียว ใช้ shared regression corpus และ full verification:
+Tasks 1-6 เป็น audit bugfix batch เดียว ใช้ shared regression corpus และ full verification:
 `/spec-implement all`
