@@ -63,6 +63,17 @@ check block "global -C dir + -n"           'git -C . commit -n -m x'
 # attached form (no space after -c/-C) is equally valid git syntax — must block too
 check block "attached -cKEY=VAL + -nm"     'git -cuser.x=y commit -nm x'
 check block "attached -C. + -n"            'git -C. commit -n -m x'
+# bugfix-confirmed-repo-audit F1: executable spelling must not bypass either
+# long or short skip-verification flags. Strings are guard input only; nothing executes.
+GIT_WORD="g""it"
+check block "backslash git + --no-verify"  "\\${GIT_WORD} commit --no-verify -m x"
+check block "quoted git + --no-verify"     "\"${GIT_WORD}\" commit --no-verify -m x"
+check block "absolute git + --no-verify"   "/usr/bin/${GIT_WORD} commit --no-verify -m x"
+check block "backslash git + short -n"     "\\${GIT_WORD} commit -n -m x"
+check block "quoted git + short -n"        "\"${GIT_WORD}\" commit -n -m x"
+check block "absolute git + short -n"      "/usr/bin/${GIT_WORD} commit -n -m x"
+check block "split-quoted git + short -n"  "g\"\"it commit -n -m x"
+check block "quoted absolute git + short -n" "\"/usr/bin/${GIT_WORD}\" commit -n -m x"
 # finding #13+#9: guard/floor tamper must block independently of the git token —
 # the line-7 short-circuit previously ALLOWed any command lacking a `git` token
 check block "chmod -x pre-commit hook"  'chmod -x .githooks/pre-commit'
@@ -95,6 +106,8 @@ check allow "-n word mid-message"       'git commit -m "document the -n behavior
 # finding #2 baseline: a message that merely talks about -n, with NO real
 # trailing skip-verify flag, must still pass (no false positive)
 check allow "note about -n flag"        "git commit -m 'note about -n flag'"
+# B1: prose that names the flag but contains no executable git token remains harmless.
+check allow "prose about --no-verify"    'echo "--no-verify must stay blocked"'
 # global-option baseline: a global opt WITHOUT any skip-verify flag must pass
 check allow "global -c opt, clean commit" 'git -c user.x=y commit -m "normal"'
 check allow "git status"                'git status'

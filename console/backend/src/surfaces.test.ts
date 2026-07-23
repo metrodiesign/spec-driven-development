@@ -26,6 +26,33 @@ test('jsonDiffPreview reports exactly the lines that leave and arrive (REQ-13.2)
   assert.deepEqual(d.added, ['d']);
 });
 
+test('jsonDiffPreview exposes line reordering instead of a false no-op (F3)', () => {
+  assert.deepEqual(jsonDiffPreview('a\nb', 'b\na'), {
+    removed: ['a'],
+    added: ['a'],
+  });
+});
+
+test('jsonDiffPreview preserves duplicate-line multiplicity (F4)', () => {
+  assert.deepEqual(jsonDiffPreview('a\na', 'a'), {
+    removed: ['a'],
+    added: [],
+  });
+  assert.deepEqual(jsonDiffPreview('a', 'a\na'), {
+    removed: [],
+    added: ['a'],
+  });
+});
+
+test('jsonDiffPreview bounds large sequence work with a conservative full replacement', () => {
+  const before = Array.from({ length: 1_001 }, (_, i) => `line-${i}`);
+  const after = [...before].reverse();
+  assert.deepEqual(jsonDiffPreview(before.join('\n'), after.join('\n')), {
+    removed: before,
+    added: after,
+  });
+});
+
 test('validateHookConfig: a well-formed hooks block passes (REQ-13.1)', () => {
   const ok = JSON.stringify({
     hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './g.sh' }] }] },

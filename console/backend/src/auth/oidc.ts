@@ -83,7 +83,7 @@ export function verifyIdToken(idToken: string, jwks: Jwks, opts: IdTokenVerifyOp
   if (payload['iss'] !== opts.issuer) return null;
   if (payload['aud'] !== opts.audience) return null;
   if (payload['nonce'] !== opts.nonce) return null;
-  if (typeof payload['exp'] !== 'number' || payload['exp'] < opts.now / 1000) return null;
+  if (typeof payload['exp'] !== 'number' || payload['exp'] <= opts.now / 1000) return null;
   if (payload['sub'] !== opts.allowedSub) return null;
   return { sub: opts.allowedSub, method: 'oidc' };
 }
@@ -130,7 +130,7 @@ function verifyPending(token: string, secret: string, now: number): PendingOidc 
       typeof parsed.nonce !== 'string' ||
       typeof parsed.codeVerifier !== 'string' ||
       typeof parsed.exp !== 'number' ||
-      parsed.exp < now
+      parsed.exp <= now
     ) {
       return null;
     }

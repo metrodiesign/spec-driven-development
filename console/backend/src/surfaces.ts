@@ -7,6 +7,8 @@
 
 import { sha256 } from './govern.ts';
 
+const MAX_LCS_CELLS = 1_000_000;
+
 /**
  * Two-step consent token (REQ-13.1, AZ-12): sha256 of the target file's baseHash
  * concatenated with the proposed content, so a MOVED base OR changed content
@@ -23,9 +25,41 @@ export function confirmToken(baseHash: string | null, content: string): string {
 export function jsonDiffPreview(before: string, after: string): { removed: string[]; added: string[] } {
   const b = before.split('\n');
   const a = after.split('\n');
-  const bSet = new Set(b);
-  const aSet = new Set(a);
-  return { removed: b.filter((l) => !aSet.has(l)), added: a.filter((l) => !bSet.has(l)) };
+  if (before === after) return { removed: [], added: [] };
+  // Hook content is request-controlled. Bound the quadratic LCS matrix; a full
+  // replacement remains exact and conservative when a minimal diff is too costly.
+  const columns = a.length + 1;
+  const cells = (b.length + 1) * columns;
+  if (cells > MAX_LCS_CELLS) return { removed: b, added: a };
+  const lcs = new Uint32Array(cells);
+
+  for (let i = b.length - 1; i >= 0; i -= 1) {
+    for (let j = a.length - 1; j >= 0; j -= 1) {
+      const cell = i * columns + j;
+      const below = cell + columns;
+      lcs[cell] = b[i] === a[j] ? lcs[below + 1]! + 1 : Math.max(lcs[below]!, lcs[cell + 1]!);
+    }
+  }
+
+  const removed: string[] = [];
+  const added: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < b.length && j < a.length) {
+    if (b[i] === a[j]) {
+      i += 1;
+      j += 1;
+    } else if (lcs[(i + 1) * columns + j]! >= lcs[i * columns + j + 1]!) {
+      removed.push(b[i]!);
+      i += 1;
+    } else {
+      added.push(a[j]!);
+      j += 1;
+    }
+  }
+  removed.push(...b.slice(i));
+  added.push(...a.slice(j));
+  return { removed, added };
 }
 
 /** Hook events the builder accepts (REQ-13.1). Unknown event names are refused. */

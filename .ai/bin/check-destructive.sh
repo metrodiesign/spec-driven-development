@@ -96,9 +96,12 @@ echo "$N" | grep -qiE "(^|[;&|]|[[:space:]])dropdb([[:space:]]|$)" &&
 
 # DELETE FROM ที่ไม่มี WHERE ใน command เดียวกัน (span จบที่ separator ถัดไป):
 # มี WHERE = มีเงื่อนไข -> ผ่าน; ไม่มี WHERE = ลบทั้งตาราง -> block
-DEL_SPAN=$(echo "$N" | grep -oiE "delete[[:space:]]+from[[:space:]][^;&|]*")
-if [ -n "$DEL_SPAN" ] && ! echo "$DEL_SPAN" | grep -qiE "[[:space:]]where([[:space:]]|=|\(|$)"; then
-  block 'SQL DELETE FROM ไม่มี WHERE — ลบทั้งตาราง ยืนยันกับ user ก่อน (Destructive Ops rules)'
+DEL_SPANS=$(echo "$N" | grep -oiE "delete[[:space:]]+from[[:space:]][^;&|]*")
+if [ -n "$DEL_SPANS" ]; then
+  while IFS= read -r SPAN; do
+    echo "$SPAN" | grep -qiE "[[:space:]]where([[:space:]]|=|\(|$)" && continue
+    block 'SQL DELETE FROM ไม่มี WHERE — ลบทั้งตาราง ยืนยันกับ user ก่อน (Destructive Ops rules)'
+  done <<<"$DEL_SPANS"
 fi
 
 echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*--force(-with-lease)?([[:space:]]|$)" &&

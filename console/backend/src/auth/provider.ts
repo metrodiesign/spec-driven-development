@@ -4,7 +4,7 @@
 // implement this seam and share the session/cookie plumbing below.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 
 export interface Principal {
@@ -54,7 +54,7 @@ export function verifySession(token: string, opts: SessionTokenOptions, now: num
   if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) return null;
   try {
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Partial<SessionPayload>;
-    if (typeof parsed.exp !== 'number' || parsed.exp < now) return null;
+    if (typeof parsed.exp !== 'number' || parsed.exp <= now) return null;
     if (parsed.method !== 'basic' && parsed.method !== 'oidc') return null;
     if (typeof parsed.sub !== 'string') return null;
     return { sub: parsed.sub, method: parsed.method };
@@ -79,25 +79,30 @@ export type AuthConfig =
       signingSecret: string;
     };
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
 export function loadAuthConfig(path: string): AuthConfig | null {
   if (!existsSync(path)) return null;
   try {
+    if ((statSync(path).mode & 0o777) !== 0o600) return null;
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     if (
       parsed['provider'] === 'basic' &&
-      typeof parsed['scryptHash'] === 'string' &&
-      typeof parsed['salt'] === 'string' &&
-      typeof parsed['signingSecret'] === 'string'
+      isNonEmptyString(parsed['scryptHash']) &&
+      isNonEmptyString(parsed['salt']) &&
+      isNonEmptyString(parsed['signingSecret'])
     ) {
       return { provider: 'basic', scryptHash: parsed['scryptHash'], salt: parsed['salt'], signingSecret: parsed['signingSecret'] };
     }
     if (
       parsed['provider'] === 'oidc' &&
-      typeof parsed['clientId'] === 'string' &&
-      typeof parsed['clientSecret'] === 'string' &&
-      typeof parsed['redirectUri'] === 'string' &&
-      typeof parsed['allowedSub'] === 'string' &&
-      typeof parsed['signingSecret'] === 'string'
+      isNonEmptyString(parsed['clientId']) &&
+      isNonEmptyString(parsed['clientSecret']) &&
+      isNonEmptyString(parsed['redirectUri']) &&
+      isNonEmptyString(parsed['allowedSub']) &&
+      isNonEmptyString(parsed['signingSecret'])
     ) {
       return {
         provider: 'oidc',

@@ -115,6 +115,9 @@ check block "truncate lowercase"     "truncate logs"
 check block "dropdb"                 "dropdb mydb"
 check block "DELETE FROM no WHERE"   "${DEL} FROM users"
 check block "delete no where lc"     "delete from users"
+# bugfix-confirmed-repo-audit F2: each DELETE span owns its WHERE decision.
+check block "safe DELETE cannot mask unsafe span" \
+  "${DEL} FROM kept WHERE id=1; ${DEL} FROM wiped"
 
 # new (critic): force-overwrite ของทุก ref
 check block "push --mirror"          'git push --mirror origin'
@@ -140,6 +143,8 @@ check allow "git checkout -b new branch"   'git checkout -b feat/x'
 # benign baselines for new rules — must NOT false-positive
 check allow "DELETE FROM with WHERE" "${DEL} FROM t WHERE id=1"
 check allow "delete with where lc"   "delete from t where id=1"
+check allow "multiple safe DELETE spans" \
+  "${DEL} FROM first WHERE id=1; ${DEL} FROM second WHERE id=2"
 check allow "select drop from menu"  'select drop from menu'
 # coreutil truncate (log rotation) — dash-flag after the word -> NOT SQL TRUNCATE, must pass
 check allow "truncate -s coreutil"   'truncate -s 0 /tmp/app.log'
