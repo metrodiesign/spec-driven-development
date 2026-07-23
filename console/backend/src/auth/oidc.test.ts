@@ -74,6 +74,11 @@ test('verifyIdToken: expired token fails closed', () => {
   assert.equal(verifyIdToken(token, JWKS, VERIFY_OPTS), null);
 });
 
+test('verifyIdToken: exact expiry boundary fails closed (F6)', () => {
+  const token = makeIdToken(validPayload({ exp: Math.floor(NOW / 1000) }));
+  assert.equal(verifyIdToken(token, JWKS, VERIFY_OPTS), null);
+});
+
 test('verifyIdToken: non-RS256 alg or unknown kid fails closed', () => {
   assert.equal(verifyIdToken(makeIdToken(validPayload(), { alg: 'none' }), JWKS, VERIFY_OPTS), null);
   assert.equal(verifyIdToken(makeIdToken(validPayload(), { kid: 'no-such-key' }), JWKS, VERIFY_OPTS), null);
@@ -205,6 +210,37 @@ test('GET /auth/oidc/callback: missing pending cookie -> generic 401', async () 
   try {
     const res = await app.inject({ method: 'GET', url: '/auth/oidc/callback?code=fake-code&state=whatever' });
     assert.equal(res.statusCode, 401);
+  } finally {
+    await app.close();
+  }
+});
+
+test('GET /auth/oidc/callback: pending cookie exact expiry rejects before token exchange (F7)', async () => {
+  let now = NOW;
+  let nonce = '';
+  let tokenCalls = 0;
+  const fetchFn = makeFetch(() => {
+    tokenCalls += 1;
+    return makeIdToken(validPayload({ nonce }));
+  });
+  const provider = createOidcProvider({ config: CONFIG, now: () => now, sessionTtlMs: SESSION_TTL_MS, fetchFn });
+  const app = Fastify({ logger: false });
+  provider.routes(app);
+  try {
+    const start = await app.inject({ method: 'GET', url: '/auth/oidc/start' });
+    const location = start.headers.location as string;
+    const state = extractParam(location, 'state');
+    nonce = extractParam(location, 'nonce');
+    const pendingCookie = (start.headers['set-cookie'] as string).split(';')[0];
+
+    now = NOW + 5 * 60_000;
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/auth/oidc/callback?code=fake-code&state=${state}`,
+      headers: { cookie: pendingCookie as string },
+    });
+    assert.equal(callback.statusCode, 401);
+    assert.equal(tokenCalls, 0);
   } finally {
     await app.close();
   }

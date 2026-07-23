@@ -114,21 +114,15 @@ fork or weaken these checks per harness.
 - Never merge past a failing check.
 - Never leave `.only` / `.skip` in committed tests.
 - Coverage must not drop below the project threshold.
-- The two test-hygiene rules above are wired by the DOWNSTREAM project's CI (via its
-  `SDD_TEST_CMD`-declared runner); this framework repo ships no app tests, so its own
-  CI does not gate them — they are procedural here, enforced where an app exists.
+- Repo นี้มี Node workspace tests จริงและ CI รันผ่าน `scripts/ci-test-scope.sh`; downstream
+  projects ยังประกาศ runner เพิ่มได้ผ่าน `SDD_TEST_CMD`
 - **Enforced by:** `.github/workflows/ci.yml` as a required check for ALL contributors
   (Tier 1), triggered on both `pull_request` and `push` to `main` AND `develop`.
   Server-side branch protection is the gate that cannot be skipped locally.
-- **Checks CI actually runs** (so the doc matches the workflow): the guard-regression
-  suite (every `.claude/hooks/tests/*.test.sh`, so the single check engine cannot be
-  weakened silently), the full-tree secret scan (`.ai/bin/check-secrets.sh --all` with
-  `SECRET_GUARD_SKIP` force-cleared), and spec-trace REQ coverage (Python 3.12 pinned).
-  A dependency vulnerability audit is REQUIRED in CI for any project that ships a package
-  manifest (see Dependencies below); this framework repo ships no runtime deps, so its CI
-  runs the guard-suite + secret scan + spec-trace instead of an audit step. There is
-  **no lint script** in this project, so CI runs no lint step — lint is not-yet-wired,
-  not a silent failure.
+- **Checks CI actually runs** (ให้เอกสารตรง workflow): vendor-name check, frozen `pnpm`
+  install, `pnpm audit --prod --audit-level high`, full typecheck, lint, scoped/full
+  workspace tests, guard-regression suite ทุก `.claude/hooks/tests/*.test.sh`, lessons
+  coverage, full-tree/diff-range secret scan และ spec-trace coverage
 
 ### Deploy / release
 
@@ -138,8 +132,8 @@ fork or weaken these checks per harness.
   an emergency hotfix.
 - Every release is tagged with a version + a changelog entry.
 - **Enforced by:** procedural discipline (Tier 3) + release-pipeline checks where they
-  exist. (This project ships a static frontend with no real backend; treat these as the
-  standard to follow if a deploy pipeline is added.)
+  exist. Repo มี Console frontend/backend แต่ยังไม่มี production deployment pipeline;
+  ใช้มาตรฐานนี้เมื่อเพิ่ม pipeline
 
 ### Dependencies
 
@@ -152,10 +146,10 @@ fork or weaken these checks per harness.
   REQUIRED in CI for any project that ships a package manifest. When auditing, separate a
   dev-only chain from prod-core before acting — never force-fix a core dependency into a
   breaking downgrade.
-- **Enforced by:** for a project that ships a package manifest, a blocking dependency
-  audit in CI (Tier 1); this framework repo ships no runtime deps, so its CI has no audit
-  step. Lockfile presence + review approval for new dependencies still apply (Tier 3, see
-  [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md)).
+- **Enforced by:** blocking `pnpm audit --prod --audit-level high` ใน CI platform job
+  (Tier 1) สำหรับ runtime dependencies; `pnpm-lock.yaml` ต้องอยู่ใน review และ dependency
+  ใหม่ยังต้องผ่าน license/maintenance approval (Tier 3, ดู
+  [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md))
 
 ### Branch / push discipline
 

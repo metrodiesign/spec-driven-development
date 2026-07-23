@@ -58,7 +58,14 @@ echo "$C" | grep -qiE 'config[^|;&]*core\.hookspath[[:space:]]+[^-[:space:]]' &&
 echo "$C" | grep -qiE 'config[^|;&]*(--unset(-all)?|--replace-all|--add)[^|;&]*core\.hookspath|config[^|;&]*core\.hookspath[^|;&]*(--unset(-all)?|--replace-all|--add)' &&
   block 'git config --unset/--replace-all/--add core.hooksPath แก้ hooks floor — ห้ามใช้'
 
-echo "$C" | grep -qE '(^|[[:space:]])git([[:space:]]|$)' || exit 0
+# Normalize executable spelling for matching only; never execute this copy.
+# Shell accepts \git, "git", and absolute paths ending in /git as the same
+# executable class. The old standalone-token prefilter returned early for all
+# three and skipped every bypass check below.
+N=$(printf '%s' "$C" | tr -d '\\'\''"')
+GPOS='(^|[;&|][[:space:]]*|[[:space:]])'
+GIT_EXE='([^[:space:]]*/)?git'
+echo "$N" | grep -qE "${GPOS}${GIT_EXE}([[:space:]]|$)" || exit 0
 
 echo "$C" | grep -qE -- '--no-verify' &&
   block '--no-verify ข้าม secret-guard pre-commit hook — commit ตามปกติเพื่อให้ scan ทำงาน'
@@ -76,13 +83,31 @@ echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
 # behind and false-blocks (issue #28). real -n/--no-verify outside quotes still survives.
 # GO (git global-options regex, covers `git -c user.x=y commit -nm` etc — anchor-adjacent
 # bypass class PR #38/#39) — single source in lib-guard.sh, sourced above.
-DQ=$(printf '%s' "$C" | tr '\n' ' ' | sed -e "s/'[^']*'/ /g" -e 's/"[^"]*"/ /g')
+# Normalize only whitespace-delimited words whose de-quoted basename is `git`.
+# Other quoted spans stay byte-for-byte intact so the next sed can still remove
+# commit-message text such as "-n". This also collapses g""it, \git, "git",
+# and quoted/unquoted absolute paths without flattening every argument.
+CQ=$(printf '%s' "$C" | awk '
+  {
+    for (i = 1; i <= NF; i += 1) {
+      normalized = $i
+      gsub(/\\/, "", normalized)
+      gsub(/\047/, "", normalized)
+      gsub(/"/, "", normalized)
+      base = normalized
+      sub(/^.*\//, "", base)
+      if (base == "git") $i = normalized
+    }
+    print
+  }
+')
+DQ=$(printf '%s' "$CQ" | tr '\n' ' ' | sed -e "s/'[^']*'/ /g" -e 's/"[^"]*"/ /g')
 # ponytail: flat-string de-quote — a flag WRAPPED in quotes (`git commit "-nm"`) is
 # stripped together with its quoted span and slips this Tier-2 check. Not fixable by
 # regex without false-blocking every message that contains `-n` (issue #28, why we
 # de-quote at all); a real fix needs shell tokenization, out of scope for a string
 # guard. Tier-1 CI `check-secrets.sh --all` re-scans server-side and is the backstop.
-echo "$DQ" | grep -qE "git${GO}[[:space:]]+commit.*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|\$)" &&
+echo "$DQ" | grep -qE "${GPOS}${GIT_EXE}${GO}[[:space:]]+commit.*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|\$)" &&
   block 'git commit -n (--no-verify) ข้าม secret-guard — commit ตามปกติ'
 
 exit 0
