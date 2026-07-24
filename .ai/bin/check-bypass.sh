@@ -59,10 +59,12 @@ echo "$C" | grep -qiE 'config[^|;&]*(--unset(-all)?|--replace-all|--add)[^|;&]*c
   block 'git config --unset/--replace-all/--add core.hooksPath แก้ hooks floor — ห้ามใช้'
 
 # Normalize executable spelling for matching only; never execute this copy.
-# Shell accepts \git, "git", and absolute paths ending in /git as the same
-# executable class. The old standalone-token prefilter returned early for all
-# three and skipped every bypass check below.
-N=$(printf '%s' "$C" | tr -d '\\'\''"')
+# Shell accepts \git, "git", $'git', and absolute paths ending in /git as the
+# same executable class. The old standalone-token prefilter returned early for
+# all of them and skipped every bypass check below. Strip the `$` ONLY when it
+# sits directly before a quote (ANSI-C $'...' / locale $"...") — a bare `$word`
+# is a variable expansion, not the git executable, and must not match.
+N=$(printf '%s' "$C" | sed -E "s/\\\$(['\"])/\\1/g" | tr -d '\\'\''"')
 GPOS='(^|[;&|][[:space:]]*|[[:space:]])'
 GIT_EXE='([^[:space:]]*/)?git'
 echo "$N" | grep -qE "${GPOS}${GIT_EXE}([[:space:]]|$)" || exit 0
@@ -91,6 +93,8 @@ CQ=$(printf '%s' "$C" | awk '
   {
     for (i = 1; i <= NF; i += 1) {
       normalized = $i
+      gsub(/\$\047/, "\047", normalized)
+      gsub(/\$"/, "\"", normalized)
       gsub(/\\/, "", normalized)
       gsub(/\047/, "", normalized)
       gsub(/"/, "", normalized)
