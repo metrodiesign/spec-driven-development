@@ -104,7 +104,9 @@ if [ -n "$DEL_SPANS" ]; then
   done <<<"$DEL_SPANS"
 fi
 
-echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*--force(-with-lease)?([[:space:]]|$)" &&
+# force-with-lease accepts a `=<ref>[:<expect>]` value; the `=` must terminate the
+# token too, else `--force-with-lease=origin/feat` (a real force push) slips.
+echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*--force(-with-lease)?([[:space:]]|=|$)" &&
   block 'force push (Workflow rules: ห้าม force push)'
 
 # short flag -f (รวมแบบ combined เช่น -uf) — จำกัด span ไม่ให้ข้าม command separator

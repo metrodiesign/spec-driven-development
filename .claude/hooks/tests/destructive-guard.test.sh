@@ -65,6 +65,10 @@ check block "git checkout -- whole tree"  'git checkout -- .'
 check block "git checkout dot whole tree" 'git checkout .'
 check block "push --force"           'git push --force origin feat'
 check block "push --force-with-lease" 'git push --force-with-lease origin feat'
+# bugfix-repo-audit: the `=<value>` form is a real force push (git push
+# --force-with-lease=<ref>[:<expect>]) yet the '=' terminated the token before
+# the word-boundary check and let it fail open.
+check block "push --force-with-lease=val" 'git push --force-with-lease=origin/feat origin feat'
 check block "push -f"                'git push -f origin feat'
 # regression (review High): '+'-refspec force pushes were silently allowed
 check block "push +refspec"          'git push origin +feat:feat'
