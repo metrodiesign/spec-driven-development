@@ -74,6 +74,11 @@ check block "quoted git + short -n"        "\"${GIT_WORD}\" commit -n -m x"
 check block "absolute git + short -n"      "/usr/bin/${GIT_WORD} commit -n -m x"
 check block "split-quoted git + short -n"  "g\"\"it commit -n -m x"
 check block "quoted absolute git + short -n" "\"/usr/bin/${GIT_WORD}\" commit -n -m x"
+# Codex P2 (PR #121 review): ANSI-C $'git' / locale $"git" evaluate to the same
+# executable — must block both skip-verify flag variants
+check block "ANSI-C git + --no-verify"     "\$'${GIT_WORD}' commit --no-verify -m x"
+check block "ANSI-C git + short -n"        "\$'${GIT_WORD}' commit -n -m x"
+check block "locale-quoted git + short -n" "\$\"${GIT_WORD}\" commit -n -m x"
 # finding #13+#9: guard/floor tamper must block independently of the git token —
 # the line-7 short-circuit previously ALLOWed any command lacking a `git` token
 check block "chmod -x pre-commit hook"  'chmod -x .githooks/pre-commit'
@@ -129,6 +134,9 @@ check allow "cp hook OUT as backup"     'cp .githooks/pre-commit /tmp/backup-hoo
 check allow "cp hook to .bak sibling"   'cp .githooks/pre-commit pre-commit.bak'
 # bare-dir rule must not over-match a benign path that merely starts the same
 check allow "rm a .githooks-named file" 'rm -f .githooks-notes.txt'
+# ANSI-C fix baseline: `$` is stripped ONLY before a quote — a bare $var whose
+# name merely contains "git" is a variable expansion, not the git executable
+check allow "bare \$var not git exe"    '$gitcmd commit -n -m x'
 
 echo "---"
 echo "pass=$pass fail=$fail"
