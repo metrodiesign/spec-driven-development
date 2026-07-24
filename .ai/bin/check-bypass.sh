@@ -58,6 +58,14 @@ echo "$C" | grep -qiE 'config[^|;&]*core\.hookspath[[:space:]]+[^-[:space:]]' &&
 echo "$C" | grep -qiE 'config[^|;&]*(--unset(-all)?|--replace-all|--add)[^|;&]*core\.hookspath|config[^|;&]*core\.hookspath[^|;&]*(--unset(-all)?|--replace-all|--add)' &&
   block 'git config --unset/--replace-all/--add core.hooksPath แก้ hooks floor — ห้ามใช้'
 
+# SECRET_GUARD_SKIP= is an env var honored by check-secrets.sh — it is set in one
+# command and consumed by a LATER commit, so like the floor-tamper checks above it
+# must block independently of a `git` token (the prefilter below returns early for
+# any command lacking one, which previously let a standalone `SECRET_GUARD_SKIP=1`
+# export fail open).
+echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
+  block 'SECRET_GUARD_SKIP ข้าม secret scan — ถ้าจำเป็นจริงให้ user รันเองนอก session'
+
 # Normalize executable spelling for matching only; never execute this copy.
 # Shell accepts \git, "git", $'git', and absolute paths ending in /git as the
 # same executable class. The old standalone-token prefilter returned early for
@@ -71,9 +79,6 @@ echo "$N" | grep -qE "${GPOS}${GIT_EXE}([[:space:]]|$)" || exit 0
 
 echo "$C" | grep -qE -- '--no-verify' &&
   block '--no-verify ข้าม secret-guard pre-commit hook — commit ตามปกติเพื่อให้ scan ทำงาน'
-
-echo "$C" | grep -q 'SECRET_GUARD_SKIP=' &&
-  block 'SECRET_GUARD_SKIP ข้าม secret scan — ถ้าจำเป็นจริงให้ user รันเองนอก session'
 
 # short flag -n (= --no-verify ของ git commit) รวม combined เช่น -nm, -anm
 # de-quote ก่อน: ลบเนื้อใน '...' และ "..." ออกเป็นช่องว่าง เพื่อไม่ให้ -n ใน

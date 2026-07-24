@@ -48,6 +48,12 @@ check block "core.hooksPath override"   'git -c core.hooksPath=/dev/null commit 
 check block "core.hookspath lowercase"  'git -c core.hookspath=/dev/null commit -m x'
 check block "CORE.HOOKSPATH upper"       'git -c CORE.HOOKSPATH=/dev/null commit -m x'
 check block "SECRET_GUARD_SKIP env"     'SECRET_GUARD_SKIP=1 git commit -m x'
+# bugfix-repo-audit: the env-var bypass must block independently of a `git` token —
+# it is set in one command and honored by a LATER commit, so a standalone export
+# (or any non-git command carrying it) must still block. The git-token prefilter
+# previously short-circuited before this check and let the no-git form fail open.
+check block "SECRET_GUARD_SKIP no git"  'SECRET_GUARD_SKIP=1'
+check block "SECRET_GUARD_SKIP + cmd"   'SECRET_GUARD_SKIP=1 ./deploy.sh'
 # finding #2: a REAL trailing skip-verify flag placed AFTER the quoted message
 # (and after a line continuation) must block — the old [^|;&'"] scan stopped at
 # the first quote and let it slip
