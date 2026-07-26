@@ -45,7 +45,7 @@
          — ไม่มีไฟล์ test เดิมถูกแก้ (`git status` = M เฉพาะ core/src/index.ts
          + core/src/types.ts, ที่เหลือเป็นไฟล์ใหม่)
 
-- [ ] 2. Generator task-graph emission — `scripts/spec_to_goal.py`:
+- [x] 2. Generator task-graph emission — `scripts/spec_to_goal.py`:
      `TASK_HEAD_RE` (รับ indent), title extraction + fallback + truncate 120,
      `Depends on:` grammar แคบ (pin fixture บรรทัดจริงของ stage-2), validate
      dangling Satisfies/Depends/ordinal ซ้ำ/ordinal หาย (exit 1), emit
@@ -56,6 +56,41 @@
      PR นี้ ไม่ลด validation) และ assert draft ผ่าน `validateTaskGraphShape`
      + `freezeTaskGraph` จริง. Done = e2e เขียวทั้งชุด.
      Satisfies: REQ-2 (all criteria). Depends on: 1. Verify: pnpm -C console/backend test spec-to-goal.
+     Evidence:
+       - test: `pnpm -C console/backend test spec-to-goal` -> 360 passed / 0 failed
+         (arg ท้ายเป็น no-op filter ของ package นี้ = รันทั้ง suite); ยิงไฟล์เดี่ยว
+         `node --test --test-reporter spec 'src/spec-to-goal.e2e.test.ts'` (ใน
+         console/backend) -> 23 passed / 0 failed = 16 เดิม (แก้ 1 case, ดู
+         deviation 1) + 7 ใหม่: happy 3-task+deps/key order/checks 400 +
+         validateTaskGraphShape + freezeTaskGraph จริง, grammar fixture ของ
+         stage-2 (deps = ["T-1"] เท่านั้น), indented checkbox + title cut 120 +
+         marker-less fallback, 4 failure paths (dangling dep / dangling
+         satisfies / ordinal หาย / ordinal ซ้ำ = exit 1 และไม่เขียน draft ใด),
+         per-file gate สองทาง + --force, tasks.md absent, pre-flight sweep
+       - test: `pnpm -C core test` -> 282 passed / 0 failed (ไม่ได้แตะ core)
+       - sweep: pre-flight (D18) รันใน e2e กับ 11 approved specs ใต้ `.ai/specs`
+         (non-archive) -> 0 failures + graph draft ทุกตัว schema-clean; กวาดมือ
+         เพิ่มรวม `.ai/specs/archive/*` = 17 specs -> 0 failures — **ไม่มี spec
+         จริงตัวไหนต้องแก้** ภายใต้กติกาใหม่
+       - typecheck: `pnpm typecheck` -> clean ทั้ง 6 workspace projects
+       - lint: `pnpm lint` -> ESLint: No issues found
+       - viewports: n/a — logic-only
+       - deviations: (1) แก้ e2e case เดิม 1 บรรทัด (`readdirSync` expectation ของ
+         case "generator touches nothing but goal.draft.yaml") — REQ-2.1
+         supersede Stage-1 REQ-4.1/4.6 ที่ pin ว่ามีไฟล์ใหม่ไฟล์เดียว; ประกาศ
+         supersession เพิ่มใน requirements.md Overview แล้ว (รายการที่ 6) →
+         task 6 ต้องบันทึกใน §17 ด้วย; invariant จริงของ case นั้น (ไม่มี temp
+         file ค้าง / input ไม่ถูกแตะ / ไม่ promote เอง) ยัง assert ครบ.
+         (2) `Depends on:` สะสม**ทุก** occurrence ในบล็อก (grammar แคบเท่าเดิมต่อ
+         occurrence) ไม่ใช่ occurrence แรกอย่างเดียว — บล็อกของ task นี้เอง quote
+         คำว่า marker ใน prose (backtick) ทำให้กติกา "occurrence แรก" ทิ้ง
+         dependency จริงเงียบ ๆ (ตรวจพบตอน implement, สะกดตรงกับพฤติกรรม
+         Satisfies ที่สะสมอยู่แล้ว). (3) `json.dumps(..., ensure_ascii=False)` —
+         title ของ spec จริงเป็นภาษาไทย, ไฟล์ต้องให้มนุษย์อ่านก่อน promote.
+         (4) tasks.md มีอยู่แต่ไม่มี task block เลย -> warn + ข้าม graph (REQ ไม่
+         ครอบเคสนี้; emit `tasks: []` จะผิด schema `minItems: 1` ทันที).
+         (5) title ว่าง (marker ติดหัวบล็อกทันที) ไม่เพิ่ม failure path ใหม่ —
+         schema `minLength: 1` จับที่ edge validation ตอน promote.
 
 - [ ] 3. loop-run layer-1 parameterization (mechanical, zero behavior change)
      — แตก per-task machinery ของ `runSupervisedLoop` เป็น

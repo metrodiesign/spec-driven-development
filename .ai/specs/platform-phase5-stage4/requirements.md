@@ -74,6 +74,11 @@ Supersession ที่ประกาศใน stage นี้ (ตาม lesson
 - **Stage-1 REQ-4.2 (output gate เอกพจน์ "the output file")** — superseded scope (A15):
   gate กันเขียนทับแยกต่อไฟล์ output (goal draft / task-graph draft) — draft กราฟที่
   ค้างอยู่ไม่บล็อกการ regenerate goal draft; `--force` เขียนทับทั้งคู่
+- **Stage-1 REQ-4.1/4.6 ("generator เขียน `goal.draft.yaml` ไฟล์เดียว" — e2e เดิม
+  assert `readdirSync` ว่ามีไฟล์ใหม่ไฟล์เดียวหลัง generate)** — superseded โดย 2.1:
+  generation ที่สำเร็จเขียนสอง draft; ส่วนที่ไม่เปลี่ยนของเกณฑ์เดิม (ไม่มี temp file
+  ค้าง, input ไม่ถูกแตะ, ไม่ promote เอง) ยังถูก assert ตามเดิม — พบตอน implement
+  task 2 (นอกรอบ audit A1–A21); §17 ของ task 6 ต้องบันทึกเป็นรายการที่ 6
 
 ข้อเท็จจริงจากโค้ดที่ requirements นี้อิง (ยืนยันบน develop @ `3f0915c` — ทุก
 file:line ผ่านการตรวจซ้ำโดย fresh-context audit):
