@@ -575,3 +575,62 @@ test('REQ-4.15: the kill switch stops the driver — remaining tasks end NOT_STA
     rmSync(persistDir, { recursive: true, force: true });
   }
 });
+
+test("REQ-4.5: a task's own diff_budget reaches the approval package — not the composition's `?? 400` default", async () => {
+  // The effective budget is only OBSERVABLE where it bites: buildApprovalPackage never
+  // stores maxDiffBudget on the package, it escalates `split_required` and names the
+  // number it used. So T-1 declares diff_budget 1 — under the two changed lines a
+  // fixture task produces — while the graph-wide ceiling is a non-default 200 and the
+  // composition fallback is 400. Both of those would let the same diff through, so a
+  // budget that never reached the package cannot pass this (lesson
+  // #wiring-test-nondefault-value). T-2 declares nothing and stays under the ceiling,
+  // proving the escalate is the per-task budget talking and not the fixture diff.
+  const graph = {
+    goal_id: 'GRAPH-1',
+    tasks: [
+      { id: 'T-1', title: 'first', satisfies: ['AC-1'], diff_budget: 1 },
+      // Independent on purpose: T-1 ending ESCALATED must not SKIP T-2 (REQ-4.4).
+      { id: 'T-2', title: 'second', satisfies: ['AC-2'] },
+    ],
+    checks: { max_diff_budget_per_task: 200 },
+  };
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-diffbudget-'));
+  try {
+    const out = await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      taskGraph: graphOption(graph),
+    });
+    assert.deepStrictEqual(
+      out.tasks?.map((t) => [t.id, t.finalState]),
+      [
+        ['T-1', 'ESCALATED'],
+        ['T-2', 'REVIEWING'],
+      ],
+      'only the task with the tight budget was refused a package',
+    );
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      const escalated = log.all({ type: 'ESCALATED', taskId: 'T-1' });
+      assert.equal(escalated.length, 1);
+      assert.equal(escalated[0]?.payload['why'], 'split_required');
+      assert.match(
+        String(escalated[0]?.payload['detail']),
+        /^diff \d+ lines exceeds budget 1$/,
+        "the budget the package enforced is the TASK's declared 1 — neither checks.max_diff_budget_per_task (200) nor the `?? 400` fallback",
+      );
+      assert.deepStrictEqual(
+        log.all({ type: 'APPROVAL_PACKAGE_CREATED' }).map((e) => e.taskId),
+        ['T-2'],
+        'the undeclared task took the graph-wide ceiling and its diff fit',
+      );
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});

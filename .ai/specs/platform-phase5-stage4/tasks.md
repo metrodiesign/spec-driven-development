@@ -400,6 +400,23 @@
          ช่องว่าง test ของ REQ-4.5/4.7/4.10 — เป็นการเพิ่มความแม่นของ claim ไม่ใช่ scope
          ใหม่ (§16 ห้ามอ้างเกินจริง). (3) §14 ย่อ ceiling ทั้ง 4 เป็นบรรทัดเดียวแล้วชี้ไป
          §17 v1.7 ที่ให้เหตุผลเต็ม — กันไม่ให้ §14 (roadmap) บวมจนอ่านไม่ออก
+       - addendum (post-assembly gap close): ช่องว่าง test 3 ใน 4 ข้อข้างบนถูกปิดด้วย
+         follow-up commit ที่ **เพิ่ม test อย่างเดียว** (ศูนย์ production-code edit,
+         ศูนย์การแก้ test block เดิม): REQ-4.5 เพิ่ม 1 block ท้าย
+         `console/backend/src/loop-run-graph.test.ts` (graph fixture `diff_budget: 1`
+         ใต้ ceiling 200 → escalate `split_required` ที่ระบุ budget 1 จึงแยกจาก fallback
+         `?? 400` ได้) · REQ-4.7 + REQ-5.1/5.2 เพิ่มไฟล์ใหม่
+         `console/backend/src/loop-graph-wiring.test.ts` 2 block (draft-only →
+         `undefined` แล้ว promote → `{rawBytes, parsed}`; `runPlannerFusion` ที่ assert
+         `contextBundle` ที่ panel ได้รับจริงทั้งกรณีมี/ไม่มีกราฟ) — ทั้ง 3 ผ่าน mutation
+         check (พัง `loop-run.ts:904` / `fusion.ts:217` / `loop-cli.ts:42-43` ทีละจุด →
+         test แดงตรงข้อนั้น แล้ว `git checkout --` คืนไฟล์). REQ-4.10 ยังไม่มี test
+         ตามเดิม (`bin/platform.ts` ไม่มี harness) และ §17 v1.7 ถูก sync ให้ตรงสถานะใหม่
+         ทั้งสองจุด (ceiling ข้อ 4 + ประโยคปิดท้าย) โดยแก้บรรทัดเดียว ไม่มี reflow.
+         Gate ที่รันซ้ำหลังแก้: `pnpm -C console/backend test` -> 378 pass (375 + 3),
+         `pnpm -C core test` -> 284 pass, `pnpm typecheck` -> clean 6 project,
+         `pnpm lint` -> ESLint: No issues found,
+         `bash scripts/spec-trace.sh platform-phase5-stage4` -> OK 55 เกณฑ์
 
 ## Suggested execution batches
 
