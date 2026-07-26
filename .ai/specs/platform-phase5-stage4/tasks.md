@@ -317,7 +317,7 @@
          `risk: L2` ไว้ชัดเจน (ต่างจาก `fixture-goal.yaml` ที่ปล่อยว่างแล้วพึ่ง default)
          — REQ-6.5 วัดที่ REVIEWING จึงไม่ควรให้ผลลัพธ์ขึ้นกับ default ที่อาจเปลี่ยน
 
-- [ ] 6. Constitution v1.7 + assembly trace — `unified-platform-spec.md`:
+- [x] 6. Constitution v1.7 + assembly trace — `unified-platform-spec.md`:
      banner v1.7, §14 Stage-4 ส่งมอบแล้ว + ceilings, §17 changelog v1.7
      (shape + supersessions 6 รายการ + ceilings 4 รายการ), §17 "จุดเริ่ม" →
      Stage 5; cross-check ทุก REQ ต่อ satisfying code/test (assembly task —
@@ -325,6 +325,81 @@
      เขียวครบ. Done = `scripts/spec-trace.sh platform-phase5-stage4` OK ครบ
      ทุก criterion + full gate เขียว.
      Satisfies: REQ-7 (all criteria). Depends on: 5. Verify: scripts/spec-trace.sh platform-phase5-stage4 && pnpm typecheck && pnpm test && pnpm lint.
+     Evidence:
+       - amend: `unified-platform-spec.md` แตะ **4 region เท่านั้น** ตาม hard constraint —
+         `git diff -U0 unified-platform-spec.md | grep '^@@'` -> `@@ -3 +3 @@` (banner v1.7),
+         `@@ -575 +575 @@` (§14 Stage-4 ส่งมอบแล้ว + pointer + delivered shape + 4 ceilings),
+         `@@ -609 +609 @@` (§17 จุดเริ่ม -> v1.7, stage 1-4 ส่งมอบ, ถัดไป = Stage 5),
+         `@@ -611,0 +612 @@` (§17 changelog v1.7 แทรกเป็นรายการแรก); `git diff --stat` ->
+         `1 file changed, 4 insertions(+), 3 deletions(-)` — ศูนย์ reflow ส่วนอื่น, ไม่มี emoji
+       - trace: `bash scripts/spec-trace.sh platform-phase5-stage4` -> `OK: 'platform-phase5-stage4'
+         เกณฑ์ 55 ข้อ ถูกอ้างครบใน design.md และ tasks.md, EARS lint ผ่านทุกข้อ`
+       - test: `pnpm test` (workspace) -> console/web 74, core 284, aal 143, adapters 39,
+         console/backend 375 — **pass 915 / fail 0** ทุก project (ตรงกับตัวเลขที่ task 5
+         ส่งมอบเป๊ะ: core 284, console/backend 375, aal 143)
+       - typecheck: `pnpm typecheck` -> clean ทั้ง 6 workspace projects
+       - lint: `pnpm lint` -> `eslint .` ไม่มี output (0 issue), exit 0
+       - vendor: `bash scripts/check-core-vendor-free.sh` -> `OK: core/ and aal/ are
+         vendor-name-free (INV-7)`
+       - drift: `bash scripts/spec-goal-drift.sh platform-phase5-stage4` ->
+         `not applicable (no promoted goal.yaml)` exit 0 — advisory, ผลที่คาดไว้
+         (feature นี้ยังไม่มี goal.yaml ที่ promote)
+       - guard: `for f in .claude/hooks/tests/*.test.sh; do bash "$f"; done` -> 14/14 ไฟล์ผ่าน
+         (check-evidence 24, ci-scope 9, codex-adapters 7, destructive-guard 156,
+         gate-task 42, hook-bypass-guard 122, lesson-tripwires 8, lessons-coverage 5,
+         null-byte-secret-scan 2, repo-policy-alignment 17, secrets-guard 33,
+         spec-edit-guard 13, spec-metrics 9, spec-slice 26 — fail=0 ทุกไฟล์)
+       - **REQ-trace cross-check (assembly duty, TASK_PROTOCOL DoD):** เดินครบ REQ-1..REQ-7
+         ทุก criterion เทียบไฟล์จริง ไม่ใช่แค่ Evidence ของ task ก่อนหน้า —
+         REQ-1.1-1.5 = `console/backend/src/task-graph-schema.test.ts` (9 tests, parity
+         deep-equal กับ `.ai/schemas/task-graph.schema.json` = 1.2) · REQ-2.1-2.9 =
+         `spec-to-goal.e2e.test.ts` 7 บล็อกใหม่ (ทุก criterion ปรากฏในชื่อ test อย่างน้อย
+         หนึ่งตัว) + `scripts/spec_to_goal.py` · REQ-3.1-3.14 = `core/src/graph/graph.test.ts`
+         (19 tests, หนึ่ง criterion ต่ออย่างน้อยหนึ่ง test + collect-all-reasons) ·
+         REQ-4.1 = `core/src/graph/select.test.ts` (10) · 4.2/4.9/4.11 =
+         `loop-run-graph.test.ts:87` + `:60` · 4.3 = `:60` + zero-test-file-edit proof ของ
+         task 3 · 4.4 = `select.test.ts` (dep นอกเซต -> dependent ineligible ถาวร; no
+         eligible -> null) + TG#4 (dependents SKIPPED) · 4.6 = `:284`/`:314` · 4.8 = `:149`
+         + TG#1b/2b · 4.12 = `:254` · 4.13 = `:360` · 4.14 = `:461` · 4.15 = `:547` ·
+         REQ-5.2 = กิ่ง else ของ `fusion.ts:216-218` เป็น literal เดิมทุก byte + test เดิม
+         (`fusion.test.ts:194`, `loop-run.test.ts:337/411/1272` ที่เปิด `planning` โดยไม่มีกราฟ)
+         เขียวโดยไม่ถูกแก้ · REQ-5.3 = `fusion.test.ts:228`/`:252` (pre-existing) ·
+         REQ-5.4 = สาม text อัปเดตครบจริง (`core/src/contract/contract.ts:20-25` pointer,
+         `.ai/schemas/plan.schema.json:4` `$comment`, `console/backend/src/fusion.ts` doc
+         comment + bundle comment) + PLAN_SCHEMA parity `fusion.test.ts:283` เขียว ·
+         REQ-6.1-6.5 = split ตาม D8 (`core/test/task-graph.fault-injection.test.ts` 2 +
+         `loop-run-graph.fault-injection.test.ts` 5 + `loop-run-graph.test.ts:208`) ·
+         REQ-7.1-7.3 = task นี้. **ไม่มี criterion ใดที่ไม่มีโค้ดรองรับ — ศูนย์ blocker.**
+       - **ช่องว่างที่พบและบันทึกไว้ (ไม่ใช่ missing behavior — โค้ดครบทุกตัว แต่ไม่มี test
+         เจาะจง):** REQ-4.5 (effective `diff_budget` -> `maxDiffBudget`,
+         `loop-run.ts:904`) — fixture ทุกตัวใช้ค่า default 400 จึงแยกไม่ออกว่าค่ามาจาก
+         กราฟหรือ fallback `?? 400` (ขาด non-default discrimination ตาม lesson
+         #wiring-test-nondefault-value) · REQ-4.7 (draft ถูกมองข้าม, `loop-cli.ts:41-51`)
+         — จริงโดย construction เพราะอ่านเฉพาะชื่อ `task-graph.json` · REQ-4.10 (CLI
+         edge-validate + option + per-task summary, `loop-cli.ts:41` +
+         `bin/platform.ts:377,455,481`) · REQ-5.1 (fusion graph piece,
+         `fusion.ts:216-223` + `loop-run.ts:560`) — ไม่มี test ตัวใดส่ง `taskGraphJson`
+         และไม่มี multi-task test ตัวใดเปิด `planning`. ทั้งสี่ข้อ **บันทึกตรง ๆ ใน §17
+         v1.7** ใต้หัวข้อ ceiling/ความซื่อสัตย์ ตาม §16 claim discipline แทนการอ้างเกินจริง;
+         ceiling ข้อ 4 จึงเขียนว่า graph piece "ยังไม่มี test ตัวใด exercise" ไม่ใช่
+         "test-reachable" ตามที่ REQ-7.3 ร่างไว้ (A21 พูดถึง `runPlannerFusion` ทั้งตัว
+         ซึ่ง test-reachable จริง — แต่ piece ที่ stage นี้เพิ่มไม่ใช่)
+       - supersession cross-check: ทั้ง 6 รายการใน Overview ของ requirements.md สะท้อนอยู่
+         จริงที่ที่มันอ้าง — Stage-2 REQ-4.3/4.4 (`contract.ts:20-25` เปลี่ยนเป็น pointer),
+         Phase-2 REQ-7.2 (`taskAcs` narrowing + test REQ-4.13), Phase-4 REQ-16.2
+         (`fusion.ts` bundle branch), Phase-4 REQ-16.5 (`plan.schema.json` `$comment` +
+         `fusion.ts` doc), Stage-1 REQ-4.2 (per-file gate ใน `spec_to_goal.py` + e2e:641),
+         Stage-1 REQ-4.1/4.6 (e2e:495 assertion ที่ถูกขยาย) — และครบทั้ง 6 ใน §17 v1.7
+       - viewports: n/a — docs-only task, ไม่มี UI
+       - deviations: (1) **ศูนย์ production-code edit และศูนย์ test-file edit** ตาม hard
+         constraint — `git status --porcelain` แสดงเฉพาะ `unified-platform-spec.md` กับ
+         `.ai/specs/platform-phase5-stage4/tasks.md`; ช่องว่าง 4 ข้อข้างบนจึงถูก *รายงาน*
+         ไม่ใช่ hotfix เงียบ ๆ. (2) §17 v1.7 บันทึกความซื่อสัตย์ **เกิน** 4 ceiling ที่
+         REQ-7.3 ระบุ: เพิ่มข้อสังเกต `{ok:false, detail:'unknown_task'}` ของ task 5
+         (defensive depth ของ port — เอื้อมไม่ถึงจาก HTTP surface ที่ประกอบวันนี้) และ
+         ช่องว่าง test ของ REQ-4.5/4.7/4.10 — เป็นการเพิ่มความแม่นของ claim ไม่ใช่ scope
+         ใหม่ (§16 ห้ามอ้างเกินจริง). (3) §14 ย่อ ceiling ทั้ง 4 เป็นบรรทัดเดียวแล้วชี้ไป
+         §17 v1.7 ที่ให้เหตุผลเต็ม — กันไม่ให้ §14 (roadmap) บวมจนอ่านไม่ออก
 
 ## Suggested execution batches
 
