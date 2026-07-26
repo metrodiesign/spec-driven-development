@@ -137,7 +137,7 @@
 
 - [ ] 6. Constitution v1.7 + assembly trace — `unified-platform-spec.md`:
      banner v1.7, §14 Stage-4 ส่งมอบแล้ว + ceilings, §17 changelog v1.7
-     (shape + supersessions 5 รายการ + ceilings 4 รายการ), §17 "จุดเริ่ม" →
+     (shape + supersessions 6 รายการ + ceilings 4 รายการ), §17 "จุดเริ่ม" →
      Stage 5; cross-check ทุก REQ ต่อ satisfying code/test (assembly task —
      uncovered REQ = blocker); รัน spec-trace + drift + guard suites ให้
      เขียวครบ. Done = `scripts/spec-trace.sh platform-phase5-stage4` OK ครบ

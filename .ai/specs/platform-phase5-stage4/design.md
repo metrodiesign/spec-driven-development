@@ -111,9 +111,11 @@ sequenceDiagram
   ซ้ำ → `fail()`. `title` = ข้อความหลัง match จนถึงตำแหน่ง match แรกของ `MARKER_RE`
   (มีอยู่แล้ว `:31`) — block ที่ไม่มี marker เลย: title = ส่วนที่เหลือทั้งหมด (D13) —
   `.strip()` แล้ว truncate 120.
-- **`Depends on:` grammar (REQ-2.6):** หา segment `Depends on:` แล้ว match
-  `\s*(\d+(?:\s*,\s*\d+)*)` ที่ตำแหน่งถัดไปทันที — เอาเฉพาะ run แรก, อักขระแรกที่ไม่เข้า
-  รูปตัดจบ (prose/วงเล็บ/`.` ถูกทิ้ง) → refs = `{T-<m>}`; ref ที่ไม่มี block → `fail()`.
+- **`Depends on:` grammar (REQ-2.6):** ทุก occurrence ของ marker ในบล็อก: match
+  `\s*(\d+(?:\s*,\s*\d+)*)` ที่ตำแหน่งถัดไปทันที — run แรกต่อ occurrence, อักขระแรกที่
+  ไม่เข้ารูปตัดจบ (prose/วงเล็บ/`.` ถูกทิ้ง), union ผลทุก occurrence (แบบเดียวกับ
+  `Satisfies:` — marker ที่ถูก quote ใน prose คืนว่าง ไม่กลืนตัวจริง) → refs =
+  `{T-<m>}`; ref ที่ไม่มี block → `fail()`.
   Test fixture pin บรรทัดจริง `Depends on: 1 (เฉพาะความครบของ 6.2/6.3 — โค้ด core
   ไม่ import อะไรจาก task 1).` → deps = `["T-1"]` เท่านั้น.
 - **Validate `Satisfies:` (REQ-2.8):** หลัง `expand_refs` ตรวจทุก `(major, minor)`
@@ -360,7 +362,7 @@ Split ตาม package reality (D8 — `core/test` import จาก `console/` 
 
 แก้ `unified-platform-spec.md` 4 จุดใน PR เดียวกัน (REQ-7.1/7.2/7.3): banner v1.7 ·
 §14 Stage-4 → "ส่งมอบแล้ว (spec: `.ai/specs/platform-phase5-stage4/`)" + ceilings ·
-§17 changelog v1.7 (shape + supersessions 5 รายการ + ceilings 4 รายการ) · §17
+§17 changelog v1.7 (shape + supersessions 6 รายการ + ceilings 4 รายการ) · §17
 "จุดเริ่ม" → ชี้ Stage 5 (Evidence backflow) เป็นงานถัดไป.
 
 ## Technology Decisions

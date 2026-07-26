@@ -196,9 +196,13 @@ generated from the same SDD artifacts as the goal — never hand-authored from s
        THEN THE SYSTEM SHALL fail generation with the offending ref on
        stderr (exit 1 — a dangling edge must never reach the draft); the
        `Depends on:` grammar reads ONLY the first run of
-       `\d+(\s*,\s*\d+)*` immediately after the marker and stops at the
-       first non-conforming character, so prose/parenthetical text after
-       the number list is ignored (pinned against
+       `\d+(\s*,\s*\d+)*` immediately after each marker occurrence and
+       stops at the first non-conforming character, so prose/parenthetical
+       text after the number list is ignored; ALL occurrences in the block
+       are read and their refs unioned — same accumulation `Satisfies:`
+       already has (a backtick-quoted mention of the marker in prose
+       yields nothing and cannot silently swallow the real one — amended
+       during task 2, recorded in its Evidence) (pinned against
        `.ai/specs/platform-phase5-stage2/tasks.md:37` as a test fixture, A7)  (error handling)
 - 2.7  THE SYSTEM SHALL NOT auto-promote: the generator never writes
        `task-graph.json` (promotion = human rename, mirroring goal.yaml —
@@ -439,7 +443,8 @@ as delivered with its real shape, so the next session starts from truth.
 - 7.2  THE SYSTEM SHALL record the declared supersessions (Stage-2
        REQ-4.3/4.4, Phase-2 REQ-7.2 "maps ALL" for multi-task, Phase-4
        REQ-16.2 partial, Phase-4 REQ-16.5 ceiling sentence, Stage-1 REQ-4.2
-       output-gate scope) in the §17 entry explicitly                         (ubiquitous)
+       output-gate scope, Stage-1 REQ-4.1/4.6 single-output-file assertion
+       — six items) in the §17 entry explicitly                               (ubiquitous)
 - 7.3  THE SYSTEM SHALL note the recorded ceilings in §14/§17: task-level
        parallelism not built (sequential by design; Stage-2 REQ-4.2's
        "Stage 4: task workers" clause deliberately not exercised — A20),
