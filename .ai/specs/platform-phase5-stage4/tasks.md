@@ -6,7 +6,7 @@
 > in one pass (it may touch many files). Decompose into sub-steps yourself at
 > execution time — do NOT pre-split tasks here.
 
-- [ ] 1. Schema + core graph module (pure foundations) — governance
+- [x] 1. Schema + core graph module (pure foundations) — governance
      `.ai/schemas/task-graph.schema.json` + embedded `TASK_GRAPH_SCHEMA` +
      `validateTaskGraphShape` (`console/backend/src/task-graph-schema.ts`) +
      parity/shape tests ตาม design D1; core `core/src/graph/graph.ts`
@@ -19,6 +19,31 @@
      run-scoped projection semantics เป็น literal ใน test). Done = ทุกกิ่ง
      REQ-1/REQ-3/4.1 มี test เขียว, core ปลอด vendor name.
      Satisfies: REQ-1 (all), REQ-3 (all), REQ-4.1. Verify: pnpm -C core test && pnpm -C console/backend test task-graph-schema && pnpm typecheck.
+     Evidence:
+       - test: `pnpm -C core test` -> 282 passed / 0 failed (graph.test.ts 19 +
+         select.test.ts 10 = 29 new; ทุก criterion REQ-3.1-3.14 มี case ของตัวเอง
+         + collect-all-reasons + structural standalone; select ปิด REQ-4.1
+         dep-set/file-order/started/lease-fold/risk-ไม่ใช่-input)
+       - test: `pnpm -C console/backend test task-graph-schema` -> 353 passed /
+         0 failed; ยิงไฟล์เดี่ยว `node --test --test-reporter spec
+         'src/task-graph-schema.test.ts'` (ใน console/backend) -> 9 passed / 0
+         failed (parity deep-equal + REQ-1.1/1.3/1.4/1.5)
+       - typecheck: `pnpm typecheck` -> clean ทั้ง 6 workspace projects
+       - lint: `pnpm lint` -> ESLint: No issues found
+       - vendor: `bash scripts/check-core-vendor-free.sh` -> OK (INV-7)
+       - viewports: n/a — logic-only
+       - deviations: (1) `TaskGraphGateError` เขียน field + assignment ใน
+         constructor แทน parameter property `readonly reasons` ตามภาพร่าง D3 —
+         `erasableSyntaxOnly: true` ใน tsconfig.base.json ห้าม parameter
+         property (สัญญาภายนอกเหมือนเดิม: `readonly reasons: string[]`);
+         (2) เพิ่ม export block ของ `graph/` ใน `core/src/index.ts` (design D3
+         ไม่ได้ระบุ) — จำเป็นเพราะ `core/package.json` exports แค่
+         `.`/`./ports`/`./types` ดังนั้น composition (task 4) import จาก root
+         ได้ทางเดียว; (3) คำสั่ง verify `pnpm -C console/backend test
+         task-graph-schema` — arg ท้ายเป็น no-op กับ test script ของ package นี้
+         (node --test เมิน pattern ที่ไม่ match) จึงรันทั้ง suite ไม่ได้ filter
+         — ไม่มีไฟล์ test เดิมถูกแก้ (`git status` = M เฉพาะ core/src/index.ts
+         + core/src/types.ts, ที่เหลือเป็นไฟล์ใหม่)
 
 - [ ] 2. Generator task-graph emission — `scripts/spec_to_goal.py`:
      `TASK_HEAD_RE` (รับ indent), title extraction + fallback + truncate 120,
