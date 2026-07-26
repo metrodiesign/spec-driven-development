@@ -340,9 +340,11 @@ so that a multi-task feature runs end-to-end without a human hand-feeding task i
        per-task summary when `result.tasks` is present (A9)                   (event-driven)
 - 4.11 WHERE multi-task mode runs THE SYSTEM SHALL extend the run result
        additively with `tasks: [{id, finalState, iterations}]` — labels
-       `NOT_STARTED` (run ended before selection, incl. failed lease
-       claims and kill-switch stop) and `SKIPPED` (a dependency ended
-       outside the dep-satisfied set) for never-executed tasks — derive
+       `NOT_STARTED` (never selected: run ended, kill-switch stop, failed
+       lease claim, or a dependency that itself never ran) and `SKIPPED`
+       (a dependency EXECUTED and ended outside the dep-satisfied set —
+       propagated transitively; amended during task 4, recorded in its
+       Evidence) for never-executed tasks — derive
        the run-level `finalState` by precedence CANCELLED > ESCALATED >
        BLOCKED > REVIEWING > COMPLETED over per-task end states
        (SKIPPED/NOT_STARTED/CHANGES_REQUESTED/QUARANTINED count as BLOCKED
