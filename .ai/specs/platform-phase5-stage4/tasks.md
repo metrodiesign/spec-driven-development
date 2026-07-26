@@ -223,7 +223,7 @@
          package ของ task ก่อนหน้าค้างใน Map ได้ (ไม่มี `approval.timeoutMs`) เป็นเส้นที่
          `pendingApprovalResolve` เป็น null อยู่แล้ว.
 
-- [ ] 5. Fault-injection + calibration fixtures + wiring tests — design D6:
+- [x] 5. Fault-injection + calibration fixtures + wiring tests — design D6:
      `core/test/task-graph.fault-injection.test.ts` (TG#1a/2a pure gate);
      `console/backend/src/loop-run-graph.fault-injection.test.ts`
      (TG#1b/2b REJECTED+no-dispatch บนเส้น production, TG#3 dep ordering
@@ -235,6 +235,87 @@
      isolation, approval targeting, kill switch → NOT_STARTED + CANCELLED.
      Done = ชุดใหม่เขียวทั้งหมด + suite เดิมเขียว.
      Satisfies: REQ-6 (all criteria). Depends on: 4. Verify: pnpm -C core test && pnpm -C console/backend test.
+     Evidence:
+       - test: `pnpm -C core test` -> 284 passed / 0 failed (baseline บน HEAD dfb4224 =
+         282; +2 = ไฟล์ใหม่ `core/test/task-graph.fault-injection.test.ts`); ยิงไฟล์เดี่ยว
+         `node --test --test-reporter spec 'test/task-graph.fault-injection.test.ts'`
+         (ใน core) -> 2 passed / 0 failed = TG#1a (REQ-6.1 uncovered AC: reasons ระบุ
+         AC-2 และ**ไม่**ระบุ AC-1 ที่ถูกครอบ) + TG#2a (REQ-6.2 orphan: reasons ระบุ T-2
+         และไม่ระบุ T-3 ที่ประกาศ `enabling` เป็น control ในกราฟเดียวกัน); contract
+         ฝั่งนี้สร้างด้วย `freezeContract` จริง ไม่ใช่ literal ปลอม
+       - test: `pnpm -C console/backend test` -> 375 passed / 0 failed (baseline = 363; +12)
+       - test: `node --test --test-reporter spec 'src/loop-run-graph.fault-injection.test.ts'`
+         (ใน console/backend) -> 5 passed / 0 failed = TG#1b + TG#2b (REQ-6.1/6.2 สอง
+         reject class ผ่าน `runSupervisedLoop` จริง: `TASK_GRAPH_REJECTED` 1 ใบ +
+         BLOCKED + iterations 0 + ทุก task NOT_STARTED + **adapterFactory ไม่เคยถูกเรียก**
+         + TASK_STATE/ACTION_INTENT/ACTION_APPLIED/PROPOSAL_INTENT/LEASE_CLAIMED = 0 ทั้งหมด),
+         TG#3 (REQ-6.3 dep ordering จาก seq ของ log: TASK_STATE แรกของ T-B > seq ที่ T-A
+         ถึง PASSED + ไม่มี event ใดของ T-B ก่อนหน้านั้นนอกจาก LEASE_CLAIMED; ยืนยันก่อนว่า
+         ทั้งคู่รันจริงเพื่อไม่ให้ ordering proof กลวง), TG#4 (REQ-6.4 chain 3 task,
+         T-2 โกหก READY_FOR_VERIFICATION ทุกรอบโดย marker ไม่เคยถูกแก้ -> ESCALATED,
+         **ไม่มี PASSED ใน state ของ T-2 เลย**, T-3 = SKIPPED และไม่มี event สักใบ,
+         run = ESCALATED ตามเส้นที่ T-2 จบ), branch isolation (D1: สอง task เขียนคนละไฟล์
+         ทั้งคู่ถึง REVIEWING -> diff ที่ **เข้า approval package จริง** (อ่านจาก evidence
+         store ของ run) ของ task 2 ไม่มีไฟล์ของ task 1 และของ task 1 ก็ไม่มีของ task 2)
+       - test: `node --test --test-reporter spec 'src/loop-run-graph.test.ts'` (ใน
+         console/backend) -> 10 passed / 0 failed = 3 เดิมของ task 4 (ไม่แก้แม้บรรทัดเดียว)
+         + 7 ใหม่: **REQ-6.5** fixture คู่จริงจาก `.ai/calibration/` โหลดผ่าน edge จริง
+         (`loadGoalContract` + `validateTaskGraphShape` -> [] ) -> ทั้งสอง task ถึง
+         REVIEWING, calibration.n = 2, FROZEN ครั้งเดียวและ `graphHash` = sha256 ของ
+         bytes ไฟล์ที่ ship จริง; REQ-4.12 budget fresh (`maxIterations` = 1 non-default
+         -> แต่ละ task ได้ 1 รอบของตัวเอง, run ใช้ 2 รอบ **มากกว่า cap ต่อ task**);
+         REQ-4.6 `leaseTtlMs` = 111_111 (non-default; default ของ contract นี้ = 360_000)
+         ปรากฏใน `leaseUntil` ของทั้งสอง claim; REQ-4.6 lease-fail (pre-claim T-2 ด้วย
+         ownerId `OTHER-RUN` -> T-2 = NOT_STARTED **ไม่ใช่ SKIPPED**, run BLOCKED,
+         LEASE_CLAIMED ของ T-2 มีใบเดียวคือของ OTHER-RUN); REQ-4.13 golden isolation
+         (AC-1 golden / AC-2 ไม่ golden, risk L1 -> T-1 auto-merge COMPLETED, T-2
+         REVIEWING + เป็น task เดียวที่มี APPROVAL_PACKAGE_CREATED — assert เดียวจับการรั่ว
+         **ได้ทั้งสองทาง**); REQ-4.14 approval targeting ผ่าน HTTP จริงของ Human Plane
+         (ดู deviation 3); REQ-4.15 kill ระหว่าง task (adapter ยิง POST /kill กลางรอบของ
+         T-1 -> T-1 จบ REVIEWING ตามปกติ, T-2 = NOT_STARTED และ**ไม่มี event ใดเลย**,
+         run = CANCELLED)
+       - test: `pnpm -C aal test` -> 143 passed / 0 failed (ไม่ได้แตะ aal)
+       - typecheck: `pnpm typecheck` -> clean ทั้ง 6 workspace projects
+       - lint: `pnpm lint` -> ESLint: No issues found
+       - vendor: `bash scripts/check-core-vendor-free.sh` -> OK (INV-7)
+       - zero production-code edit: `git status --porcelain` -> ` M` เฉพาะ
+         `console/backend/src/loop-run-graph.test.ts` (ไฟล์ของ task 4 เอง — ขยายด้วย
+         test ใหม่, บรรทัดที่ถูกลบมีแค่ 3 บรรทัด import ที่กว้างขึ้น ตรวจด้วย
+         `git diff -U0 | grep -E '^-[^-]'`) + `??` ไฟล์ใหม่ 4 ไฟล์ (fault-injection
+         สองไฟล์ + calibration fixture คู่); ไม่มีไฟล์ production หรือ test เดิมถูกแก้
+       - viewports: n/a — logic-only, ไม่มี UI
+       - deviations: (1) **ไม่ได้ขยาย `makeFixture`** (`core/test/helpers/fixture.ts`)
+         ตามที่ design D6 เขียนไว้ — composition ไม่ได้ใช้ helper ตัวนั้นเลย:
+         `runSupervisedLoop` สร้าง fixture ของตัวเองด้วย `makeFixtureRepo()` ใน
+         `loop-run.ts` ซึ่งไม่รับ option และ core/test กับ console/backend import ข้ามกัน
+         ไม่ได้ (D8) -> option ที่เพิ่มจะไม่มี test ใดเรียกใช้ (dead helper ที่จะเน่า).
+         per-task target file ทำผ่านทางที่ inject ได้จริงแทน = adapter (`writesFiles`)
+         เขียน `src/only-task-one.txt`/`src/only-task-two.txt` เพิ่มจาก `src/impl.txt`
+         ที่ gate grep — พิสูจน์ branch isolation ได้แรงกว่าเดิมด้วย เพราะสิ่งที่ assert
+         คือ bytes ที่เข้า approval package จริงใน evidence store ไม่ใช่ diff ที่ test
+         คำนวณเอง. (2) `writesFiles` ต้อง **READ_FILE ไฟล์เป้าหมายในรอบแรกก่อน** แล้วค่อย
+         WRITE ในรอบถัดไป: AAL source ปฏิเสธ WRITE ไป path ที่ไม่อยู่ใน context bundle และ
+         ไม่เคยถูก READ_FILE-request (`context_violation`, `aal/src/source.ts:357-368`);
+         ไฟล์ใหม่ยังไม่มีจริง read จึงถูกปฏิเสธว่า `file not found` ซึ่งไม่เป็นไร — สิ่งที่
+         write ต้องการคือ provenance record ไม่ใช่ bytes (พบตอน implement: เวอร์ชันแรกที่
+         write ตรง ๆ ทำให้ task จบ ESCALATED ด้วย `budget:iterations`). (3) **approval
+         targeting: `{ok:false, detail:'unknown_task'}` เอื้อมไม่ถึงจาก HTTP surface ที่
+         ประกอบอยู่วันนี้** — `core/src/human/api.ts:110` หา `pkg` จาก `deps.approvals`
+         ก่อนแล้วค่อยเรียก `onDecision(pkg.taskId, ...)`; guard ที่ `loop-run.ts:601`
+         สแกน `approvals.values()` หา taskId เดียวกันนั้น จึงเป็นจริงเสมอเมื่อ `pkg` มี
+         และเมื่อไม่มี HTTP ตอบ 404 `no_such_approval` ตั้งแต่ก่อนถึง `onDecision`.
+         **ไม่แก้ production code** (guard เป็นการกันของ port ไม่ใช่ defect ที่มีอาการ และ
+         REQ-4.14 สะกด shape นี้ไว้เอง) — test พิสูจน์คุณสมบัติที่ REQ-4.14 ต้องการจริงและ
+         เอื้อมถึงได้แทน: decision ที่ระบุ task ซึ่งไม่มี package pending ถูกปฏิเสธ (404)
+         **โดยไม่แตะ package ของ task ที่กำลัง active** และ decision แต่ละใบลงที่ task ที่มัน
+         ระบุ (APPROVAL_RECORDED + TASK_STATE:APPROVED ต่อ taskId, ทั้งคู่จบ COMPLETED)
+         -> task 6 ควรบันทึกเป็น ceiling/ข้อสังเกตใน §17. (4) TG#4 ใช้ FakeAdapter behavior
+         `exhaust_hypotheses` เป็นตัวโกหก (claim READY_FOR_VERIFICATION + เขียน marker ผิด
+         + hypotheses ที่ไม่มีวัน confirm) ทำให้ T-2 จบ `ESCALATED`; design D6 ไม่ได้ระบุ
+         end state ของ TG#4 ไว้ ระบุแค่ "ไม่มีวัน PASSED + dependent ไม่ถูกเลือก" ซึ่ง
+         assert ครบทั้งสองข้อ. (5) `.ai/calibration/fixture-goal-graph.yaml` pin
+         `risk: L2` ไว้ชัดเจน (ต่างจาก `fixture-goal.yaml` ที่ปล่อยว่างแล้วพึ่ง default)
+         — REQ-6.5 วัดที่ REVIEWING จึงไม่ควรให้ผลลัพธ์ขึ้นกับ default ที่อาจเปลี่ยน
 
 - [ ] 6. Constitution v1.7 + assembly trace — `unified-platform-spec.md`:
      banner v1.7, §14 Stage-4 ส่งมอบแล้ว + ceilings, §17 changelog v1.7
