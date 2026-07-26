@@ -343,9 +343,11 @@ Split ตาม package reality (D8 — `core/test` import จาก `console/` 
     ไม่มีวัน PASSED, T-3 = `SKIPPED`, run precedence ตามเส้นที่ T-2 จบ
   - Branch isolation (D1): 2 tasks แตะคนละไฟล์ ทั้งคู่ถึง REVIEWING → assert diff
     ของ approval package task 2 ไม่มีไฟล์ของ task 1
-- fixture ขยาย: `makeFixture` เพิ่ม option สร้าง target file ต่อ task
-  (`src/impl-<taskId>.txt` + `run-tests.sh` ตรวจตามไฟล์ที่ระบุ) — additive,
-  สัญญาเดิม (`impl.txt`) คงไว้ให้ test เก่า
+- fixture: แผนเดิม (ขยาย `makeFixture` ต่อ task) ถูกแทนตอน implement — composition
+  ไม่ได้ใช้ helper นั้น (`runSupervisedLoop` สร้าง fixture เองผ่าน `makeFixtureRepo()`
+  และ core/test ↔ console import ข้ามกันไม่ได้ตาม D8) → per-task behavior inject ผ่าน
+  scripted adapter แทน และ assert จาก diff bytes ใน evidence store จริง (amended
+  during task 5, recorded in its Evidence)
 - Calibration fixtures: `.ai/calibration/fixture-goal-graph.yaml` (ไม่มี `deploy:` —
   3.13; `max_total_tasks` ≥ จำนวน task) + `.ai/calibration/fixture-task-graph.json`
   (2 tasks, T-2 dep T-1, ครอบทุก AC, `goal_id` ตรง) — ผ่าน `freezeTaskGraph` จริง
