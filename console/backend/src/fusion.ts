@@ -151,7 +151,12 @@ export const PLAN_SCHEMA: Record<string, unknown> = {
 
 export interface PlannerFusionOptions {
   runId: string;
-  taskId: string;
+  /**
+   * null in multi-task mode (phase5-stage4): this dispatch is per-RUN and happens
+   * before any task is selected, so its events carry no task id rather than a real
+   * graph task's — same shape KILL_REQUESTED already uses. Single-task passes 'T-1'.
+   */
+  taskId: string | null;
   /** SAME router instance the task loop uses — whatever mode governance pinned (AZ-13). */
   router: Router;
   dispatcher: ReturnType<typeof createDispatcher>;
@@ -162,6 +167,12 @@ export interface PlannerFusionOptions {
   ids: { requestId(): string; canary(): string };
   /** Panel input is pinned to the frozen contract's goal + ACs — nothing else (REQ-16.2). */
   taskContract: { goalId: string; title: string; objective: string; acceptanceCriteria: { id: string; description: string }[] };
+  /**
+   * The frozen task graph, serialized (phase5-stage4 REQ-5.1) — present only in
+   * multi-task mode, where it becomes the panel's single context piece. Absent ->
+   * the empty bundle below, byte-identical to the single-task behavior (REQ-5.2).
+   */
+  taskGraphJson?: string;
 }
 
 export interface PlannerFusionResult {
@@ -180,8 +191,13 @@ export interface PlannerFusionResult {
  * called. PLAN_RESOLVED is appended regardless of outcome so the event log always
  * records whether resolution produced a usable plan — a `winner:false` (escalate,
  * or a structurally invalid winner) never blocks the task loop, it simply proceeds
- * without a plan piece (the "structural validation only, no full planning gate"
- * ceiling design.md draws around this whole mechanism).
+ * without a plan piece.
+ *
+ * The plan itself stays ADVISORY: it is validated structurally against PLAN_SCHEMA
+ * and nothing more (phase5-stage4 REQ-5.3). The deterministic planning gate that
+ * CAN stop a run lives elsewhere — `freezeTaskGraph` (core/src/graph/) gates the
+ * promoted task graph before any dispatch (§11.2: uncovered ACs, orphan tasks,
+ * cycles, per-task diff budget), which is also what supplies the graph piece below.
  */
 export async function runPlannerFusion(opts: PlannerFusionOptions): Promise<PlannerFusionResult> {
   const canaryToken = opts.ids.canary();
@@ -190,9 +206,21 @@ export async function runPlannerFusion(opts: PlannerFusionOptions): Promise<Plan
     requestId: opts.ids.requestId(),
     agentRole: 'planner',
     taskContract: opts.taskContract,
-    // Pinned to the frozen goal+ACs only (REQ-16.2) — an empty bundle, never repo/file
-    // context (a single-task composition has no task graph to plan over).
-    contextBundle: { pieces: [], canaryToken, stats: { bytes: 0, pieceCount: 0 } },
+    // Pinned to the frozen goal+ACs (REQ-16.2), never repo/file context. Multi-task
+    // mode adds exactly ONE piece: the frozen task graph the run is executing
+    // (phase5-stage4 REQ-5.1), MARKed as data under this request's canary like any
+    // other piece. `kind: 'contract'` is a pathless kind (provider-data-policy.json),
+    // so the graph travels without a path allowlist entry; it is not run through the
+    // context builder's secret scan — acceptable because a graph is an artifact a
+    // human promoted by hand. Single-task keeps the empty bundle (REQ-5.2).
+    contextBundle:
+      opts.taskGraphJson === undefined
+        ? { pieces: [], canaryToken, stats: { bytes: 0, pieceCount: 0 } }
+        : {
+            pieces: [{ id: 'task-graph', kind: 'contract', content: opts.taskGraphJson, reason: 'task_graph' }],
+            canaryToken,
+            stats: { bytes: opts.taskGraphJson.length, pieceCount: 1 },
+          },
     manifestRef,
     outputSchema: PLAN_SCHEMA,
     toolDefs: [],
@@ -218,13 +246,16 @@ export async function runPlannerFusion(opts: PlannerFusionOptions): Promise<Plan
     if (check.valid) {
       const content = JSON.stringify(outcome.winner.structuredResult);
       opts.evidence.put(content); // stored as evidence (REQ-16.5)
-      plan = { id: `plan-${opts.taskId}`, content };
+      plan = { id: `plan-${opts.taskId ?? 'run'}`, content };
     }
   }
   // Best-effort panel size (REQ-16.5's PLAN_RESOLVED.panelSize): the FUSION_PANEL
   // THIS call itself just appended, 0 when fusion escalated before a panel ever
   // formed (budget_cap/panel_degraded pre-dispatch).
-  const panelSize = (opts.log.all({ taskId: opts.taskId, type: 'FUSION_PANEL' }).at(-1)?.payload['size'] as number | undefined) ?? 0;
+  const panelSize =
+    (opts.log
+      .all({ ...(opts.taskId !== null ? { taskId: opts.taskId } : {}), type: 'FUSION_PANEL' })
+      .at(-1)?.payload['size'] as number | undefined) ?? 0;
   opts.log.append({
     runId: opts.runId,
     taskId: opts.taskId,

@@ -148,7 +148,7 @@
          เท่ากัน จึงไม่ใช่สิ่งที่ชั้น 1 แก้ได้; **task 4 ต้องตัดสินใจ** ว่า fusion event
          ควรติดป้าย taskId อะไรใน multi-task mode (ดู handoff task-3 ข้อ Landmines)
 
-- [ ] 4. Multi-task driver + CLI + planner fusion piece — design D4 ชั้น 2
+- [x] 4. Multi-task driver + CLI + planner fusion piece — design D4 ชั้น 2
      ทั้งหมด: `opts.taskGraph {rawBytes, parsed}` + single freeze หลังเปิด
      log (FROZEN/REJECTED + frozenSeq scope), driver loop (kill poll →
      select → claim(TTL = wallclock+5m default, override option) → branch
@@ -165,6 +165,63 @@
      พื้นฐาน (mode selection, single-task regression shape) — wiring tests
      เชิงลึกอยู่ task 5. Done = test ใหม่ + suite เดิมเขียวทั้ง workspace.
      Satisfies: REQ-4.2, REQ-4.4-4.15, REQ-5 (all). Depends on: 3. Verify: pnpm -C console/backend test && pnpm -C core test && pnpm typecheck && pnpm lint.
+     Evidence:
+       - test: `pnpm -C console/backend test` -> 363 passed / 0 failed (baseline ก่อนแก้
+         บน HEAD bbd4e19 = 360/360; +3 = ไฟล์ใหม่ `src/loop-run-graph.test.ts`); ยิงไฟล์
+         เดี่ยว `node --test --test-reporter spec 'src/loop-run-graph.test.ts'` (ใน
+         console/backend) -> 3 passed / 0 failed = single-task regression (ไม่มี field
+         `tasks`, key order เดิม 6 ตัว, ไม่มี TASK_GRAPH_FROZEN), happy 2-task run
+         (T-2 dep T-1: ทั้งคู่ถึง REVIEWING, tasks[] เรียงตาม graph, iterations = Σ,
+         calibration.n = 2, FROZEN ครั้งเดียว + LEASE_CLAIMED/RELEASED ครบสองตัว,
+         ลำดับจาก event seq ยืนยันว่า T-2 เริ่มหลัง T-1 ถึง REVIEWING), gate reject
+         (uncovered AC -> TASK_GRAPH_REJECTED + BLOCKED + ทุก task NOT_STARTED +
+         **adapterFactory ไม่เคยถูกเรียก** + ไม่มี TASK_STATE ใดเลย)
+       - test: `pnpm -C core test` -> 282 passed / 0 failed (core แตะแค่ comment ของ
+         `maxTotalTasks`)
+       - test: `pnpm -C aal test` -> 143 passed / 0 failed (aal แตะแค่ type ของ
+         `FusionDeps.taskId` -> `string | null`)
+       - typecheck: `pnpm typecheck` -> clean ทั้ง 6 workspace projects
+       - lint: `pnpm lint` -> ESLint: No issues found
+       - vendor: `bash scripts/check-core-vendor-free.sh` -> OK (INV-7)
+       - zero test-file edit (REQ-4.3 ต่อเนื่องจาก task 3): `git status --porcelain` ->
+         M เฉพาะ `.ai/schemas/plan.schema.json`, `aal/src/fusion/run.ts`,
+         `console/backend/bin/platform.ts`, `console/backend/src/fusion.ts`,
+         `console/backend/src/loop-cli.ts`, `console/backend/src/loop-run.ts`,
+         `core/src/contract/contract.ts` + `??` ไฟล์ test ใหม่;
+         `git diff --name-only | grep -c test` -> `0`
+       - viewports: n/a — logic-only, ไม่มี UI
+       - deviations: (1) **planner fusion taskId = `null` ใน multi-task mode**
+         (landmine 1 ของ handoff task-3): block นี้เป็น per-run รันก่อนเลือก task ใด ๆ
+         และ `'T-1'` เป็น id ของ task จริงในกราฟ — ถ้าคงไว้ event ของ planning จะถูก
+         ติดป้ายเป็นของ task ที่ยังไม่เริ่ม (หรืออาจไม่ได้รันเลย). ขยาย type สองจุด:
+         `PlannerFusionOptions.taskId` และ `FusionDeps.taskId` (`aal/src/fusion/run.ts`)
+         เป็น `string | null` (ใช้เฉพาะใน `log.append` ซึ่งรับ null อยู่แล้ว — precedent
+         `KILL_REQUESTED` ที่ `core/src/human/api.ts:162`); ผลข้างเคียงสองจุดใน
+         `console/backend/src/fusion.ts`: plan id fallback เป็น `plan-run` และ
+         FUSION_PANEL lookup ตัด filter `taskId` ทิ้งเมื่อเป็น null (multi-task มี panel
+         เดียวต่อ run อยู่แล้ว). single-task ยังส่ง `'T-1'` เหมือนเดิมทุก byte.
+         (2) **branch hygiene แยกสองที่**: driver ทำ 3 ขั้นแรก (`checkout main` ->
+         `reset --hard main` -> `clean -fd`) ก่อนเรียก executeTask ส่วนขั้นที่ 4
+         (`checkout -b task/<id>`) ยังอยู่ใน executeTask ที่ task 3 วางไว้ — ครบ 4 ขั้น
+         ต่อ task ตาม D1 โดย single-task ไม่ได้ git op เพิ่มแม้แต่คำสั่งเดียว.
+         (3) `executeTask(taskId, graphTask?)` — เพิ่ม parameter ที่สองแบบ optional แทน
+         การเปลี่ยน signature เป็น task object เพื่อให้ call site ของ single-task เหมือน
+         เดิม; `graphTask` เป็นตัวคุมทั้ง `taskAcs` (REQ-4.13) และ `maxDiffBudget`
+         (REQ-4.5). (4) เซต `closed` (unselectable) fold **ทั้ง lease-fail และ task ที่
+         execute จบแล้ว** — design ระบุแค่ lease-fail; ถ้า task ใดจบโดยไม่มี TASK_STATE
+         เลย projection จะเลือกมันซ้ำไม่รู้จบ นี่คือกันลูปค้าง. (5) event
+         `TASK_GRAPH_FROZEN`/`TASK_GRAPH_REJECTED` append ด้วย `taskId: null` (run-scoped
+         — design ไม่ได้ระบุ; เหตุผลเดียวกับ (1)). (6) label ของ dependent ที่ dep
+         claim lease ไม่ได้ = `NOT_STARTED` ไม่ใช่ `SKIPPED` (REQ-4.11: SKIPPED = "dep
+         ended outside the dep-satisfied set" — dep ที่ไม่เคยรันไม่ได้ "end" อะไรเลย);
+         SKIPPED แพร่จาก task ที่ execute จริงแล้วจบนอกเซต + แพร่ต่อแบบ transitive
+         (fixpoint loop เพราะ graph file order ไม่การันตี topological). (7) guard
+         `unknown_task` ใน `onDecision` เปิดเฉพาะ multi-task mode — single-task มี task
+         เดียว การเพิ่ม check ที่นั่นจะเปลี่ยน `detail` ของ refusal เดิมโดยไม่ได้อะไร.
+         (8) ไม่แตะ `pendingApprovalResolve` (landmine 3): sequential + guard ข้อ (7)
+         ทำให้ decision ที่ resolve wait ได้ต้องมี package pending อยู่จริง และเส้นที่
+         package ของ task ก่อนหน้าค้างใน Map ได้ (ไม่มี `approval.timeoutMs`) เป็นเส้นที่
+         `pendingApprovalResolve` เป็น null อยู่แล้ว.
 
 - [ ] 5. Fault-injection + calibration fixtures + wiring tests — design D6:
      `core/test/task-graph.fault-injection.test.ts` (TG#1a/2a pure gate);

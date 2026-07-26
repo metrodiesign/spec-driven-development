@@ -28,7 +28,8 @@ export interface CandidateEvidenceRunner {
 
 export interface FusionDeps {
   runId: string;
-  taskId: string;
+  /** null for a run-scoped dispatch that precedes any task (planner-role fusion over a task graph). */
+  taskId: string | null;
   router: Router;
   dispatcher: ReturnType<typeof createDispatcher>;
   /** REQUIRED for code_diff/tests artifacts (gate evidence per candidate). */

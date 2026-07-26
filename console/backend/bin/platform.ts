@@ -21,6 +21,7 @@ import {
   latestConformanceRecordPath,
   LIVE_CONFIRM_PHRASE,
   loadGoalContract,
+  loadTaskGraphOption,
   mungeProjectDir,
   readConformanceRecord,
 } from '../src/loop-cli.ts';
@@ -371,6 +372,9 @@ async function runLoop(rest: string[]): Promise<void> {
     process.exit(2);
   }
   const contract = loadGoalContract(values.goal as string);
+  // phase5-stage4 REQ-4.10: a promoted task-graph.json beside goal.yaml turns the run
+  // multi-task. Absent -> undefined -> the single-task path, unchanged (REQ-4.3).
+  const taskGraph = loadTaskGraphOption(values.goal as string);
   // Preflight order (REQ-18.2): governance gate first, for EVERY run (stub or live)
   // — an unapproved policy never runs. The automation guard is live-only (below).
   governancePreflight();
@@ -425,6 +429,7 @@ async function runLoop(rest: string[]): Promise<void> {
       // timeoutMs is what enables the blocking wait — the stub path below omits it so
       // CI never hangs on a human that isn't there (PR #50 review).
       approval: { timeoutMs: 30 * 60_000 },
+      ...(taskGraph !== undefined ? { taskGraph } : {}),
       auditSink: auditAppend,
       adapterFactory: (put) =>
         createLiveAnthropicAdapter({
@@ -447,6 +452,7 @@ async function runLoop(rest: string[]): Promise<void> {
         `fusionUplift: ${result.fusionUplift.available ? 'available' : 'not available (task-12 side script only)'}.\n` +
         `Record /usage before/after in docs/calibration/ (billing proof, manual — §15.4).\n`,
     );
+    printTaskSummary(result.tasks);
     return;
   }
 
@@ -460,6 +466,7 @@ async function runLoop(rest: string[]): Promise<void> {
     contract,
     clock: { now: () => Date.now() },
     autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
+    ...(taskGraph !== undefined ? { taskGraph } : {}),
     auditSink: auditAppend,
     adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
   });
@@ -467,6 +474,16 @@ async function runLoop(rest: string[]): Promise<void> {
     `platform loop run (stub adapter, no quota): goal ${contract.goal.id} -> ${result.finalState} ` +
       `(${result.iterations} iterations); calibration is HARNESS MATH only, not a §12 metric.\n`,
   );
+  printTaskSummary(result.tasks);
+}
+
+/** Per-task lines under the run summary — multi-task runs only (phase5-stage4 REQ-4.10). */
+function printTaskSummary(tasks?: { id: string; finalState: string; iterations: number }[]): void {
+  if (tasks === undefined) return;
+  process.stdout.write(`tasks (${tasks.length}):\n`);
+  for (const t of tasks) {
+    process.stdout.write(`  ${t.id}: ${t.finalState} (${t.iterations} iterations)\n`);
+  }
 }
 
 /** Read one line from stdin (interactive live confirmation). Pauses stdin after — a flowing TTY handle would keep the process alive forever. */
