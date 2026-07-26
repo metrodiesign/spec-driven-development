@@ -392,7 +392,12 @@ export async function runSupervisedLoop(opts: {
   const evidence = createEvidenceStore(join(stateDir, 'evidence'));
   const RUN_ID = 'RUN-LIVE';
   const TASK_ID = 'T-1';
-  const TASK_BRANCH = `task/${TASK_ID}`;
+  // Run-level closures (breaker callback, router wrappers, human-plane handlers, the
+  // post-run lesson fold) outlive any single task, so they read the CURRENTLY executing
+  // task id instead of binding one at construction (design D4 layer 1). `executeTask`
+  // sets it; the single-task path never moves it off T-1.
+  let activeTask: string = TASK_ID;
+  const activeTaskId = (): string => activeTask;
   // shadowProven thresholds for the calibration snapshot (REQ-24.2) — threaded from
   // routing.json's outcomeRouting block via opts, not hard-coded (PR #50 review).
   const shadowProof = {
@@ -400,34 +405,15 @@ export async function runSupervisedLoop(opts: {
     minDivergences: opts.outcomeRouting?.minDivergences ?? 1,
   };
   try {
-    // Deferred quarantine (REQ-9.5): a flaky_quarantine approved via the CLI while no
-    // run was live takes effect when the next run LOADS that task — never runs it.
-    if (opts.governanceLogPath !== undefined) {
-      const deferred = pendingQuarantines(readGovernanceLog(opts.governanceLogPath));
-      if (deferred.includes(TASK_ID)) {
-        log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: 'QUARANTINED', trigger: 'quarantine', deferred: true } });
-        return {
-          finalState: 'QUARANTINED',
-          iterations: 0,
-          calibration: computeCalibration({ heldOut: [false], reruns: [] }),
-          ...calibrationExtras(log, shadowProof),
-        };
-      }
-    }
-    // Merge topology (REQ-7.1): each task runs on its own `task/<taskId>` branch,
-    // created from the fixture main BEFORE the loop so the executor's snapshot commits
-    // land on it; auto-merge merges it into main with --no-ff (one revert target).
-    git(fx.wt, 'checkout', '-q', '-b', TASK_BRANCH);
     const adapter = opts.adapterFactory((s) => evidence.put(s));
     // Breaker + quota-aware routing (REQ-1/2/3): transitions become events; a live
     // adapter may expose a health probe (REQ-2.5), the Fake has none (always-ok).
     const breaker = createBreaker(DEFAULT_BREAKER_OPTIONS, () => clock.now(), (t) =>
-      log.append({ runId: 'RUN-LIVE', taskId: 'T-1', type: 'BREAKER_STATE_CHANGED', payload: { ...t } }),
+      log.append({ runId: RUN_ID, taskId: activeTaskId(), type: 'BREAKER_STATE_CHANGED', payload: { ...t } }),
     );
     const reg = createRegistry({ breaker });
     const healthProbe = (adapter as { healthProbe?: () => Promise<AdapterHealth> }).healthProbe;
     reg.register(adapter, opts.conformanceRecord ?? passingRecord(adapter.manifest().adapterId), healthProbe);
-    const budget = createBudget(opts.contract.budget, clock);
     // Outcome-routing mode wiring (REQ-14.3). Absent -> 'shadow', preserving the
     // Phase-3 unconditional-recorder behavior byte-identical for every existing
     // caller. 'active' wraps the outcome reorder FIRST, then shadow OUTSIDE it,
@@ -442,14 +428,17 @@ export async function runSupervisedLoop(opts: {
         epsilonPercent: opts.outcomeRouting?.epsilon ?? 0,
         // Durable round count (OUTCOME_ROUTE events so far this run+task) so a
         // process restart mid-run never repeats an already-explored round (REQ-15.3).
-        exploreKey: () => `${RUN_ID}:${TASK_ID}:${log.all({ type: 'OUTCOME_ROUTE', taskId: TASK_ID }).length}`,
+        exploreKey: () => `${RUN_ID}:${activeTaskId()}:${log.all({ type: 'OUTCOME_ROUTE', taskId: activeTaskId() }).length}`,
         log,
         runId: RUN_ID,
-        taskId: TASK_ID,
+        // Both wrappers read `deps.taskId` at call time, so a getter property keeps the
+        // per-run router recording against whatever task is executing (design D4 layer 1)
+        // without widening either wrapper's signature.
+        get taskId(): string { return activeTaskId(); },
       });
     }
     if (outcomeMode !== 'off') {
-      router = wrapRouterForShadow(router, { registry: reg, log, runId: RUN_ID, taskId: TASK_ID, stats: roundStats });
+      router = wrapRouterForShadow(router, { registry: reg, log, runId: RUN_ID, get taskId(): string { return activeTaskId(); }, stats: roundStats });
     }
     const taskContractExcerpt = {
       goalId: opts.contract.goal.id,
@@ -482,31 +471,6 @@ export async function runSupervisedLoop(opts: {
       });
       resolvedPlan = planned.plan;
     }
-    const source = createAALProposalSource({
-      runId: 'RUN-LIVE',
-      taskId: 'T-1',
-      // Shadow routing (REQ-7) + outcome routing ACTIVE (REQ-14/15): observes
-      // each round's live choice; 'active' mode additionally reorders it above.
-      router,
-      breaker,
-      worktreeDir: fx.wt,
-      taskContract: taskContractExcerpt,
-      seedPaths: ['src/impl.txt'],
-      evidence,
-      log,
-      ids,
-      outputSchema: { type: 'object', required: ['claim', 'actionRequests'], properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } } },
-      maxRepairRounds: 2,
-      budgetRemaining: () => budget.remaining(),
-      // REQ-16.5: a resolved plan is injected into every implementer round's context
-      // as MARKed data, same treatment as lessons below. Absent (no trigger fired,
-      // or fusion escalated/produced a structurally invalid plan) -> byte-identical
-      // to pre-Phase-4 behavior.
-      ...(resolvedPlan !== null ? { plan: resolvedPlan } : {}),
-      ...(opts.lessons !== undefined && opts.governanceLogPath !== undefined
-        ? { lessons: { dir: opts.lessons.dir, governanceLogPath: opts.governanceLogPath, ...(opts.lessons.maxLessons !== undefined ? { maxLessons: opts.lessons.maxLessons } : {}), ...(opts.lessons.maxBytes !== undefined ? { maxBytes: opts.lessons.maxBytes } : {}) } }
-        : {}),
-    });
     // Operability (REQ-18.1): a live Human Plane server makes the loop steerable and
     // killable while it runs. onDecision → machine transitions (task approvals);
     // steering/kill → the loop control port; governance approvals append to the
@@ -517,8 +481,10 @@ export async function runSupervisedLoop(opts: {
     // REQ-18.3: mirror every operability call into the console audit trail (the core
     // event log stays authoritative; this is the §13.3 audit JSONL the console owns).
     const audit = (entry: Record<string, unknown>): void => opts.auditSink?.({ at: clock.now(), ...entry });
-    const currentState = (): TaskState =>
-      (log.all({ type: 'TASK_STATE' }).at(-1)?.payload['state'] as TaskState) ?? 'PROPOSED';
+    // REQ-4.14: every task-state read is scoped to an explicit task id — a whole-log
+    // read would hand one task's state to another once more than one runs per log.
+    const currentState = (taskId: string): TaskState =>
+      (log.all({ type: 'TASK_STATE', taskId }).at(-1)?.payload['state'] as TaskState) ?? 'PROPOSED';
     // Approval decision wait (REQ-3.1/3.6): `onDecision`/`onKill` resolve this from the
     // HTTP thread; `waitForApprovalDecision` races it against a real timeout (REQ-3.4).
     // Single resolver in a closure var, same shape as `createLoopController`'s
@@ -538,7 +504,7 @@ export async function runSupervisedLoop(opts: {
         };
       });
     const onDecision: HandlerDeps['onDecision'] = (taskId, decision) => {
-      const tr = transition(currentState(), decision === 'approve' ? 'human_approved' : 'changes_requested');
+      const tr = transition(currentState(taskId), decision === 'approve' ? 'human_approved' : 'changes_requested');
       if (!tr.ok) return { ok: false, detail: tr.reason };
       log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: tr.next, trigger: decision } });
       audit({ event: 'approval', taskId, decision, state: tr.next });
@@ -552,9 +518,9 @@ export async function runSupervisedLoop(opts: {
       // separate delivery mechanism to build.
       const mode = opts.atNextBoundary ? 'next_boundary' : 'immediate';
       const evidenceRef = evidence.put(guidance);
-      log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GUIDANCE_INJECTED', payload: { evidenceRef, mode } });
+      log.append({ runId: RUN_ID, taskId: activeTaskId(), type: 'GUIDANCE_INJECTED', payload: { evidenceRef, mode } });
       guidanceQueue.push(guidance);
-      audit({ event: 'steer_inject', taskId: TASK_ID, evidenceRef, mode });
+      audit({ event: 'steer_inject', taskId: activeTaskId(), evidenceRef, mode });
       return { ok: true, evidenceRef };
     };
     const govLog = opts.governanceLogPath;
@@ -564,7 +530,7 @@ export async function runSupervisedLoop(opts: {
       onGovernanceApprove: (id) => {
         const res = applyGovernanceApproval({ logPath: govLog, id, clock }, {
           fireQuarantine: (tid) => {
-            const tr = transition(currentState(), 'quarantine');
+            const tr = transition(currentState(tid), 'quarantine');
             if (tr.ok) log.append({ runId: RUN_ID, taskId: tid, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'quarantine' } });
           },
           // REQ-11.2: a lesson_promote approved LIVE (through THIS run's own Human
@@ -573,7 +539,7 @@ export async function runSupervisedLoop(opts: {
           // at the NEXT run's `loadApprovedLessons` (aal/src/source.ts, REQ-11.3).
           ...(lessonsOpt !== undefined
             ? { promoteLesson: (lessonId: string) => {
-                promoteLesson({ dir: lessonsOpt.dir, lessonId, approvedAt: new Date(clock.now()).toISOString(), log, runId: RUN_ID, taskId: TASK_ID });
+                promoteLesson({ dir: lessonsOpt.dir, lessonId, approvedAt: new Date(clock.now()).toISOString(), log, runId: RUN_ID, taskId: activeTaskId() });
               } }
             : {}),
         });
@@ -616,13 +582,13 @@ export async function runSupervisedLoop(opts: {
         };
       });
     const onDeployDecision: HandlerDeps['onDeployDecision'] = (decision) => {
-      audit({ event: 'deploy_decision', taskId: TASK_ID, decision });
+      audit({ event: 'deploy_decision', taskId: activeTaskId(), decision });
       pendingDeployResolve?.(decision);
       return { ok: true };
     };
     const onDeployRollback: HandlerDeps['onDeployRollback'] = () => {
       if (deployDeps === null) return { ok: false, detail: 'not_expanded' };
-      audit({ event: 'deploy_manual_rollback', taskId: TASK_ID });
+      audit({ event: 'deploy_manual_rollback', taskId: activeTaskId() });
       // Capture any rejection HERE, on the single promise the `await manualRollback`
       // below reads. A clean non-zero rollback already resolves as ESCALATED via
       // runRollback; this only covers the rollback COMMAND execution itself throwing
@@ -633,7 +599,7 @@ export async function runSupervisedLoop(opts: {
       manualRollback = runManualRollback(deployDeps).catch((err) => {
         log.append({
           runId: RUN_ID,
-          taskId: TASK_ID,
+          taskId: activeTaskId(),
           type: 'DEPLOY_STATE',
           payload: { state: 'ESCALATED', trigger: 'rollback_failed', simulation: true, detail: (err as Error).message },
         });
@@ -660,7 +626,7 @@ export async function runSupervisedLoop(opts: {
           killDeployWaits();
         },
         rateOk: () => true,
-        steeringState: currentState,
+        steeringState: () => currentState(activeTaskId()),
         onPause: () => {
           audit({ event: 'steer_pause' });
           controller.requestPause();
@@ -677,13 +643,69 @@ export async function runSupervisedLoop(opts: {
         ...governance,
       },
     });
-    try {
+    /**
+     * One task's machinery end to end (design D4 layer 1): its own branch, budget,
+     * proposal source, executor, gate runner, task loop, and the auto-merge/approval/
+     * deploy decision that follows. Everything ABOVE this point is per-run and shared;
+     * everything inside is rebuilt per task, so a multi-task driver (task 4) can call
+     * it once per graph task. The single-task path calls it exactly once with T-1 —
+     * every value below then resolves to what it was before this became a closure.
+     */
+    const executeTask = async (taskId: string): Promise<{ finalState: string; iterations: number; reachedReviewing: boolean }> => {
+      activeTask = taskId;
+      const taskBranch = `task/${taskId}`;
+      // Deferred quarantine (REQ-9.5): a flaky_quarantine approved via the CLI while no
+      // run was live takes effect when the next run LOADS that task — never runs it.
+      if (opts.governanceLogPath !== undefined) {
+        const deferred = pendingQuarantines(readGovernanceLog(opts.governanceLogPath));
+        if (deferred.includes(taskId)) {
+          log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: 'QUARANTINED', trigger: 'quarantine', deferred: true } });
+          return { finalState: 'QUARANTINED', iterations: 0, reachedReviewing: false };
+        }
+      }
+      // Merge topology (REQ-7.1): each task runs on its own `task/<taskId>` branch,
+      // created from the fixture main BEFORE the loop so the executor's snapshot commits
+      // land on it; auto-merge merges it into main with --no-ff (one revert target).
+      git(fx.wt, 'checkout', '-q', '-b', taskBranch);
+      // REQ-4.12: a fresh tracker per task — task N's spend never depletes task N+1's.
+      // Single-task calls this exactly once, where the run used to.
+      const budget = createBudget(opts.contract.budget, clock);
+      // The ACs this task maps. Single-task maps the whole contract (Phase-2 REQ-7.2);
+      // narrowing to a graph task's `satisfies` (REQ-4.13) is task 4's change — here and
+      // at the auto-merge/approval sites below, which read `taskAcs` for that reason.
+      const taskAcs = opts.contract.acceptanceCriteria;
+      const taskExcerpt = { ...taskContractExcerpt, acceptanceCriteria: taskAcs.map((a) => ({ id: a.id, description: a.description })) };
+      const source = createAALProposalSource({
+        runId: RUN_ID,
+        taskId,
+        // Shadow routing (REQ-7) + outcome routing ACTIVE (REQ-14/15): observes
+        // each round's live choice; 'active' mode additionally reorders it above.
+        router,
+        breaker,
+        worktreeDir: fx.wt,
+        taskContract: taskExcerpt,
+        seedPaths: ['src/impl.txt'],
+        evidence,
+        log,
+        ids,
+        outputSchema: { type: 'object', required: ['claim', 'actionRequests'], properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } } },
+        maxRepairRounds: 2,
+        budgetRemaining: () => budget.remaining(),
+        // REQ-16.5: a resolved plan is injected into every implementer round's context
+        // as MARKed data, same treatment as lessons below. Absent (no trigger fired,
+        // or fusion escalated/produced a structurally invalid plan) -> byte-identical
+        // to pre-Phase-4 behavior.
+        ...(resolvedPlan !== null ? { plan: resolvedPlan } : {}),
+        ...(opts.lessons !== undefined && opts.governanceLogPath !== undefined
+          ? { lessons: { dir: opts.lessons.dir, governanceLogPath: opts.governanceLogPath, ...(opts.lessons.maxLessons !== undefined ? { maxLessons: opts.lessons.maxLessons } : {}), ...(opts.lessons.maxBytes !== undefined ? { maxBytes: opts.lessons.maxBytes } : {}) } }
+          : {}),
+      });
       // Hoisted (not inlined) so the deploy stage (REQ-6, post-COMPLETED) can run every
       // deploy command through this SAME executor instance.
       const executor = createExecutor({
         worktreeDir: fx.wt,
-        runId: 'RUN-LIVE',
-        taskId: 'T-1',
+        runId: RUN_ID,
+        taskId,
         log,
         evidence,
         policy: createDefaultPathPolicy(),
@@ -692,12 +714,12 @@ export async function runSupervisedLoop(opts: {
         ...(opts.toolHandlers !== undefined ? { toolHandlers: opts.toolHandlers } : {}),
       });
       const result = await runTaskLoop({
-        runId: 'RUN-LIVE',
-        taskId: 'T-1',
+        runId: RUN_ID,
+        taskId,
         role: 'implementer',
         source,
         executor,
-        gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: 'RUN-LIVE', taskId: 'T-1', log, evidence, clock }),
+        gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: RUN_ID, taskId, log, evidence, clock }),
         log,
         budget,
         clock,
@@ -716,7 +738,6 @@ export async function runSupervisedLoop(opts: {
       // Held-out (golden) verification passed iff the loop reached REVIEWING —
       // captured BEFORE auto-merge, which may carry the state on to COMPLETED.
       const reachedReviewing = result.finalState === 'REVIEWING';
-      const calibration = computeCalibration({ heldOut: [reachedReviewing], reruns: reachedReviewing ? [true] : [] });
 
       // Post-REVIEWING auto-merge L0/L1 (REQ-7/8). The pure gate ignores the agent
       // claim by construction; risk comes from the frozen contract, gatesGreen from
@@ -729,18 +750,18 @@ export async function runSupervisedLoop(opts: {
         // REVIEWING. Commit it onto task/<taskId> so auto-merge has a real branch tip
         // to merge (and `git checkout main` is not blocked by the dirty worktree).
         git(fx.wt, 'add', '-A');
-        git(fx.wt, 'commit', '-q', '--allow-empty', '-m', `task ${TASK_ID} work`);
-        const acceptanceCriteria: MappedAc[] = opts.contract.acceptanceCriteria.map((a) => ({
+        git(fx.wt, 'commit', '-q', '--allow-empty', '-m', `task ${taskId} work`);
+        const acceptanceCriteria: MappedAc[] = taskAcs.map((a) => ({
           id: a.id,
           ...(a.golden !== undefined ? { golden: a.golden } : {}),
         }));
         const gateReport = result.lastGateReport;
         const merge = await runAutoMerge({
           runId: RUN_ID,
-          taskId: TASK_ID,
+          taskId,
           state: 'REVIEWING',
           repoDir: fx.wt,
-          taskBranch: TASK_BRANCH,
+          taskBranch,
           mainBranch: 'main',
           decision: {
             riskClass: opts.contract.risk,
@@ -761,14 +782,14 @@ export async function runSupervisedLoop(opts: {
         } else {
           // REQ-2: build a real package for a human to decide instead of leaving the
           // run stuck at REVIEWING with nothing in the approvals Map (Phase-3 gap #1).
-          const diff = gitOut(fx.wt, 'diff', '--no-color', `main...${TASK_BRANCH}`);
+          const diff = gitOut(fx.wt, 'diff', '--no-color', `main...${taskBranch}`);
           const diffLineCount = countChangedLines(diff);
           const built = buildApprovalPackage({
-            id: TASK_ID,
-            taskId: TASK_ID,
+            id: taskId,
+            taskId,
             runId: RUN_ID,
             goalExcerpt: opts.contract.goal.objective,
-            acIds: opts.contract.acceptanceCriteria.map((a) => a.id),
+            acIds: taskAcs.map((a) => a.id),
             diffRef: evidence.put(diff),
             diffLineCount,
             maxDiffBudget: opts.approval?.maxDiffBudget ?? 400,
@@ -784,9 +805,9 @@ export async function runSupervisedLoop(opts: {
           });
 
           const escalateTask = (why: string, extra?: Record<string, unknown>): void => {
-            const tr = transition(currentState(), 'escalate');
-            if (tr.ok) log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'escalate' } });
-            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'ESCALATED', payload: { why, ...extra } });
+            const tr = transition(currentState(taskId), 'escalate');
+            if (tr.ok) log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'escalate' } });
+            log.append({ runId: RUN_ID, taskId, type: 'ESCALATED', payload: { why, ...extra } });
           };
 
           if (built.kind === 'escalate') {
@@ -795,8 +816,8 @@ export async function runSupervisedLoop(opts: {
             finalState = 'ESCALATED';
           } else {
             approvals.set(built.package.id, built.package);
-            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'APPROVAL_PACKAGE_CREATED', payload: { approvalId: built.package.id } });
-            audit({ event: 'approval_package_created', taskId: TASK_ID, approvalId: built.package.id });
+            log.append({ runId: RUN_ID, taskId, type: 'APPROVAL_PACKAGE_CREATED', payload: { approvalId: built.package.id } });
+            audit({ event: 'approval_package_created', taskId, approvalId: built.package.id });
 
             // The blocking wait is OPT-IN (REQ-2/3): a non-interactive caller (CI/stub,
             // bin/platform.ts's default path) passes no timeout, so the package is left
@@ -811,11 +832,11 @@ export async function runSupervisedLoop(opts: {
             } else if (outcome === 'approve') {
               const approvedMerge = await runApprovedMerge({
                 runId: RUN_ID,
-                taskId: TASK_ID,
-                state: currentState(),
+                taskId,
+                state: currentState(taskId),
                 approvalBasis: 'human_approved',
                 repoDir: fx.wt,
-                taskBranch: TASK_BRANCH,
+                taskBranch,
                 mainBranch: 'main',
                 originalReport: gateReport,
                 gateConfigRelPath: 'gate-ladder.json',
@@ -835,8 +856,8 @@ export async function runSupervisedLoop(opts: {
             } else {
               // REQ-3.6: kill while pending — the same terminal state a mid-loop kill
               // reaches (loop.ts's `move('cancel')`).
-              const tr = transition(currentState(), 'cancel');
-              if (tr.ok) log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'cancel' } });
+              const tr = transition(currentState(taskId), 'cancel');
+              if (tr.ok) log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'cancel' } });
               finalState = 'CANCELLED';
             }
           }
@@ -850,8 +871,8 @@ export async function runSupervisedLoop(opts: {
         if (finalState === 'COMPLETED' && opts.contract.deploy !== undefined) {
           const deployConfig = opts.contract.deploy;
           currentDeployApproval = {
-            id: `deploy-${TASK_ID}`,
-            taskId: TASK_ID,
+            id: `deploy-${taskId}`,
+            taskId,
             runId: RUN_ID,
             goalExcerpt: opts.contract.goal.objective,
             acIds: opts.contract.acceptanceCriteria.map((a) => a.id),
@@ -869,7 +890,7 @@ export async function runSupervisedLoop(opts: {
             // the task-approval site above).
             ...(opts.contract.provenance !== undefined ? { provenance: opts.contract.provenance } : {}),
           };
-          audit({ event: 'deploy_package_created', taskId: TASK_ID, approvalId: currentDeployApproval.id });
+          audit({ event: 'deploy_package_created', taskId, approvalId: currentDeployApproval.id });
 
           // REQ-6: deploy decision shares the task approval's timeout knob, and its
           // opt-in semantics — no explicit timeout means no human present (CI/stub), so
@@ -880,8 +901,8 @@ export async function runSupervisedLoop(opts: {
           if (deployDecision === 'timeout' || deployDecision === 'killed') {
             // No HTTP call happened, so (unlike approve/reject, recorded by api.ts) the
             // timeout/kill event + audit is composition's own job (mirrors escalateTask above).
-            log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'DEPLOY_DECISION', payload: { approvalId: currentDeployApproval.id, decision: deployDecision } });
-            audit({ event: 'deploy_decision', taskId: TASK_ID, decision: deployDecision });
+            log.append({ runId: RUN_ID, taskId, type: 'DEPLOY_DECISION', payload: { approvalId: currentDeployApproval.id, decision: deployDecision } });
+            audit({ event: 'deploy_decision', taskId, decision: deployDecision });
           }
           currentDeployApproval = null;
 
@@ -894,7 +915,7 @@ export async function runSupervisedLoop(opts: {
             // review). The Human Plane server keeps the loop alive while the stage runs,
             // so an unref'd inter-probe wait still fires normally.
             const deployClock: DeployClock = { now: () => clock.now(), wait: (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref(); }) };
-            deployDeps = { runId: RUN_ID, taskId: TASK_ID, config: deployConfig, executor, log, evidence, clock: deployClock };
+            deployDeps = { runId: RUN_ID, taskId, config: deployConfig, executor, log, evidence, clock: deployClock };
             const deployOutcome = await runDeployStage(deployDeps);
             if (deployOutcome.finalState === 'EXPANDED') {
               const expandedWindowMs = opts.deploy?.expandedWindowMs ?? 10 * 60_000;
@@ -907,11 +928,20 @@ export async function runSupervisedLoop(opts: {
               // A manual rollback triggered during the window must finish before the
               // server (and this run) tears down — REQ-6.12's "remain open" scope.
               await manualRollback;
-              log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'DEPLOY_WINDOW_CLOSED', payload: {} });
+              log.append({ runId: RUN_ID, taskId, type: 'DEPLOY_WINDOW_CLOSED', payload: {} });
             }
           }
         }
       }
+      return { finalState, iterations: result.iterations, reachedReviewing };
+    };
+
+    try {
+      const outcome = await executeTask(TASK_ID);
+      const calibration = computeCalibration({
+        heldOut: [outcome.reachedReviewing],
+        reruns: outcome.reachedReviewing ? [true] : [],
+      });
       // REQ-10.1: post-run, fold this run's confirmed-hypothesis verdicts into
       // pending lessons — the core orchestrator/hypothesis engine never see this;
       // it is folded here, in the composition, from the run's OWN event log,
@@ -929,11 +959,11 @@ export async function runSupervisedLoop(opts: {
             clock,
             log,
             runId: RUN_ID,
-            taskId: TASK_ID,
+            taskId: activeTaskId(),
           });
         }
       }
-      return { finalState, iterations: result.iterations, calibration, ...calibrationExtras(log, shadowProof) };
+      return { finalState: outcome.finalState, iterations: outcome.iterations, calibration, ...calibrationExtras(log, shadowProof) };
     } finally {
       await server.close();
     }

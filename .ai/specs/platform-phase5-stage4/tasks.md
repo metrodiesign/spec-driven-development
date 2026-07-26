@@ -92,7 +92,7 @@
          (5) title ว่าง (marker ติดหัวบล็อกทันที) ไม่เพิ่ม failure path ใหม่ —
          schema `minLength: 1` จับที่ edge validation ตอน promote.
 
-- [ ] 3. loop-run layer-1 parameterization (mechanical, zero behavior change)
+- [x] 3. loop-run layer-1 parameterization (mechanical, zero behavior change)
      — แตก per-task machinery ของ `runSupervisedLoop` เป็น
      `executeTask(task)` closure ตามตาราง per-run/per-task ใน design D4
      ชั้น 1 เป๊ะ (per-run singletons ห้ามย้าย; literal `'T-1'`/`'RUN-LIVE'`
@@ -103,6 +103,50 @@
      ไฟล์ test เดิมแม้บรรทัดเดียว** (`git diff --stat` ต้องไม่มีไฟล์
      `*.test.ts` เดิม) + typecheck/lint เขียว — นี่คือหลักฐานของ REQ-4.3.
      Satisfies: REQ-4.3, REQ-4.14 (กลไก taskId-scoping). Depends on: 1. Verify: pnpm -C console/backend test && pnpm typecheck && pnpm lint.
+     Evidence:
+       - test: `pnpm -C console/backend test` -> 360 passed / 0 failed — **เท่ากับ
+         baseline เป๊ะ** (รัน baseline ก่อนแก้บน HEAD 0c9fe80 = 360/360 เช่นกัน)
+       - test: `pnpm -C core test` -> 282 passed / 0 failed (core ไม่ถูกแตะ)
+       - typecheck: `pnpm typecheck` -> clean ทั้ง 6 workspace projects
+       - lint: `pnpm lint` -> ESLint: No issues found
+       - **zero test-file edit (หลักฐานของ REQ-4.3):** `git status --porcelain` ->
+         ` M console/backend/src/loop-run.ts` บรรทัดเดียว; `git diff --stat` ->
+         `1 file changed, 124 insertions(+), 94 deletions(-)`;
+         `git diff --name-only | grep -c test` -> `0`
+       - byte-identical proof (นอกเหนือจาก suite): probe ชั่วคราวนอก repo รัน
+         `runSupervisedLoop` เวอร์ชันก่อน/หลัง refactor คู่กัน 4 scenario
+         (plain+autoMerge / plain ไม่มี autoMerge opt / repairable+autoMerge /
+         outcome-routing active) แล้ว diff event stream ทั้งสาย (type|taskId|payload
+         ตามลำดับ) + result object + ลำดับ key ของ result -> `ALL SCENARIOS
+         IDENTICAL` (16/16/34/17 events). Control run (baseline เทียบตัวเอง) ใช้
+         พิสูจน์ว่าฟิลด์ที่ normalize ออก (git commit SHA 40-hex ใน
+         `snapshotRef`/`commitHash` ซึ่งฝัง timestamp) เป็น noise ระหว่างรันจริง
+         ไม่ใช่ผลของ refactor — control ก่อน normalize ก็ต่างบรรทัดเดียวกัน,
+         หลัง normalize ทั้ง control และ A/B = IDENTICAL ทั้ง 4 scenario.
+         ไฟล์ probe + baseline copy ถูกลบก่อน commit (`git status` ยืนยันเหลือ
+         ไฟล์เดียว)
+       - viewports: n/a — logic-only, ไม่มี UI
+       - deviations: (1) `executeTask` คืน `{finalState, iterations,
+         reachedReviewing}` แล้วให้ผู้เรียกคำนวณ `calibration` — design ไม่ได้ระบุ
+         return shape; ทำแบบนี้เพราะ early-return ของ deferred-quarantine กับเส้น
+         ปกติเคยคำนวณ `computeCalibration` คนละจุดด้วยค่าที่เท่ากันอยู่แล้ว
+         (`heldOut:[false]` = `reachedReviewing:false`) รวมเป็นจุดเดียวได้โดยผลไม่
+         เปลี่ยน. (2) `wrapRouterForOutcome`/`wrapRouterForShadow` รับ
+         `taskId` ผ่าน **getter property** (`get taskId() { return activeTaskId(); }`)
+         แทนการแก้ signature ของ wrapper — ทั้งสองตัวอ่าน `deps.taskId` ตอนเรียกจริง
+         (aal/src/router.ts:196,201 · loop-run.ts wrapRouterForShadow) จึงได้ค่า
+         dynamic โดยไม่แตะ aal และไม่แตะ signature ที่ test เดิม pin ไว้.
+         (3) deferred-quarantine early-return ย้ายเข้า `executeTask` ตามตาราง design
+         D4 ชั้น 1 ซึ่งทำให้มันเกิด**หลัง** adapter/router/human-plane server ถูกสร้าง
+         (เดิมเกิดก่อน) — event log ไม่เปลี่ยน (ไม่มี event ใดถูก append ระหว่างนั้น)
+         และ test REQ-9.5 เขียวตามเดิม แต่ผลข้างเคียงคือ `opts.adapterFactory` ถูก
+         เรียกและ server ถูกเปิด/ปิด แม้ task โดน quarantine. (4) `activeTask` ถูก set
+         ที่หัว `executeTask` (ไม่ใช่เฉพาะที่ driver ตาม pseudocode ชั้น 2) เพื่อไม่ให้
+         task 4 ลืม set แล้วได้ payload ผิดเงียบ ๆ — driver จะ set ซ้ำก็ไม่มีผล.
+         (5) `runPlannerFusion` ยังส่ง `taskId: TASK_ID` ('T-1') ตามเดิม — เป็น per-run
+         block ที่รันก่อนมี task ใด ๆ ถูกเลือก, `activeTaskId()` ตอนนั้นก็คืน 'T-1'
+         เท่ากัน จึงไม่ใช่สิ่งที่ชั้น 1 แก้ได้; **task 4 ต้องตัดสินใจ** ว่า fusion event
+         ควรติดป้าย taskId อะไรใน multi-task mode (ดู handoff task-3 ข้อ Landmines)
 
 - [ ] 4. Multi-task driver + CLI + planner fusion piece — design D4 ชั้น 2
      ทั้งหมด: `opts.taskGraph {rawBytes, parsed}` + single freeze หลังเปิด
