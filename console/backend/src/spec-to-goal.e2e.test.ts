@@ -14,9 +14,10 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { parse as parseYaml } from 'yaml';
-import { ContractInvalidError, freezeContract } from 'core';
+import { ContractInvalidError, freezeContract, freezeTaskGraph } from 'core';
 
 import { validateGoalShape } from './goal-schema.ts';
+import { validateTaskGraphShape } from './task-graph-schema.ts';
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..');
 const generator = join(repoRoot, 'scripts', 'spec_to_goal.py');
@@ -480,16 +481,239 @@ test('real archive phase4 via --specs-dir: header on line 3 + amended form pass,
   });
 });
 
-test('generator touches nothing but goal.draft.yaml — no temp files left, inputs untouched (REQ-4.1/4.6)', { skip }, () => {
+// stage-4 REQ-2.1 supersedes stage-1 REQ-4.1/4.6's singular "only goal.draft.yaml"
+// output: the generator now also emits task-graph.draft.json. The invariant this
+// case actually guards — no temp files left behind, inputs untouched, and nothing
+// promoted (never goal.yaml / task-graph.json) — is unchanged.
+test('generator touches nothing but the two drafts — no temp files left, inputs untouched (REQ-4.1/4.6, stage-4 REQ-2.1/2.7)', { skip }, () => {
   withSpecsDir((dir) => {
     const specDir = writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
     const reqBefore = readFileSync(join(specDir, 'requirements.md'));
     const tasksBefore = readFileSync(join(specDir, 'tasks.md'));
     const res = generate(dir, 'fixture-feat');
     assert.equal(res.status, 0, res.stderr);
-    assert.deepEqual(readdirSync(specDir).sort(), ['goal.draft.yaml', 'requirements.md', 'tasks.md'], 'exactly one new file (REQ-4.1/4.6)');
+    assert.deepEqual(readdirSync(specDir).sort(), ['goal.draft.yaml', 'requirements.md', 'task-graph.draft.json', 'tasks.md'], 'exactly the two drafts, no temp file left (REQ-4.1/4.6)');
     assert.deepEqual(readFileSync(join(specDir, 'requirements.md')), reqBefore);
     assert.deepEqual(readFileSync(join(specDir, 'tasks.md')), tasksBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// platform-phase5-stage4 REQ-2 — task-graph draft emission. Same conventions as
+// everything above: the real generator via spawnSync, assertions against the REAL
+// `validateTaskGraphShape` (ajv edge) and core `freezeTaskGraph` (planning gate).
+// ---------------------------------------------------------------------------
+
+type GraphTask = { id: string; title: string; satisfies: string[]; depends_on?: string[] };
+type Graph = { goal_id: string; tasks: GraphTask[]; checks: { max_diff_budget_per_task: number } };
+
+function readGraph(specsDir: string, feature: string): { raw: Buffer; graph: Graph } {
+  const raw = readFileSync(join(specsDir, feature, 'task-graph.draft.json'));
+  return { raw, graph: JSON.parse(raw.toString('utf8')) as Graph };
+}
+
+/** Freeze the goal draft the SAME run produced (risk filled, as a human would) — the
+ *  contract `freezeTaskGraph` gates the graph against (goal_id binding, AC coverage). */
+function contractFromDraft(draftPath: string) {
+  const doc = parseYaml(readFileSync(draftPath, 'utf8')) as Record<string, unknown>;
+  const filled = { ...doc, risk: 'L2' };
+  return freezeContract(Buffer.from(JSON.stringify(filled), 'utf8'), filled);
+}
+
+test('task-graph draft: 3 tasks in file order, deps, key order, checks 400, schema-clean, freezes against the same run goal (REQ-2.1/2.2/2.3/2.7)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const specDir = writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /task-graph\.draft\.json — 3 tasks/, 'graph summary line');
+    assert.ok(!readdirSync(specDir).includes('task-graph.json'), 'never auto-promotes (REQ-2.7)');
+
+    const { raw, graph } = readGraph(dir, 'fixture-feat');
+    assert.deepEqual(Object.keys(graph), ['goal_id', 'tasks', 'checks'], 'top-level key order pinned (REQ-2.2)');
+    assert.equal(graph.goal_id, 'FIXTURE-FEAT-001', 'same goal.id the goal draft stamps (REQ-2.1)');
+    assert.deepEqual(graph.checks, { max_diff_budget_per_task: 400 }, '§11.2 default stamped (REQ-2.3)');
+    assert.ok(raw.toString('utf8').endsWith('}\n'), 'trailing newline (REQ-2.2)');
+    assert.match(raw.toString('utf8'), /^\{\n {2}"goal_id"/, '2-space indent (REQ-2.2)');
+
+    assert.deepEqual(graph.tasks.map((t) => t.id), ['T-1', 'T-2', 'T-3'], 'one entry per block, file order (REQ-2.1)');
+    assert.deepEqual(Object.keys(graph.tasks[0]!), ['id', 'title', 'satisfies'], 'depends_on omitted when empty (REQ-2.2)');
+    assert.deepEqual(Object.keys(graph.tasks[2]!), ['id', 'title', 'satisfies', 'depends_on'], 'task key order pinned (REQ-2.2)');
+    assert.equal(graph.tasks[0]!.title, 'Cover REQ-1 whole.', 'title = text between ordinal and first marker (REQ-2.1)');
+    assert.deepEqual(graph.tasks[0]!.satisfies, ['AC-1.1', 'AC-1.2'], 'whole-REQ Satisfies expanded to AC ids (REQ-2.1)');
+    assert.deepEqual(graph.tasks[1]!.satisfies, ['AC-2.1', 'AC-2.2'], 'dash range expanded (REQ-2.1)');
+    assert.deepEqual(graph.tasks[2]!.satisfies, ['AC-2.3']);
+    assert.deepEqual(graph.tasks[2]!.depends_on, ['T-1'], 'Depends on: 1 -> T-1 (REQ-2.1)');
+    for (const t of graph.tasks) assert.ok(!/Satisfies:|Verify:|Depends on:|Batch:/.test(t.title), `${t.id} title stops at the first marker`);
+
+    // The draft must survive BOTH real gates, not just look right.
+    assert.deepEqual(validateTaskGraphShape(graph), [], 'schema-clean at the edge (REQ-1.3)');
+    const contract = contractFromDraft(join(specDir, 'goal.draft.yaml'));
+    const { graph: frozen, gate } = freezeTaskGraph(raw, graph, contract);
+    assert.deepEqual(gate.taskIds, ['T-1', 'T-2', 'T-3']);
+    assert.deepEqual(gate.uncoveredAcs, [], 'generated graph covers every contract AC');
+    assert.deepEqual(gate.orphanTasks, []);
+    assert.deepEqual(frozen.tasks[2]!.dependsOn, ['T-1']);
+    assert.equal(frozen.checks.maxDiffBudgetPerTask, 400);
+  });
+});
+
+test('Depends on: grammar is narrow — the real stage-2 line (number + Thai parenthetical + other numbers) yields exactly T-1 (REQ-2.6, A7)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const body = ['## REQ-6: Pinned', '', '- 6.1 THE SYSTEM SHALL a', '- 6.2 THE SYSTEM SHALL b', '- 6.3 THE SYSTEM SHALL c'].join('\n');
+    // Verbatim shape of .ai/specs/platform-phase5-stage2/tasks.md:37 — prose and
+    // further numbers after the dependency list must be ignored entirely.
+    const tasks = [
+      '- [x] 1. First.',
+      '     Satisfies: 6.1. Verify: pnpm test one',
+      '- [x] 2. Second.',
+      '     Satisfies: REQ-6.2, REQ-6.3. Depends on: 1 (เฉพาะความครบของ 6.2/6.3 — โค้ด core',
+      '     ไม่ import อะไรจาก task 1).',
+      '     Verify: pnpm -C core test.',
+    ].join('\n');
+    writeSpec(dir, 'fixture-feat', { requirements: reqDoc(body), tasks });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    const { graph } = readGraph(dir, 'fixture-feat');
+    assert.deepEqual(graph.tasks[1]!.depends_on, ['T-1'], 'only the first conforming run counts — no T-6/T-2/T-3 from the prose');
+    assert.deepEqual(graph.tasks[1]!.satisfies, ['AC-6.2', 'AC-6.3'], 'Satisfies segment still ends at Depends on:');
+    assert.deepEqual(graph.tasks[0]!.satisfies, ['AC-6.1']);
+  });
+});
+
+test('indented checkbox block + title fallback/cut: block head parsed through the indent, title cut at 120 chars (REQ-2.1/2.9, D13)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const body = ['## REQ-1: Indent', '', '- 1.1 THE SYSTEM SHALL a', '- 1.2 THE SYSTEM SHALL b'].join('\n');
+    const longTitle = 'Indented checkbox block carrying a title long enough that the generator must cut it at exactly one hundred twenty characters, dropping this tail.';
+    const tasks = [
+      '## A nested checklist',
+      '',
+      `  - [ ] 1. ${longTitle}`,
+      '       Satisfies: 1.1. Verify: pnpm test one',
+      '  - [x] 2. Marker-less block keeps its whole remainder as the title.',
+    ].join('\n');
+    writeSpec(dir, 'fixture-feat', { requirements: reqDoc(body), tasks });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    const { graph } = readGraph(dir, 'fixture-feat');
+    assert.deepEqual(graph.tasks.map((t) => t.id), ['T-1', 'T-2'], 'indented checkboxes are task blocks');
+    assert.equal(graph.tasks[0]!.title, longTitle.slice(0, 120), 'title truncated to 120 (REQ-2.1)');
+    assert.equal(graph.tasks[1]!.title, 'Marker-less block keeps its whole remainder as the title.', 'no marker -> whole remainder (D13)');
+    assert.deepEqual(graph.tasks[1]!.satisfies, [], 'no Satisfies -> empty (shape-legal; freeze calls it an orphan)');
+    assert.deepEqual(validateTaskGraphShape(graph), [], 'still schema-clean');
+  });
+});
+
+test('generation fails on a dangling Depends ref / dangling Satisfies id / missing ordinal / duplicate ordinal — no draft written at all (REQ-2.6/2.8/2.9)', { skip }, () => {
+  const body = ['## REQ-1: Fail', '', '- 1.1 THE SYSTEM SHALL a', '- 1.2 THE SYSTEM SHALL b'].join('\n');
+  const cases: { feature: string; tasks: string; expect: RegExp }[] = [
+    {
+      feature: 'dangling-dep',
+      tasks: ['- [ ] 1. One.', '     Satisfies: 1.1. Verify: pnpm test one', '- [ ] 2. Two.', '     Satisfies: 1.2. Depends on: 9. Verify: pnpm test two'].join('\n'),
+      expect: /'Depends on:' references task 9 which has no task block/,
+    },
+    {
+      feature: 'dangling-satisfies',
+      tasks: ['- [ ] 1. One.', '     Satisfies: 1.1, 9.9. Verify: pnpm test one'].join('\n'),
+      expect: /Satisfies ref AC-9\.9 has no matching criterion/,
+    },
+    {
+      feature: 'no-ordinal',
+      tasks: ['- [ ] 1. One.', '     Satisfies: 1.1. Verify: pnpm test one', '- [ ] Ordinal-less block that must be refused.', '     Satisfies: 1.2. Verify: pnpm test two'].join('\n'),
+      expect: /no leading ordinal '- \[ \] N\.': - \[ \] Ordinal-less block/,
+    },
+    {
+      feature: 'dup-ordinal',
+      tasks: ['- [ ] 1. One.', '     Satisfies: 1.1. Verify: pnpm test one', '- [ ] 1. One again.', '     Satisfies: 1.2. Verify: pnpm test two'].join('\n'),
+      expect: /duplicate task ordinal 1 in tasks\.md/,
+    },
+  ];
+  for (const c of cases) {
+    withSpecsDir((dir) => {
+      const specDir = writeSpec(dir, c.feature, { requirements: reqDoc(body), tasks: c.tasks });
+      const res = generate(dir, c.feature);
+      assert.equal(res.status, 1, `${c.feature} must exit 1, got ${res.status}: ${res.stdout}`);
+      assert.match(res.stderr, c.expect, c.feature);
+      assert.deepEqual(readdirSync(specDir).sort(), ['requirements.md', 'tasks.md'], `${c.feature}: validation precedes output — neither draft written`);
+    });
+  }
+});
+
+test('output gate is per file: a stale graph draft blocks only itself, a stale goal draft blocks only itself, --force overwrites both (REQ-2.5)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const specDir = writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
+    assert.equal(generate(dir, 'fixture-feat').status, 0);
+    const goalPath = join(specDir, 'goal.draft.yaml');
+    const graphPath = join(specDir, 'task-graph.draft.json');
+    const graphBefore = readFileSync(graphPath);
+
+    // goal draft gone, graph draft stale -> goal is rewritten, graph refused, exit 1.
+    rmSync(goalPath);
+    const graphBlocked = generate(dir, 'fixture-feat');
+    assert.equal(graphBlocked.status, 1);
+    assert.match(graphBlocked.stderr, /task-graph\.draft\.json already exists — pass --force/);
+    assert.ok(!graphBlocked.stderr.includes('goal.draft.yaml already exists'), 'the missing goal draft is not blocked by the graph collision');
+    assert.match(graphBlocked.stdout, /goal\.draft\.yaml — 5 acceptance criteria/, 'the writable file IS written (D17)');
+    assert.deepEqual(readFileSync(graphPath), graphBefore, 'colliding file left byte-identical');
+
+    // Mirror: graph draft gone, goal draft stale.
+    const goalBefore = readFileSync(goalPath);
+    rmSync(graphPath);
+    const goalBlocked = generate(dir, 'fixture-feat');
+    assert.equal(goalBlocked.status, 1);
+    assert.match(goalBlocked.stderr, /goal\.draft\.yaml already exists — pass --force/);
+    assert.ok(!goalBlocked.stderr.includes('task-graph.draft.json already exists'));
+    assert.match(goalBlocked.stdout, /task-graph\.draft\.json — 3 tasks/);
+    assert.deepEqual(readFileSync(goalPath), goalBefore);
+
+    // --force overwrites both.
+    writeFileSync(goalPath, 'garbage');
+    writeFileSync(graphPath, '{"garbage": true}');
+    const forced = runGen(['fixture-feat', '--specs-dir', dir, '--force']);
+    assert.equal(forced.status, 0, forced.stderr);
+    assert.match(readFileSync(goalPath, 'utf8'), /^# spec-to-goal draft/);
+    assert.deepEqual(readGraph(dir, 'fixture-feat').graph.tasks.map((t) => t.id), ['T-1', 'T-2', 'T-3']);
+  });
+});
+
+test('tasks.md absent: graph emission skipped with a stderr warning, goal draft still generated (REQ-2.4)', { skip }, () => {
+  withSpecsDir((dir) => {
+    const specDir = writeSpec(dir, 'fixture-feat', { requirements: reqDoc(PARTIAL_BODY) });
+    const res = generate(dir, 'fixture-feat');
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stderr, /tasks\.md not found .* task-graph draft skipped/);
+    assert.deepEqual(readdirSync(specDir).sort(), ['goal.draft.yaml', 'requirements.md'], 'goal draft still written, no graph');
+  });
+});
+
+// Pre-flight sweep (design D18): REQ-2.6/2.8/2.9 make the generator strict about
+// input that used to pass silently. Every approved spec in the repo must still
+// generate — a failure here is a real spec to fix, never a check to weaken.
+test('pre-flight sweep: every approved spec under .ai/specs still generates, and its graph draft is schema-clean (REQ-2.6/2.8/2.9, D18)', { skip }, () => {
+  const specsRoot = join(repoRoot, '.ai', 'specs');
+  const features = readdirSync(specsRoot, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== 'archive')
+    .map((e) => e.name)
+    .filter((name) => {
+      const req = join(specsRoot, name, 'requirements.md');
+      return readdirSync(join(specsRoot, name)).includes('requirements.md')
+        && readdirSync(join(specsRoot, name)).includes('tasks.md')
+        && readFileSync(req, 'utf8').split('\n').some((l) => l.startsWith('> Status: approved'));
+    });
+  assert.ok(features.length >= 5, `sweep must find the real corpus, found: ${features.join(', ')}`);
+
+  withSpecsDir((dir) => {
+    for (const feature of features) {
+      // Copy only the two inputs — the sweep must never touch the repo's own specs.
+      mkdirSync(join(dir, feature), { recursive: true });
+      for (const file of ['requirements.md', 'tasks.md']) {
+        cpSync(join(specsRoot, feature, file), join(dir, feature, file));
+      }
+      const res = generate(dir, feature);
+      assert.equal(res.status, 0, `${feature} fails the stage-4 generator rules — fix the spec, not the validation:\n${res.stderr}`);
+      const { graph } = readGraph(dir, feature);
+      assert.deepEqual(validateTaskGraphShape(graph), [], `${feature} graph draft is schema-clean`);
+      assert.ok(graph.tasks.length > 0);
+    }
   });
 });
 

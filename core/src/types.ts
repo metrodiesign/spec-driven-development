@@ -187,7 +187,12 @@ export type EventType =
   | 'OUTCOME_ROUTE'
   | 'ROUTING_FROZEN'
   // Phase 4 planner-role fusion auto-routing addition (append-only, INV-10; REQ-16.5).
-  | 'PLAN_RESOLVED';
+  | 'PLAN_RESOLVED'
+  // Phase 5 stage-4 task-graph planning gate (append-only, INV-10; REQ-4.8). Both
+  // outcomes live on the production path: the run appends exactly one of them
+  // right after the event log opens and before any adapter is built.
+  | 'TASK_GRAPH_FROZEN'
+  | 'TASK_GRAPH_REJECTED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

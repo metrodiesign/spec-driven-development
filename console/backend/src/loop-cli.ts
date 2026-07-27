@@ -4,13 +4,14 @@
 // Live runs are gated STRUCTURALLY, not just by procedure.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 import { freezeContract, type TaskContract } from 'core';
 import { PASS_FAIL_PROBES, type ConformanceRecord } from 'aal';
 
 import { validateGoalShape } from './goal-schema.ts';
+import { validateTaskGraphShape } from './task-graph-schema.ts';
 
 /**
  * Parse goal.yaml at the edge and freeze it by raw-byte hash in core (REQ-8.1).
@@ -26,6 +27,27 @@ export function loadGoalContract(path: string): TaskContract {
     throw new Error(`goal file failed schema validation:\n  ${shapeErrors.join('\n  ')}`);
   }
   return freezeContract(rawBytes, parsed);
+}
+
+/**
+ * The promoted task graph sitting next to goal.yaml, or undefined when there is none
+ * (phase5-stage4 REQ-4.10). ONLY `task-graph.json` is read: a generated
+ * `task-graph.draft.json` is invisible here by construction, so a draft can never
+ * start a run (REQ-4.7 — promotion stays a human rename, INV-3/INV-16). Shape errors
+ * throw HERE, before a run opens, so a human sees every failing path at once; the
+ * semantic planning gate belongs to the run itself (REQ-4.8/D5), which is why this
+ * returns the raw bytes alongside the parsed object rather than freezing.
+ */
+export function loadTaskGraphOption(goalPath: string): { rawBytes: Uint8Array; parsed: unknown } | undefined {
+  const path = join(dirname(goalPath), 'task-graph.json');
+  if (!existsSync(path)) return undefined;
+  const rawBytes = readFileSync(path);
+  const parsed: unknown = JSON.parse(rawBytes.toString('utf8'));
+  const shapeErrors = validateTaskGraphShape(parsed);
+  if (shapeErrors.length > 0) {
+    throw new Error(`task graph file failed schema validation:\n  ${shapeErrors.join('\n  ')}`);
+  }
+  return { rawBytes, parsed };
 }
 
 export interface LiveGuardInput {

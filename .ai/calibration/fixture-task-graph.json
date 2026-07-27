@@ -1,0 +1,8 @@
+{
+  "goal_id": "CALIB-GRAPH",
+  "tasks": [
+    { "id": "T-1", "title": "write the marker the fixture gate greps for", "satisfies": ["AC-1"] },
+    { "id": "T-2", "title": "keep the marker in place once the first task is in", "satisfies": ["AC-2"], "depends_on": ["T-1"] }
+  ],
+  "checks": { "max_diff_budget_per_task": 400 }
+}

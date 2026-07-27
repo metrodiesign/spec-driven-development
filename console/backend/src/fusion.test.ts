@@ -286,3 +286,42 @@ test('PLAN_SCHEMA (runtime, validateAgainstSchema-compatible) required-property 
   ) as { required: string[] };
   assert.deepEqual([...(PLAN_SCHEMA['required'] as string[])].sort(), [...governance.required].sort());
 });
+
+test('PLAN_RESOLVED.panelSize reports THIS call, never an earlier one still in the log (Codex P2, PR #124)', async () => {
+  const h = plannerHarness([
+    new FakeAdapter({ id: 'a-anthropic', lineage: 'anthropic' }),
+    new FakeAdapter({ id: 'a-openai', lineage: 'openai' }),
+  ]);
+  try {
+    // First call forms a real 2-candidate panel and leaves FUSION_PANEL in the log.
+    // taskId null is the multi-task shape, where the old lookup had no filter at all.
+    const base = {
+      runId: 'RUN',
+      taskId: null,
+      router: h.router,
+      dispatcher: h.dispatcher,
+      evidence: h.evidence,
+      log: h.log,
+      ids: h.ids,
+      taskContract: TASK_CONTRACT,
+    };
+    await runPlannerFusion({ ...base, profile: planProfile() });
+    assert.equal(h.log.all({ type: 'FUSION_PANEL' }).length, 1, 'the earlier panel is on the log');
+
+    // Second call cannot seat two candidates -> budget_cap, before any panel forms.
+    const result = await runPlannerFusion({
+      ...base,
+      profile: { ...planProfile(), budgetCapCostUnits: 8, estimateCostUnitsPerCandidate: 8 },
+    });
+    assert.equal(result.outcome.escalateReason, 'budget_cap');
+    assert.equal(result.outcome.panelSize, 0, 'runFusion reports the panel IT formed');
+    assert.equal(h.log.all({ type: 'FUSION_PANEL' }).length, 1, 'and it appended none');
+    assert.equal(
+      h.log.all({ type: 'PLAN_RESOLVED' }).at(-1)?.payload['panelSize'],
+      0,
+      'the audit event records 0, not the stale panel size 2',
+    );
+  } finally {
+    h.cleanup();
+  }
+});

@@ -1,0 +1,20 @@
+# Multi-task calibration fixture (spec §14 Stage-4 DoD, phase5-stage4 REQ-6.5) —
+# paired with fixture-task-graph.json, which must sit next to this file. Same
+# synthetic target repo as fixture-goal.yaml (tests pass iff src/impl.txt contains
+# "correct"), but the goal is SPLIT across two acceptance criteria so a two-task
+# graph can cover one each and the supervised loop must reach REVIEWING for BOTH.
+#
+# Three properties are load-bearing and must survive any edit:
+#   - no `deploy:` block — a deploy contract is rejected at the planning gate this
+#     stage (REQ-3.13), so adding one makes the pair unrunnable;
+#   - max_total_tasks stays well above the graph's task count (REQ-3.6);
+#   - risk L2 keeps both tasks on the human approval-package path (REQ-6.5 measures
+#     REVIEWING) instead of auto-merging to COMPLETED as fixture-goal-l0.yaml does.
+goal: { id: CALIB-GRAPH, title: Calibration fixture (task graph), objective: "edit src/impl.txt so the tests pass" }
+acceptance_criteria:
+  - { id: AC-1, description: "src/impl.txt contains correct", verification: "sh run-tests.sh", golden: true }
+  - { id: AC-2, description: "src/impl.txt still contains correct after the dependent task", verification: "sh run-tests.sh", golden: true }
+budget: { max_iterations_per_task: 4, max_hypotheses_per_failure: 3, max_total_tasks: 30,
+          max_parallel_agents: 3, max_cost_units_per_task: 500, max_wallclock_per_task_min: 30 }
+approval_policy: { require_human_approval: [auth_policy_change] }
+risk: L2

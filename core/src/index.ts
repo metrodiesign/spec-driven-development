@@ -158,6 +158,18 @@ export {
   type OobVerdict,
 } from './audit/oob.ts';
 export {
+  freezeTaskGraph,
+  TaskGraphGateError,
+  type TaskGraph,
+  type TaskGraphGateResult,
+  type TaskGraphTask,
+} from './graph/graph.ts';
+export {
+  selectNextTask,
+  DEP_SATISFIED_STATES,
+  type TaskProjection,
+} from './graph/select.ts';
+export {
   foldConfirmedHypotheses,
   loadApprovedLessons,
   promoteLesson,

@@ -18,9 +18,10 @@ export interface ContractBudget extends BudgetLimits {
   /** Bounds the repair cycle — consumed as RepairPolicy.maxHypotheses (REQ-4.1). */
   maxHypothesesPerFailure: number;
   /**
-   * Stored, NOT enforced in this stage (REQ-4.3/4.4): no runtime consumer exists
-   * until the Stage 4 task graph lands (unified-platform-spec §14 Phase 5 Stage 4;
-   * single-task ceiling documented at console/backend/src/fusion.ts).
+   * Enforced by the task-graph planning gate (`freezeTaskGraph` in ../graph/): a
+   * promoted graph with more tasks than this is rejected before any dispatch
+   * (phase5-stage4 REQ-3.6, superseding this field's stored-only deferral). A
+   * single-task run has no graph and so never reaches that check.
    */
   maxTotalTasks: number;
   /** Governance ceiling on any concurrent agent dispatch (REQ-4.2). */
