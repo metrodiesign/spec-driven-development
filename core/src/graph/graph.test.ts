@@ -312,3 +312,40 @@ test('structural defects are rejected before any semantic check runs (freeze sta
     /tasks\[0\]\.title must be a non-empty string/,
   );
 });
+
+test('a task id that cannot be spelled as a branch name is rejected at the gate (REQ-3.15)', () => {
+  // Each id becomes a `task/<id>` branch. Accepting one git cannot spell would blow
+  // the run up mid-flight, after the gate already declared the graph runnable
+  // (external review, PR #124).
+  for (const id of ['feature:1', 'a..b', 'x.lock', '-lead', 'has space', '']) {
+    const graph = graphOf({
+      tasks: [
+        { id, title: 'first', satisfies: ['AC-1'] },
+        { id: 'T-2', title: 'second', satisfies: ['AC-2'] },
+      ],
+    });
+    const joined = rejectionReasons(graph).join('\n');
+    assert.match(joined, /not branch-safe|must be a non-empty string/, `id ${JSON.stringify(id)} must be refused`);
+  }
+
+  // The three sub-rules report distinctly — whoever wrote the graph sees which one.
+  const reasonFor = (id: string): string =>
+    rejectionReasons(
+      graphOf({ tasks: [{ id, title: 't', satisfies: ['AC-1'] }, { id: 'T-2', title: 't2', satisfies: ['AC-2'] }] }),
+    ).join('\n');
+  assert.match(reasonFor('feature:1'), /must match/);
+  assert.match(reasonFor('a..b'), /must not contain/);
+  assert.match(reasonFor('x.lock'), /must not end with/);
+
+  // Ids the generator actually emits, and other legal spellings, still freeze.
+  assert.doesNotThrow(() =>
+    freeze(
+      graphOf({
+        tasks: [
+          { id: 'T-1', title: 'first', satisfies: ['AC-1'] },
+          { id: 'stage4.task_2-b', title: 'second', satisfies: ['AC-2'], depends_on: ['T-1'] },
+        ],
+      }),
+    ),
+  );
+});

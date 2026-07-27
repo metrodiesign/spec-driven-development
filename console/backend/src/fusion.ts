@@ -249,18 +249,15 @@ export async function runPlannerFusion(opts: PlannerFusionOptions): Promise<Plan
       plan = { id: `plan-${opts.taskId ?? 'run'}`, content };
     }
   }
-  // Best-effort panel size (REQ-16.5's PLAN_RESOLVED.panelSize): the FUSION_PANEL
-  // THIS call itself just appended, 0 when fusion escalated before a panel ever
-  // formed (budget_cap/panel_degraded pre-dispatch).
-  const panelSize =
-    (opts.log
-      .all({ ...(opts.taskId !== null ? { taskId: opts.taskId } : {}), type: 'FUSION_PANEL' })
-      .at(-1)?.payload['size'] as number | undefined) ?? 0;
+  // REQ-16.5's PLAN_RESOLVED.panelSize comes from THIS call (0 when it escalated
+  // before a panel formed). Reading the log's last FUSION_PANEL instead reported an
+  // EARLIER call's panel whenever this one appended none — on a persisted log, in
+  // either mode (Codex P2, PR #124).
   opts.log.append({
     runId: opts.runId,
     taskId: opts.taskId,
     type: 'PLAN_RESOLVED',
-    payload: { winner: plan !== null, panelSize, costUnits: outcome.usage.costUnits },
+    payload: { winner: plan !== null, panelSize: outcome.panelSize ?? 0, costUnits: outcome.usage.costUnits },
   });
   return { plan, outcome };
 }

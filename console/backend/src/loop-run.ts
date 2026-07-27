@@ -1056,6 +1056,12 @@ export async function runSupervisedLoop(opts: {
       frozenAt: number,
     ): Promise<{ finalState: string; iterations: number; calibration: CalibrationResult; tasks: NonNullable<LoopRunResult['tasks']> }> => {
       const ttlMs = opts.leaseTtlMs ?? opts.contract.budget.maxWallclockMs + 5 * 60_000;
+      // Lease owner is unique per INVOCATION, not the run id (Codex P1, PR #124): the
+      // CAS in lease.ts lets a claimer take over a lease it already owns, so two runs
+      // sharing a persistDir under the same owner would each read the other's live
+      // lease as its own and work the same task concurrently. The run id stays the
+      // event-log identity; only ownership is per-invocation.
+      const leaseOwner = `${RUN_ID}#${randomUUID()}`;
       const lease = createLeaseManager(join(stateDir, 'events.db'), clock, RUN_ID);
       // Closed = never selectable again this run: a lease held by someone else (D4)
       // and, defensively, any task already executed — a task that somehow recorded no
@@ -1080,7 +1086,7 @@ export async function runSupervisedLoop(opts: {
           }
           const task = selectNextTask(frozen, projection);
           if (task === null) break;
-          if (!lease.claim(task.id, RUN_ID, ttlMs)) {
+          if (!lease.claim(task.id, leaseOwner, ttlMs)) {
             closed.add(task.id);
             continue;
           }
@@ -1097,7 +1103,7 @@ export async function runSupervisedLoop(opts: {
             heldOut.push(outcome.reachedReviewing);
           } finally {
             closed.add(task.id);
-            lease.release(task.id, RUN_ID);
+            lease.release(task.id, leaseOwner);
           }
         }
       } finally {

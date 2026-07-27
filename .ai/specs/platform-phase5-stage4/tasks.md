@@ -417,6 +417,37 @@
          `pnpm -C core test` -> 284 pass, `pnpm typecheck` -> clean 6 project,
          `pnpm lint` -> ESLint: No issues found,
          `bash scripts/spec-trace.sh platform-phase5-stage4` -> OK 55 เกณฑ์
+       - addendum (Codex review PR #124, 3 findings ยืนยันจริงทั้งหมด): **P1 lease
+         owner** — `lease.ts` CAS ยอมให้ owner เดิม reclaim lease ตัวเอง สอง run ที่
+         แชร์ persistDir ภายใต้ `RUN-LIVE` เหมือนกันจึงขโมย task กันได้; แก้เป็น owner
+         ต่อ invocation (`${RUN_ID}#${randomUUID()}`) ใช้ทั้ง claim/release โดย RUN_ID
+         ที่ stamp ลง event ไม่เปลี่ยน + test ใหม่ใน `loop-run-graph.test.ts`
+         (pre-claim T-2 ด้วย `'RUN-LIVE'` → T-2 ต้องเป็น NOT_STARTED; พิสูจน์ delta
+         ด้วย `git stash` เอา fix ออก → test แดง แล้ว pop กลับ → เขียว) · **P2
+         branch-safe task id** (REQ-3.15 ใหม่ + REQ-1.1 amend) — id กลายเป็น branch
+         `task/<id>` แต่ `feature:1` ผ่านทั้ง schema และ freeze แล้วไปพังตอน
+         `git checkout -b` (ยืนยันด้วย `git check-ref-format --branch` จริง:
+         `feature:1`/`a..b`/`x.lock` = FAIL); แก้ที่ gate สองชั้น — pattern
+         `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` บน `id` + `depends_on` items ใน schema
+         ทั้งสองสำเนา (parity เขียว) และ freeze re-check ครบกติกา (`..`, `.lock`
+         suffix ที่ charset เขียนไม่ได้) + test ใน `graph.test.ts` และ
+         `task-graph-schema.test.ts` · **P2 panelSize** — `PLAN_RESOLVED.panelSize`
+         เคย scan log หา FUSION_PANEL ตัวท้าย ทำให้ call ที่ escalate ก่อนตั้ง panel
+         รายงาน panel ของ call ก่อนหน้า (เป็นได้ทั้งสองโหมดบน log ที่ persist ไม่ใช่
+         เฉพาะ taskId null); แก้ที่ต้นทาง — `FusionOutcome.panelSize` จาก `runFusion`
+         แล้วลบ log-scan ทิ้ง + test ใน `fusion.test.ts` (พิสูจน์ delta ด้วย stash
+         เช่นกัน). deviation ของรอบนี้: `FusionOutcome.panelSize` เป็น **optional**
+         ไม่ใช่ required ตามที่ review เสนอ — test block เดิม (`stubOutcome()` ใน
+         `fusion.test.ts`) สร้าง `FusionOutcome` เป็น literal ถ้าทำ required จะ
+         typecheck แดงและต้องแก้ test เดิม ซึ่งกติกาของรอบนี้ห้าม; ทุก return path
+         ของ `runFusion` set ค่าจริงเสมอ ฝั่งอ่านใช้ `?? 0`. อีกข้อ: comment ที่อ้าง
+         ชื่อ reviewer ต้องเขียนเป็นคำกลางใน `core/`+`aal/` (INV-7 scan รวม comment —
+         ชนจริงรอบนี้ที่ `graph.test.ts` + `run.ts` แล้วแก้เป็น "external review").
+         Gate หลังแก้: `pnpm typecheck` -> clean 6 project, `pnpm test` -> core 285 /
+         aal 143 / console-backend 381 / console-web 74 / adapters 39, 0 fail ทุกตัว,
+         `pnpm lint` -> ESLint: No issues found, `bash scripts/check-core-vendor-free.sh`
+         -> OK, `bash scripts/spec-trace.sh platform-phase5-stage4` -> OK 56 เกณฑ์,
+         guard suite 14/14 ไฟล์ PASS
 
 ## Suggested execution batches
 

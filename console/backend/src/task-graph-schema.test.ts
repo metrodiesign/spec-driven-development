@@ -145,3 +145,28 @@ test('non-object roots fail with the root path (REQ-1.1)', () => {
     assert.match(validateTaskGraphShape(root).join('\n'), /^\/: /);
   }
 });
+
+test('task ids and depends_on entries are constrained to a branch-safe charset (REQ-1.1, Codex P2 PR #124)', () => {
+  for (const id of ['feature:1', '-lead', 'has space', 'a/b', 'x'.repeat(65)]) {
+    const g = minimalGraph();
+    (g['tasks'] as Record<string, unknown>[])[0]!['id'] = id;
+    assert.match(
+      validateTaskGraphShape(g).join('\n'),
+      /^\/tasks\/0\/id: /m,
+      `id ${JSON.stringify(id)} must fail at the edge with its path`,
+    );
+  }
+
+  const dangling = minimalGraph();
+  (dangling['tasks'] as Record<string, unknown>[])[0]!['depends_on'] = ['bad:dep'];
+  assert.match(validateTaskGraphShape(dangling).join('\n'), /^\/tasks\/0\/depends_on\/0: /m);
+
+  // `..` and a `.lock` suffix are inside the charset — the edge lets them through on
+  // purpose and freeze refuses them (core graph.test.ts REQ-3.15), so the two layers
+  // stay honest about which rule each one owns.
+  for (const id of ['T-1', 'stage4.task_2-b', 'a..b', 'x.lock']) {
+    const g = minimalGraph();
+    (g['tasks'] as Record<string, unknown>[])[0]!['id'] = id;
+    assert.deepEqual(validateTaskGraphShape(g), [], `${id} is shape-legal`);
+  }
+});

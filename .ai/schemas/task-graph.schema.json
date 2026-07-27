@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "task-graph.schema.json",
-  "$comment": "Task Graph governance schema (unified-platform-spec.md §11.2, platform-phase5-stage4 REQ-1). Shape only: the planning gate (unknown/uncovered ACs, orphan tasks, dependency cycles, budget/risk ceilings, goal_id binding) stays in core freezeTaskGraph (REQ-3). Strict everywhere (additionalProperties:false); an empty `satisfies` array is shape-legal because orphan tasks are decided at freeze, not here (REQ-3.4). The embedded copy TASK_GRAPH_SCHEMA in console/backend/src/task-graph-schema.ts MUST stay deep-equal to this file; the co-located test asserts full deep equality (REQ-1.2).",
+  "$comment": "Task Graph governance schema (unified-platform-spec.md §11.2, platform-phase5-stage4 REQ-1). Shape only: the planning gate (unknown/uncovered ACs, orphan tasks, dependency cycles, budget/risk ceilings, goal_id binding) stays in core freezeTaskGraph (REQ-3). Strict everywhere (additionalProperties:false); an empty `satisfies` array is shape-legal because orphan tasks are decided at freeze, not here (REQ-3.4). Task ids (and the `depends_on` entries naming them) are constrained to a branch-safe charset because each id becomes a `task/<id>` branch; the remaining ref rules a charset cannot express (`..`, a `.lock` suffix) are checked at freeze (REQ-1.1/3.15). The embedded copy TASK_GRAPH_SCHEMA in console/backend/src/task-graph-schema.ts MUST stay deep-equal to this file; the co-located test asserts full deep equality (REQ-1.2).",
   "type": "object",
   "additionalProperties": false,
   "required": ["goal_id", "tasks", "checks"],
@@ -15,10 +15,10 @@
         "additionalProperties": false,
         "required": ["id", "title", "satisfies"],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
+          "id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
           "title": { "type": "string", "minLength": 1 },
           "satisfies": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-          "depends_on": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "depends_on": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" } },
           "enabling": { "type": "boolean" },
           "risk": { "enum": ["L0", "L1", "L2", "L3", "L4"] },
           "diff_budget": { "type": "integer", "minimum": 1 }

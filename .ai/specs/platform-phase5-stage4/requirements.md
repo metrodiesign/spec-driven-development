@@ -141,9 +141,12 @@ before any run logic sees it.
        every object level, `$comment` citing §11.2 + this stage) defining:
        required `goal_id` (string, minLength 1 — binds the graph to one
        contract, A5), required `tasks` (array, minItems 1) of task objects —
-       required `id` (string, minLength 1), required `title` (string,
-       minLength 1), required `satisfies` (array of AC-id strings, may be
-       empty), optional `depends_on` (array of task-id strings), optional
+       required `id` (string, minLength 1, matching the branch-safe pattern
+       `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` — an id becomes a `task/<id>`
+       branch, see 3.15; amended after Codex P2 review on PR #124),
+       required `title` (string, minLength 1), required `satisfies` (array
+       of AC-id strings, may be empty), optional `depends_on` (array of
+       task-id strings, same pattern — they name task ids), optional
        `enabling` (boolean), optional `risk` (enum L0..L4), optional
        `diff_budget` (integer >= 1) — and required `checks` object with
        required `max_diff_budget_per_task` (integer >= 1, A14)                (ubiquitous)
@@ -269,6 +272,13 @@ oversized task blocks the run at the source instead of surfacing mid-run.
 - 3.14 IF the graph's `goal_id` differs from the frozen contract's
        `goal.id` THEN THE SYSTEM SHALL reject (AC ids like `AC-1.1` recur
        across features — the binding must be explicit, A5)                    (error handling)
+- 3.15 IF any task's `id` is not spellable as a git branch name — outside
+       `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`, containing `..`, or ending in
+       `.lock` — THEN THE SYSTEM SHALL reject naming the offending id (every
+       id becomes a `task/<id>` branch, so an unspellable one would be
+       accepted by the gate and then fail mid-run, after the graph was
+       declared runnable; the charset half also holds at the edge schema —
+       1.1) (added after Codex P2 review on PR #124)                          (error handling)
 
 ## REQ-4: Scheduler Selection + Multi-Task Composition
 
@@ -308,7 +318,11 @@ so that a multi-task feature runs end-to-end without a human hand-feeding task i
        graph as `maxDiffBudget` (replacing the hardcoded `?? 400` for this
        mode; single-task mode default unchanged)                              (event-driven)
 - 4.6  WHERE multi-task mode runs THE SYSTEM SHALL claim the task's lease
-       via `createLeaseManager` before executing it (ownerId = the run id;
+       via `createLeaseManager` before executing it (ownerId UNIQUE per
+       invocation and stable within it — the run id stays the event-log
+       identity, but two runs sharing a state dir under one owner would
+       each reclaim the other's live lease, since the CAS permits taking
+       over a self-owned lease; amended after Codex P1 review on PR #124;
        TTL from a composition option defaulting to the contract's
        `max_wallclock_per_task_min` + 5 minutes slack, so an un-renewed
        lease outlives any legal task — D6) and release it

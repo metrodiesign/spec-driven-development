@@ -85,7 +85,10 @@ sequenceDiagram
   - `goal_id`: `{ "type": "string", "minLength": 1 }`
   - `tasks`: `{ "type": "array", "minItems": 1, "items": {...} }` — item
     `required: ["id", "title", "satisfies"]`, `additionalProperties: false`:
-    `id`/`title` string minLength 1 · `satisfies` array ของ string minLength 1
+    `id` string minLength 1 + `pattern` `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`
+    (branch-safe charset — id กลายเป็น branch `task/<id>`; `depends_on` items ใช้
+    pattern เดียวกันเพราะมันชี้ไปที่ id, Codex P2 PR #124) · `title` string
+    minLength 1 · `satisfies` array ของ string minLength 1
     (array ว่างได้ — orphan ตัดสินที่ freeze ไม่ใช่ shape) · `depends_on` array ของ
     string minLength 1 · `enabling` boolean · `risk` enum `["L0","L1","L2","L3","L4"]`
     · `diff_budget` integer minimum 1
@@ -175,7 +178,9 @@ export function freezeTaskGraph(rawBytes: Uint8Array, parsed: unknown,
 ลำดับตรวจใน `freezeTaskGraph` (รวบทุก violation ลง `reasons[]` แล้ว throw ครั้งเดียว —
 คนแก้เห็นครบ; ต่างจาก `freezeContract` ที่ fail-fast โดยบันทึกเหตุผลไว้ใน comment):
 structural re-check ขั้นต่ำ (เชื่อ ajv ที่ edge แต่ freeze ต้อง standalone ได้ —
-fault-injection เรียกตรง) → 3.11 duplicate id → 3.14 goal_id ↔ `contract.goal.id` →
+fault-injection เรียกตรง) → 3.11 duplicate id → 3.15 branch-safe id (charset เดียว
+กับ schema + `..` + `.lock` suffix ที่ charset เขียนไม่ได้ — Codex P2 PR #124) →
+3.14 goal_id ↔ `contract.goal.id` →
 3.2 unknown AC ids → 3.3 uncovered ACs → 3.4 orphans (`satisfies` ว่าง +
 `enabling !== true`) → 3.5 unknown dep / 3.10 self-dep → 3.12 cycle (Kahn — เขียนเอง
 ~15 บรรทัด, ไม่มี dep ใหม่) → 3.6 `tasks.length > contract.budget.maxTotalTasks` →
@@ -255,7 +260,11 @@ lease ที่ไม่ renew มีอายุยาวกว่า task ท�
    log.append(TASK_GRAPH_REJECTED {reasons: e.reasons}); return {finalState:'BLOCKED',
    iterations: 0, tasks: [ทุก id → NOT_STARTED], ...} }` — ผ่าน → append
    `TASK_GRAPH_FROZEN {graphHash, taskIds}` แล้วจำ `frozenSeq` ไว้ scope projection
-2. `const lease = createLeaseManager(join(stateDir,'events.db'), clock, RUN_ID)` —
+2. `const leaseOwner = `${RUN_ID}#${randomUUID()}`` (owner ต่อ invocation — CAS ใน
+   `lease.ts` ยอมให้ owner เดิม reclaim lease ตัวเอง ดังนั้นสอง run ที่แชร์ persistDir
+   ภายใต้ owner เดียวกันจะขโมย task ของกันเอง, Codex P1 PR #124; RUN_ID ยังเป็น
+   identity ของ event log ตามเดิม) +
+   `const lease = createLeaseManager(join(stateDir,'events.db'), clock, RUN_ID)` —
    db เดียวกับ event log (ตาราง `leases` อยู่ใน schema เดียวกันแล้ว)
 3. **Driver:**
    ```
@@ -264,10 +273,10 @@ lease ที่ไม่ renew มีอายุยาวกว่า task ท�
      if (controller.port.poll() === 'kill') break;          // REQ-4.15 (D3)
      const t = selectNextTask(graph, projection);           // projection: seq>=frozenSeq + unselectable
      if (!t) break;
-     if (!lease.claim(t.id, RUN_ID, ttl)) { unselectable.add(t.id); continue; }  // D4
+     if (!lease.claim(t.id, leaseOwner, ttl)) { unselectable.add(t.id); continue; }  // D4
      activeTask = t.id;
      branchHygiene(t.id);                                    // D1 (ล่าง)
-     try { executeTask(t); } finally { lease.release(t.id, RUN_ID); }  // arity จริง (D6)
+     try { executeTask(t); } finally { lease.release(t.id, leaseOwner); }  // arity จริง (D6)
    }
    ```
 4. **Branch hygiene ก่อนทุก task (D1):** `git checkout -q main` →
@@ -318,6 +327,10 @@ option + เมื่อ `result.tasks` มี → พิมพ์ตารา�
   ของ context builder (ยอมรับได้: graph เป็น artifact ที่มนุษย์ promote — บันทึกไว้
   ใน comment); single-task = empty bundle เดิม byte-identical (REQ-5.1/5.2)
 - Plan ยัง advisory: ไม่มีการแตะ resolve/validate path (REQ-5.3)
+- `panelSize` ของ `PLAN_RESOLVED` อ่านจาก `FusionOutcome.panelSize` ที่ `runFusion`
+  คืนมา (0 เมื่อ escalate ก่อนตั้ง panel) — log-scan หา FUSION_PANEL ตัวท้ายถูกลบทิ้ง
+  เพราะบน log ที่ persist มันหยิบ panel ของ call ก่อนหน้ามารายงานเมื่อ call ปัจจุบัน
+  ไม่ได้ append เลย (Codex P2 review PR #124)
 - Comment sweep (REQ-5.4): `fusion.ts:173-185` doc comment + `:193-195` bundle
   comment เขียนใหม่เป็น "planning gate ตรวจ graph ที่ freeze แล้ว (§11.2); plan ยัง
   advisory" · `.ai/schemas/plan.schema.json` `$comment` ประโยคเพดานเดิมแทนด้วยคำ
@@ -403,7 +416,8 @@ Split ตาม package reality (D8 — `core/test` import จาก `console/` 
 
 | Design element | REQ | Section |
 |---|---|---|
-| governance schema ครบ field + required checks/goal_id | 1.1 | D1 Schema (governance + embedded + edge validation) |
+| governance schema ครบ field + required checks/goal_id + branch-safe id pattern | 1.1 | D1 Schema (governance + embedded + edge validation) |
+| branch-safe charset ที่ edge (ครึ่งหนึ่งของกติกา, อีกครึ่งอยู่ที่ freeze) | 3.15 | D1 Schema (governance + embedded + edge validation) |
 | embedded `TASK_GRAPH_SCHEMA` + deep-equal parity | 1.2 | D1 Schema (governance + embedded + edge validation) |
 | `validateTaskGraphShape` accept/reject + failing path | 1.3, 1.4, 1.5 | D1 Schema (governance + embedded + edge validation) |
 | emit ต่อ task block: ordinal id, title, satisfies, deps, goal_id | 2.1 | D2 Generator task-graph emission |
@@ -424,6 +438,7 @@ Split ตาม package reality (D8 — `core/test` import จาก `console/` 
 | structured gate result เดินทางกับ frozen graph | 3.9 | D3 Core graph module (freeze + selection) |
 | deploy + graph → reject | 3.13 | D3 Core graph module (freeze + selection) |
 | goal_id binding | 3.14 | D3 Core graph module (freeze + selection) |
+| branch-safe task id (charset ที่ edge + `..`/`.lock` ที่ freeze) | 3.15 | D3 Core graph module (freeze + selection) |
 | `selectNextTask` pure + dep set + run-scoped projection + tie-break | 4.1 | D3 Core graph module (freeze + selection) |
 | mode keys บน option {rawBytes, parsed} | 4.2 | D4 Multi-task composition (loop-run + CLI) |
 | absent = byte-identical เดิม | 4.3 | D4 Multi-task composition (loop-run + CLI) |

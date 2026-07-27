@@ -56,6 +56,22 @@ export class TaskGraphGateError extends Error {
 
 const RISK_LEVELS: readonly RiskClass[] = ['L0', 'L1', 'L2', 'L3', 'L4'];
 
+/**
+ * A task id becomes a `task/<id>` branch in the worktree, so an id git cannot spell
+ * as a ref would be accepted by the gate and then blow up mid-run, after the graph
+ * was already declared runnable. The charset also holds at the edge schema; the two
+ * rules a charset cannot express (a `..` sequence, a `.lock` suffix) are checked
+ * here, which keeps freeze standalone (REQ-3.15).
+ */
+const BRANCH_SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+function branchUnsafeReason(id: string): string | null {
+  if (!BRANCH_SAFE_ID.test(id)) return 'must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
+  if (id.includes('..')) return 'must not contain ".."';
+  if (id.endsWith('.lock')) return 'must not end with ".lock"';
+  return null;
+}
+
 /** A task as it survives the structural re-check: declared values, nothing resolved yet. */
 interface DeclaredTask {
   id: string;
@@ -208,6 +224,12 @@ export function freezeTaskGraph(
     seen.add(t.id);
   }
   for (const id of duplicates) reasons.push(`duplicate task id: ${id}`);
+
+  // 3.15 every id must be spellable as a branch name (it becomes `task/<id>`).
+  for (const t of tasks) {
+    const bad = branchUnsafeReason(t.id);
+    if (bad !== null) reasons.push(`task id ${t.id} is not branch-safe: it ${bad}`);
+  }
 
   // 3.14 the graph binds to exactly one contract — AC ids recur across features.
   if (goalId !== contract.goal.id) {

@@ -634,3 +634,42 @@ test("REQ-4.5: a task's own diff_budget reaches the approval package — not the
     rmSync(persistDir, { recursive: true, force: true });
   }
 });
+
+test('REQ-4.6: a lease held under the RUN ID by a concurrent runner is not reclaimed (Codex P1, PR #124)', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-owner-'));
+  try {
+    // A second runner of the SAME goal, sharing this persistDir, holds T-2. Before the
+    // fix both runners owned their leases as 'RUN-LIVE', and lease.ts's CAS lets a
+    // claimer take over a lease it already owns — so this run would have stolen T-2
+    // and executed it concurrently with its live holder.
+    const concurrent = createLeaseManager(join(persistDir, 'events.db'), clock, 'RUN-LIVE');
+    try {
+      assert.equal(concurrent.claim('T-2', 'RUN-LIVE', 30 * 60_000), true, 'the concurrent claim really took');
+    } finally {
+      concurrent.close();
+    }
+
+    const out = await runSupervisedLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      taskGraph: graphOption(TWO_TASK_GRAPH),
+    });
+    assert.equal(out.tasks?.find((t) => t.id === 'T-2')?.finalState, 'NOT_STARTED', 'the held task was left alone');
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'TASK_STATE', taskId: 'T-2' }).length, 0, 'T-2 was never dispatched');
+      const owners = log.all({ type: 'LEASE_CLAIMED' }).map((e) => String(e.payload['ownerId']));
+      assert.deepStrictEqual(owners.filter((o) => o === 'RUN-LIVE'), ['RUN-LIVE'], 'only the concurrent runner claimed as the bare run id');
+      const ours = owners.filter((o) => o !== 'RUN-LIVE');
+      assert.equal(ours.length, 1, 'this run claimed exactly T-1');
+      assert.match(ours[0] ?? '', /^RUN-LIVE#/, 'our owner is the run id plus a per-invocation suffix');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});

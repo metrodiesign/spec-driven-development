@@ -54,6 +54,14 @@ export interface FusionOutcome {
   usage: { costUnits: number };
   resolved: ResolveRule;
   escalateReason?: FusionEscalateReason;
+  /**
+   * Panel size THIS call formed — 0 when it escalated before a panel existed. Returned
+   * rather than read back out of the log, because a caller scanning the log for the
+   * last FUSION_PANEL picks up an older call's panel when this one never appended one
+   * (external review, PR #124). Every `runFusion` return path sets it; optional only so a
+   * hand-built outcome (a stand-in for an unrelated seam) still type-checks.
+   */
+  panelSize?: number;
 }
 
 interface PanelSlot {
@@ -63,7 +71,13 @@ interface PanelSlot {
 }
 
 /** Escalate before/instead of resolving — winner null, reason recorded, deliberation marker stored. */
-function escalate(deps: FusionDeps, profile: FusionProfile, reason: FusionEscalateReason, usage: number): FusionOutcome {
+function escalate(
+  deps: FusionDeps,
+  profile: FusionProfile,
+  reason: FusionEscalateReason,
+  usage: number,
+  panelSize = 0,
+): FusionOutcome {
   const deliberationRef = deps.evidence.put(JSON.stringify({ judge: 'not_reached', reason }));
   deps.log.append({
     runId: deps.runId,
@@ -71,7 +85,7 @@ function escalate(deps: FusionDeps, profile: FusionProfile, reason: FusionEscala
     type: 'FUSION_RESOLVED',
     payload: { artifact: profile.artifact, resolved: profile.resolve, winner: false, escalateReason: reason },
   });
-  return { winner: null, deliberationRef, dissentRefs: [], usage: { costUnits: usage }, resolved: profile.resolve, escalateReason: reason };
+  return { winner: null, deliberationRef, dissentRefs: [], usage: { costUnits: usage }, resolved: profile.resolve, escalateReason: reason, panelSize };
 }
 
 /** Build the N panel slots per the profile diversity, or null when a required lineage is unavailable (REQ-9.7). */
@@ -206,14 +220,14 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
 
   // REQ-9.8: fewer than two surviving candidates after AdapterErrors -> escalate,
   // never resolve a one-candidate "panel".
-  if (candidates.length < 2) return escalate(deps, profile, 'panel_degraded', usage);
+  if (candidates.length < 2) return escalate(deps, profile, 'panel_degraded', usage, slots.length);
 
   // REQ-9.2: core-produced gate evidence per candidate for code_diff/tests, in
   // separate worktrees (the runner owns worktree isolation). Absent runner = cannot
   // measure -> no_gate_survivor (defensive; the composition always supplies one).
   const needsGate = profile.artifact === 'code_diff' || profile.artifact === 'tests';
   if (needsGate) {
-    if (deps.evidenceRunner === undefined) return escalate(deps, profile, 'no_gate_survivor', usage);
+    if (deps.evidenceRunner === undefined) return escalate(deps, profile, 'no_gate_survivor', usage, slots.length);
     for (const c of candidates) {
       c.gate = await deps.evidenceRunner.run({ actions: c.actions });
     }
@@ -295,5 +309,6 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
     usage: { costUnits: usage },
     resolved: resolution.resolved,
     ...(resolution.escalateReason !== undefined ? { escalateReason: resolution.escalateReason } : {}),
+    panelSize: slots.length,
   };
 }
