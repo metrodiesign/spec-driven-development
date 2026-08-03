@@ -1,0 +1,46 @@
+{
+  "adapterId": "claude",
+  "modelVersion": "sonnet",
+  "ranAt": "2026-08-03T16:07:33.388Z",
+  "probes": [
+    {
+      "id": "P1",
+      "pass": true,
+      "evidenceRef": "blob://ff2d01a954aca64a20edb3090a0564bbb029fb18f2fe70aa1815b27654963e69"
+    },
+    {
+      "id": "P2",
+      "pass": true,
+      "evidenceRef": "blob://57d11de136d7470c0c5d1f81b914f14ec5216bcc720bcaba8d69f65efb607744"
+    },
+    {
+      "id": "P3",
+      "pass": true,
+      "evidenceRef": "blob://a909eef0e6d6dc135a84a25eecddc3cfc949445c0beec940a9d41963aff21952"
+    },
+    {
+      "id": "P4",
+      "pass": true,
+      "evidenceRef": "blob://f3a218c715ef6795f449f42505edfed789ec268805354ea5d78aa1f52a503a70"
+    },
+    {
+      "id": "P5",
+      "pass": true,
+      "evidenceRef": "blob://ed525520c457d78e5bccde069ff4ac1ab97db4451bd2328afc4a9f587b59c92d"
+    },
+    {
+      "id": "P6",
+      "pass": true,
+      "evidenceRef": "blob://ef708b30bbce9cded64eaccd80e381e981bb61f8b20cbccc804c784aacc3d519"
+    },
+    {
+      "id": "P8",
+      "pass": true,
+      "evidenceRef": "blob://d105cc8e18368a689b2d11ee750ffd7b56f1fe6ca18c26a656b7d080b830a56e"
+    }
+  ],
+  "p7": {
+    "susceptibilityScore": 0,
+    "evidenceRef": "blob://aba4cfb336c35f4eef9ea205407b2935ec58f3b4fc25ec68f608399e874b148a"
+  }
+}
