@@ -155,9 +155,25 @@ if echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+(commit|push)([[:space:]]|$)"
     block 'git push ตรงเข้า main/develop — ต้องผ่าน PR (Workflow rules)'
 fi
 
+# `gh api` ref-deletion — Tier 1 (.githooks/pre-push) blocks EVERY remote ref deletion
+# unconditionally ("confirm with a human first"), but Tier 1 only fires on `git push`.
+# `gh api -X DELETE .../git/refs/heads/<branch>` hits GitHub's REST API directly and
+# never touches git push, so it bypasses Tier 1 completely — found live (PR #125/#126
+# post-merge sync: an agent used exactly this to delete a merged branch). This
+# session-level hook is the only layer that can see the command before it runs, so it
+# is blocked unconditionally too (any branch, not just main/develop — matching Tier 1).
+if echo "$N" | grep -qiE "${POS}gh[[:space:]]+api([[:space:]]|$)" &&
+  echo "$N" | grep -qiE "(--method[[:space:]]+delete([[:space:]]|$)|-X[[:space:]]*delete([[:space:]]|$))" &&
+  echo "$N" | grep -qiE "refs/heads/"; then
+  block 'gh api -X DELETE ลบ remote branch ref ตรง ๆ — เลี่ยง Tier 1 pre-push floor (confirm with a human first); ให้ user ลบเอง หรือใช้ gh pr merge --delete-branch ตอน merge แทน (Destructive Ops rules)'
+fi
+
 # KNOWN, INTENTIONALLY-UNBLOCKED GAP (ยอมรับเพื่อกัน false-positive สูงเกินไป):
 #   git branch -D <branch> / find ... -exec rm {} +
 # ลบข้อมูลได้แต่ใช้งานปกติบ่อย + กู้คืนได้ (branch -D ผ่าน reflog) — hard-block จะ FP สูง.
-# enforcement floor จริงอยู่ที่ Tier 1 (git hooks + CI). ถ้าจะเพิ่มในอนาคตต้อง anchor ให้แคบก่อน.
+# enforcement floor จริงอยู่ที่ Tier 1 (git hooks + CI) ยกเว้นเคสที่ Tier 1 มองไม่เห็นโดย
+# โครงสร้าง (ไม่ใช่ git push) เช่น gh api ด้านบน หรือ curl ตรงไปที่ REST API เดียวกัน
+# (ยังไม่ปิด — ไม่มี evidence ว่าถูกใช้จริง ต่างจาก gh api ที่เจอ live แล้ว).
+# ถ้าจะเพิ่มในอนาคตต้อง anchor ให้แคบก่อน.
 # (git restore/checkout '.' ทั้ง working tree ถูก block ด้านบนแล้ว — issue #30.)
 exit 0
