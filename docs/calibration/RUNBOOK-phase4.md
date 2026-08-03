@@ -124,7 +124,8 @@ signingSecret all present — values never read or echoed back).
 ## 3. Lesson propose → approve → inject (REQ-25.5) — **honest gap, recorded, not fabricated**
 
 New fixture `.ai/calibration/fixture-goal-lesson.yaml`: same underlying fixed
-fixture repo (`makeFixtureRepo()` always seeds `run-tests.sh` as
+test-only synthetic fixture repo (`makeSyntheticFixtureRepoForTests()` seeds
+`run-tests.sh` as
 `grep -q correct src/impl.txt`), but the AC description deliberately never
 spells out the literal expected word (unlike `fixture-goal.yaml`, whose AC
 text literally says "contains correct") — the harness is propose-only (no
@@ -178,8 +179,8 @@ Standalone throwaway script (`console/backend/bin/fusion-live-probe.ts`,
 mirroring Phase-3 task-13's own `fusion-live-probe.ts` precedent — deleted
 after use, never committed). One real corpus task
 (`.ai/calibration/corpus/tasks/task-01.json`, golden `token-01\n`), a fresh
-throwaway target git repo (`gate-ladder.json` T1 gate + golden manifest,
-mirroring `makeFixtureRepo()`'s exact shape), a real cross-lineage panel
+throwaway target git repo (`gate-ladder.json` T1 gate + operator-supplied
+golden manifest, mirroring the explicit test fixture shape), a real cross-lineage panel
 (claude + codex) via `runFusion` with the shipped `tests` profile, and a real
 single-model (claude) baseline — both scored against the same held-out
 golden via `createCandidateEvidenceRunner`.

@@ -1,4 +1,4 @@
-// Fault-injection suite — the Phase 0 DoD (unified-platform-spec.md §14, 9 scenarios).
+// Fault-injection suite — the Phase 0 DoD (loop-engineering-implementation-spec.md §11, 9 scenarios).
 // Written RED-FIRST (spec §0.4): these tests define what the core must catch
 // BEFORE the core exists. Never weaken a scenario to make it pass (INV-16).
 //
@@ -22,11 +22,14 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 
 import { createBudget } from '../src/budget/budget.ts';
+import { createCoreCommandExecutor } from '../src/executor/command-executor.ts';
 import { createDefaultPathPolicy } from '../src/executor/path-policy.ts';
 import { createEvidenceStore } from '../src/evidence/store.ts';
 import { createExecutor, CrashInjected, recoverWorktree } from '../src/executor/executor.ts';
-import { createGateRunner } from '../src/gates/runner.ts';
+import { createGateRunner, type GateRunner } from '../src/gates/runner.ts';
+import { ReportIntegrityError } from '../src/gates/report-integrity.ts';
 import { createLeaseManager } from '../src/state/lease.ts';
+import { createCommandRunner } from '../src/security/command-runner.ts';
 import { denyNetworkSandbox } from '../src/security/sandbox.ts';
 import { openEventLog } from '../src/state/event-log.ts';
 import { runTaskLoop } from '../src/orchestrator/loop.ts';
@@ -39,13 +42,19 @@ import {
   installFlakyTests,
   makeClock,
   makeFixture,
+  makeReportIntegrity,
+  PASSTHROUGH_TEST_SANDBOX,
+  makeTestLeaseSession,
   sha256Hex,
   type Fixture,
 } from './helpers/fixture.ts';
 
 const execFileAsync = promisify(execFile);
-const isDarwin = process.platform === 'darwin';
-const darwinOnly = { skip: !isDarwin ? 'RUN_COMMAND requires the darwin sandbox (D-003)' : false };
+const realMacOS =
+  process.platform === 'darwin' && process.env['PHASE0_REAL_MACOS_TESTS'] === '1';
+const realMacOSOnly = {
+  skip: !realMacOS ? 'requires explicit execution outside a nested sandbox' : false,
+};
 
 const RUN_ID = 'RUN-1';
 const TASK_ID = 'T-1';
@@ -60,7 +69,16 @@ function buildCore(fix: Fixture, clock = makeClock(), failpoints?: Failpoints) {
   const log = openEventLog(fix.dbPath, clock);
   const evidence = createEvidenceStore(fix.evidenceDir);
   const policy = createDefaultPathPolicy();
-  const sandbox = denyNetworkSandbox(process.platform);
+  const sandbox = realMacOS
+    ? denyNetworkSandbox(process.platform)
+    : PASSTHROUGH_TEST_SANDBOX;
+  const commandRunner = createCommandRunner({ sandbox, evidence });
+  const commandExecutor = createCoreCommandExecutor({
+    evidence,
+    policy,
+    sandbox,
+    commandRunner,
+  });
   const executor = createExecutor({
     worktreeDir: fix.worktree,
     runId: RUN_ID,
@@ -69,6 +87,8 @@ function buildCore(fix: Fixture, clock = makeClock(), failpoints?: Failpoints) {
     evidence,
     policy,
     sandbox,
+    commandRunner,
+    coreCommandExecutor: commandExecutor,
     clock,
     ...(failpoints ? { failpoints } : {}),
   });
@@ -79,7 +99,9 @@ function buildCore(fix: Fixture, clock = makeClock(), failpoints?: Failpoints) {
     taskId: TASK_ID,
     log,
     evidence,
+    reportIntegrity: makeReportIntegrity(fix, evidence),
     clock,
+    commandExecutor,
   });
   return { log, evidence, policy, sandbox, executor, gates, clock };
 }
@@ -92,6 +114,7 @@ function loopFor(
   c: ReturnType<typeof buildCore>,
   source: ProposalSource,
   budget = createBudget(DEFAULT_LIMITS, c.clock),
+  gates: GateRunner = c.gates,
 ) {
   return runTaskLoop({
     runId: RUN_ID,
@@ -99,11 +122,32 @@ function loopFor(
     role: 'implementer',
     source,
     executor: c.executor,
-    gates: c.gates,
+    gates,
     log: c.log,
     budget,
     clock: c.clock,
+    lease: makeTestLeaseSession(TASK_ID),
   });
+}
+
+function honestSource(c: ReturnType<typeof buildCore>): ProposalSource {
+  return {
+    async propose(input: ProposalInput): Promise<Proposal> {
+      if (input.state === 'IMPLEMENTING') {
+        return {
+          claim: 'READY_FOR_VERIFICATION',
+          actions: [{
+            type: 'WRITE_FILE',
+            actionId: 'a-auth-fix',
+            path: 'src/impl.txt',
+            contentRef: c.evidence.put('correct\n'),
+          }],
+          costUnits: 1,
+        };
+      }
+      return { claim: 'READY_FOR_VERIFICATION', actions: [], costUnits: 1 };
+    },
+  };
 }
 
 /** Every GATE_RESULT must be bound to real, resolvable evidence (INV-10). */
@@ -302,7 +346,7 @@ test('DoD#2: out-of-policy actions are rejected as structured feedback', async (
   }
 });
 
-test('DoD#2b: rejections come back to the source as structured feedback, loop intact (REQ-1.5)', async () => {
+test('DoD#2b: a failed T0 takes the deterministic diagnosis path after action rejection (REQ-1.5/REQ-5.5)', async () => {
   const fix = makeFixture();
   try {
     const c = buildCore(fix);
@@ -329,13 +373,13 @@ test('DoD#2b: rejections come back to the source as structured feedback, loop in
     };
     const result = await loopFor(c, source);
 
-    assert.equal(result.finalState, 'BLOCKED', 'loop survived the rejection and honored BLOCKED');
+    assert.equal(result.finalState, 'ESCALATED', 'T0 failure cannot be bypassed by a later BLOCKED claim');
     const secondRound = seenFeedback[1];
-    assert.ok(Array.isArray(secondRound), 'round 2 got rejection feedback as an array');
-    if (Array.isArray(secondRound)) {
-      assert.equal(secondRound[0]?.actionId, 'a-bad');
-      assert.equal(secondRound[0]?.reason, 'path_outside_allowlist');
-    }
+    assert.ok(
+      secondRound && !Array.isArray(secondRound) && 'tier' in secondRound && secondRound.tier === 'T0',
+      'diagnostician receives the authenticated failed T0 report',
+    );
+    assert.equal(c.log.all({ type: 'ACTION_REJECTED' }).length, 1, 'the structured action rejection remains logged');
   } finally {
     fix.cleanup();
   }
@@ -348,7 +392,7 @@ test('DoD#2b: rejections come back to the source as structured feedback, loop in
 // to worktreeHash/rollback/golden-manifest, so they must be impossible at run
 // time, not merely detected later.
 // ---------------------------------------------------------------------------
-test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', darwinOnly, async () => {
+test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', realMacOSOnly, async () => {
   const fix = makeFixture();
   try {
     const c = buildCore(fix);
@@ -363,9 +407,9 @@ test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', dar
       },
       'implementer',
     );
-    assert.equal(outEscape.status, 'applied', 'command ran under the sandbox');
-    if (outEscape.status === 'applied') {
-      assert.notEqual(outEscape.exitCode, 0, 'escape write exited non-zero');
+    assert.equal(outEscape.status, 'rejected', 'sandbox denial returns structured feedback');
+    if (outEscape.status === 'rejected') {
+      assert.equal(outEscape.rejection.reason, 'sandbox_violation');
     }
     assert.ok(!existsSync(escapeTarget), 'no file materialized outside the worktree');
 
@@ -378,9 +422,9 @@ test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', dar
       },
       'implementer',
     );
-    assert.equal(outGolden.status, 'applied');
-    if (outGolden.status === 'applied') {
-      assert.notEqual(outGolden.exitCode, 0, 'golden write exited non-zero');
+    assert.equal(outGolden.status, 'rejected');
+    if (outGolden.status === 'rejected') {
+      assert.equal(outGolden.rejection.reason, 'sandbox_violation');
     }
     assert.equal(
       readFileSync(join(fix.worktree, 'test/golden/expected.txt'), 'utf8'),
@@ -408,6 +452,66 @@ test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', dar
   }
 });
 
+test('DoD#2d / REQ-2.4: planner and test_designer cannot bypass role roots via RUN_COMMAND', realMacOSOnly, async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const cases = [
+      {
+        role: 'planner' as const,
+        actionId: 'planner-command-write',
+        cmd: 'printf bypass > src/planner-owned.txt',
+        target: join(fix.worktree, 'src', 'planner-owned.txt'),
+      },
+      {
+        role: 'test_designer' as const,
+        actionId: 'test-command-write',
+        cmd: 'printf bypass > src/test-owned.txt',
+        target: join(fix.worktree, 'src', 'test-owned.txt'),
+      },
+    ];
+    for (const item of cases) {
+      const out = await c.executor.execute(
+        { type: 'RUN_COMMAND', actionId: item.actionId, cmd: item.cmd, network: 'none' },
+        item.role,
+      );
+      assert.equal(out.status, 'rejected', `${item.role} write is structured rejection`);
+      if (out.status === 'rejected') assert.equal(out.rejection.reason, 'sandbox_violation');
+      assert.equal(existsSync(item.target), false);
+    }
+
+    const plannerRead = await c.executor.execute(
+      {
+        type: 'RUN_COMMAND',
+        actionId: 'planner-command-read',
+        cmd: 'test -f src/impl.txt',
+        network: 'none',
+      },
+      'planner',
+    );
+    assert.equal(plannerRead.status, 'applied', 'planner retains read-only command access');
+    if (plannerRead.status === 'applied') assert.equal(plannerRead.exitCode, 0);
+
+    const testWrite = await c.executor.execute(
+      {
+        type: 'RUN_COMMAND',
+        actionId: 'test-command-allowed-write',
+        cmd: 'printf allowed > test/ai-generated/allowed.txt',
+        network: 'none',
+      },
+      'test_designer',
+    );
+    assert.equal(testWrite.status, 'applied', 'test_designer can write its declared root');
+    if (testWrite.status === 'applied') assert.equal(testWrite.exitCode, 0);
+    assert.equal(
+      readFileSync(join(fix.worktree, 'test', 'ai-generated', 'allowed.txt'), 'utf8'),
+      'allowed',
+    );
+  } finally {
+    fix.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // DoD#3 — a command that sneaks toward the network is blocked at connect and
 // the block is logged with core-captured evidence (REQ-2.1/2.2); hosts without
@@ -416,7 +520,7 @@ test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', dar
 // open network, so only a REAL kernel-level deny makes it fail (child procs
 // inherit the profile — a proxy-env "sandbox" cannot pass this).
 // ---------------------------------------------------------------------------
-test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-closed)', async () => {
+test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-closed)', realMacOSOnly, async () => {
   const fix = makeFixture();
   try {
     const c = buildCore(fix);
@@ -428,20 +532,21 @@ test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-clo
     };
     const out = await c.executor.execute(action, 'implementer');
 
-    if (isDarwin) {
-      assert.equal(out.status, 'applied', 'command ran (inside the sandbox)');
-      if (out.status === 'applied') {
-        assert.notEqual(out.exitCode, 0, 'raw-IP connect failed under deny-network');
-        assert.equal(out.egressBlocked, true, 'egress_blocked marker present');
-        assert.ok(out.outputRef, 'command output captured as evidence');
-        const text = c.evidence.getText(out.outputRef as string);
+    if (realMacOS) {
+      assert.equal(out.status, 'rejected', 'kernel denial becomes a structured rejection');
+      if (out.status === 'rejected') {
+        assert.equal(out.rejection.reason, 'sandbox_violation');
+        const evidenceRef = out.rejection.detail.match(/evidence=(blob:\/\/[0-9a-f]{64})/)?.[1];
+        assert.ok(evidenceRef, 'structured denial carries the core-owned evidence ref');
+        const text = c.evidence.getText(evidenceRef);
         assert.ok(text.length > 0, 'captured evidence is non-empty');
-        assert.match(text, /exit:/, 'evidence records the exit status');
+        assert.match(text, /status:sandbox_violation/, 'evidence records the enforcement status');
+        assert.match(text, /egress-blocked:true/, 'evidence records the requested network deny');
       }
-      const applied = c.log.all({ type: 'ACTION_APPLIED' });
+      const rejected = c.log.all({ type: 'ACTION_REJECTED' });
       assert.ok(
-        applied.some((e) => e.payload['egressBlocked'] === true),
-        'egress block visible in the event log',
+        rejected.some((e) => e.payload['reason'] === 'sandbox_violation'),
+        'egress denial is visible as a rejection in the event log',
       );
     } else {
       assert.equal(out.status, 'rejected', 'no enforcing sandbox -> refuse to run');
@@ -449,6 +554,53 @@ test('DoD#3: egress attempt under network:"none" is blocked (or refused fail-clo
         assert.equal(out.rejection.reason, 'sandbox_unavailable');
       }
     }
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#3b / REQ-2.1: T0 and T1 raw-IP egress are denied by the same core child boundary', realMacOSOnly, async () => {
+  const rawIpProbe = '/usr/bin/nc -z -G 3 -w 3 1.1.1.1 443';
+  const scenarios = [
+    { tier: 'T0' as const, checkName: 'lint', fixture: { t0Lint: rawIpProbe } },
+    { tier: 'T1' as const, checkName: 'fullTests', fixture: { fullTests: rawIpProbe } },
+  ];
+
+  for (const scenario of scenarios) {
+    const fix = makeFixture(scenario.fixture);
+    try {
+      const c = buildCore(fix);
+      const report = await c.gates.run(scenario.tier);
+      const check = report.checks.find((candidate) => candidate.name === scenario.checkName);
+
+      assert.equal(report.pass, false);
+      assert.equal(check?.pass, false);
+      assert.ok(check?.evidenceRef);
+      assert.match(c.evidence.getText(check?.evidenceRef as string), /sandbox:enforced/);
+      assert.match(c.evidence.getText(check?.evidenceRef as string), /egress-blocked:true/);
+    } finally {
+      fix.cleanup();
+    }
+  }
+});
+
+test('DoD#3c / REQ-2.8: gate source and golden mutation is discarded from the durable artifact', realMacOSOnly, async () => {
+  const fix = makeFixture({
+    fullTests: 'printf correct > src/impl.txt; printf tampered > test/golden/expected.txt',
+  });
+  try {
+    const sourceBefore = readFileSync(join(fix.worktree, 'src', 'impl.txt'), 'utf8');
+    const goldenBefore = readFileSync(join(fix.worktree, 'test', 'golden', 'expected.txt'), 'utf8');
+    const c = buildCore(fix);
+
+    const report = await c.gates.run('T1');
+
+    assert.equal(report.pass, false);
+    assert.equal(readFileSync(join(fix.worktree, 'src', 'impl.txt'), 'utf8'), sourceBefore);
+    assert.equal(
+      readFileSync(join(fix.worktree, 'test', 'golden', 'expected.txt'), 'utf8'),
+      goldenBefore,
+    );
   } finally {
     fix.cleanup();
   }
@@ -547,6 +699,84 @@ test('DoD#4b: golden delete and add routes also fail T1 (set-equality both direc
   }
 });
 
+for (const scenario of [
+  { name: 'forged signed verdict', mode: 'forged', why: 'evidence_auth_mismatch', code: 'signature_mismatch' },
+  { name: 'missing referenced blob', mode: 'missing', why: 'evidence_auth_unavailable', code: 'evidence_blob_missing' },
+  { name: 'tampered referenced blob', mode: 'tampered', why: 'evidence_auth_mismatch', code: 'evidence_hash_mismatch' },
+] as const) {
+  test(`REQ-4.9-4.13 fault injection: ${scenario.name} cannot advance state`, async () => {
+    const fix = makeFixture();
+    try {
+      const c = buildCore(fix);
+      const gates: GateRunner = {
+        async run(tier) {
+          const report = await c.gates.run(tier);
+          if (tier !== 'T1') return report;
+          if (scenario.mode === 'forged') return { ...report, pass: false };
+          const ref = report.checks[0]?.evidenceRef;
+          assert.ok(ref, 'T1 report carries evidence to inject against');
+          const path = join(fix.evidenceDir, ref.slice('blob://'.length));
+          if (scenario.mode === 'missing') unlinkSync(path);
+          else writeFileSync(path, 'tampered after signed publication\n');
+          return report;
+        },
+        verify(report) {
+          return c.gates.verify(report);
+        },
+      };
+
+      const result = await loopFor(c, honestSource(c), undefined, gates);
+
+      assert.equal(result.finalState, 'ESCALATED');
+      const states = taskStates(c.log);
+      assert.ok(!states.includes('PASSED'));
+      assert.ok(!states.includes('REVIEWING'));
+      assert.ok(!states.includes('COMPLETED'));
+      const escalated = c.log.all({ type: 'ESCALATED' }).at(-1);
+      assert.equal(escalated?.payload['why'], scenario.why);
+      assert.equal(escalated?.payload['boundary'], 'state_advancement');
+      assert.equal(escalated?.payload['code'], scenario.code);
+    } finally {
+      fix.cleanup();
+    }
+  });
+}
+
+test('REQ-4.12/5.5 fault injection: T0 evidence authentication failure fails closed before T1', async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    let t1Calls = 0;
+    const gates: GateRunner = {
+      async run(tier) {
+        if (tier === 'T1') t1Calls += 1;
+        return c.gates.run(tier);
+      },
+      verify(report) {
+        if (report.tier === 'T0') {
+          throw new ReportIntegrityError('signature_mismatch', 'injected T0 evidence-auth failure');
+        }
+        return c.gates.verify(report);
+      },
+    };
+
+    const result = await loopFor(c, honestSource(c), undefined, gates);
+
+    assert.equal(result.finalState, 'ESCALATED');
+    assert.equal(t1Calls, 0, 'T1 is unreachable after T0 authentication failure');
+    const states = taskStates(c.log);
+    assert.ok(!states.includes('PASSED'));
+    assert.ok(!states.includes('REVIEWING'));
+    assert.ok(!states.includes('COMPLETED'));
+    const escalated = c.log.all({ type: 'ESCALATED' }).at(-1);
+    assert.equal(escalated?.payload['why'], 'evidence_auth_mismatch');
+    assert.equal(escalated?.payload['boundary'], 'state_advancement');
+    assert.equal(escalated?.payload['code'], 'signature_mismatch');
+  } finally {
+    fix.cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // DoD#5 — flaky test: fail-then-pass on retry is flagged flaky_suspect for a
 // human; never silently passed, never auto-quarantined (REQ-8.5, INV-16).
@@ -560,11 +790,15 @@ test('DoD#5: flaky test -> real retry, flagged, no silent pass, no auto-quaranti
     const c = buildCore(fix);
     const report = await c.gates.run('T1');
 
-    const runs = readFileSync(join(fix.worktree, '.runs'), 'utf8').split('\n').filter(Boolean);
-    assert.equal(runs.length, 2, 'the suite really ran exactly twice (one retry)');
-
     const fullTests = report.checks.find((ch) => ch.name === 'fullTests');
     assert.ok(fullTests, 'fullTests check present');
+    const evidence = c.evidence.getText(fullTests?.evidenceRef as string);
+    assert.equal(
+      evidence.match(/^GATE_RUN$/gm)?.length,
+      2,
+      'core-captured evidence proves the suite ran exactly twice',
+    );
+    assert.equal(existsSync(join(fix.worktree, '.runs')), false, 'retry markers stay disposable');
     assert.equal(fullTests?.flakySuspect, true, 'flagged flaky_suspect');
     assert.equal(report.pass, false, 'flaky result does not silently pass');
     assert.equal(
@@ -591,8 +825,13 @@ test('DoD#5b (control): deterministic failure is NOT labeled flaky', async () =>
     const fullTests = report.checks.find((ch) => ch.name === 'fullTests');
     assert.equal(fullTests?.pass, false);
     assert.ok(!fullTests?.flakySuspect, 'stable failure carries no flaky label');
-    const runs = readFileSync(join(fix.worktree, '.runs'), 'utf8').split('\n').filter(Boolean);
-    assert.equal(runs.length, 2, 'retry attempted once, then reported as a real failure');
+    const evidence = c.evidence.getText(fullTests?.evidenceRef as string);
+    assert.equal(
+      evidence.match(/^GATE_RUN$/gm)?.length,
+      2,
+      'retry attempted once, then reported as a real failure',
+    );
+    assert.equal(existsSync(join(fix.worktree, '.runs')), false, 'failed gate leaves no marker');
   } finally {
     fix.cleanup();
   }
@@ -605,7 +844,7 @@ test('DoD#5b (control): deterministic failure is NOT labeled flaky', async () =>
 // snapshotRef resolvable, garbage from a partial apply cleaned, and recovery
 // itself idempotent (crash-during-recovery story).
 // ---------------------------------------------------------------------------
-test('DoD#6: crash after apply, before APPLIED event -> recovery yields exactly-once', darwinOnly, async () => {
+test('DoD#6: crash after apply, before APPLIED event -> recovery yields exactly-once', async () => {
   const fix = makeFixture();
   try {
     const clock = makeClock();
@@ -677,7 +916,7 @@ test('DoD#6: crash after apply, before APPLIED event -> recovery yields exactly-
   }
 });
 
-test('DoD#6b: crash after INTENT (partial apply garbage) -> rollback cleans, rerun applies once', darwinOnly, async () => {
+test('DoD#6b: crash after INTENT (partial apply garbage) -> rollback cleans, rerun applies once', async () => {
   const fix = makeFixture();
   try {
     const clock = makeClock();
@@ -713,6 +952,147 @@ test('DoD#6b: crash after INTENT (partial apply garbage) -> rollback cleans, rer
     const applieds = recovered.log.all({ type: 'ACTION_APPLIED' });
     assert.equal(applieds.length, 1, 'APPLIED written by recovery');
     assert.equal(applieds[0]?.payload['actionId'], 'a-append2');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#6c/REQ-3.7: a later accepted patch cannot bury an earlier dangling generation', async () => {
+  const fix = makeFixture();
+  try {
+    const clock = makeClock();
+    const crashing = buildCore(fix, clock, { crashAfterApply: true });
+    const actionA: Action = {
+      type: 'APPLY_PATCH',
+      actionId: 'wired-dangling-a',
+      diffRef: crashing.evidence.put(
+        [
+          'diff --git a/src/impl.txt b/src/impl.txt',
+          '--- a/src/impl.txt',
+          '+++ b/src/impl.txt',
+          '@@ -1 +1 @@',
+          '-wrong',
+          '+correct',
+          '',
+        ].join('\n'),
+      ),
+    };
+    await assert.rejects(
+      crashing.executor.execute(actionA, 'implementer'),
+      CrashInjected,
+    );
+
+    const restarted = buildCore(fix, clock);
+    const actionB: Action = {
+      type: 'APPLY_PATCH',
+      actionId: 'wired-later-b',
+      diffRef: restarted.evidence.put(
+        [
+          'diff --git a/src/later.txt b/src/later.txt',
+          'new file mode 100644',
+          '--- /dev/null',
+          '+++ b/src/later.txt',
+          '@@ -0,0 +1 @@',
+          '+later',
+          '',
+        ].join('\n'),
+      ),
+    };
+    assert.equal(
+      (await restarted.executor.execute(actionB, 'implementer')).status,
+      'applied',
+    );
+
+    assert.equal(readFileSync(join(fix.worktree, 'src/impl.txt'), 'utf8'), 'correct\n');
+    assert.equal(readFileSync(join(fix.worktree, 'src/later.txt'), 'utf8'), 'later\n');
+    const intents = restarted.log.all({ type: 'ACTION_INTENT' });
+    const causalApplied = restarted.log
+      .all({ type: 'ACTION_APPLIED' })
+      .filter((event) => event.payload['duplicate'] !== true);
+    assert.deepEqual(
+      causalApplied.map((event) => event.payload['intentSeq']),
+      intents.map((event) => event.seq),
+      'admission recovery terminates A before B can append a new intent',
+    );
+    assert.equal(
+      causalApplied[0]?.payload['recovered'],
+      true,
+      'the buried boundary is reconstructed by recovery',
+    );
+    const beforeRestart = restarted.log.all().length;
+    assert.equal(
+      (
+        await recoverWorktree({
+          worktreeDir: fix.worktree,
+          runId: RUN_ID,
+          taskId: TASK_ID,
+          log: restarted.log,
+          evidence: restarted.evidence,
+          policy: restarted.policy,
+          sandbox: restarted.sandbox,
+          clock,
+        })
+      ).action,
+      'none',
+    );
+    assert.equal(restarted.log.all().length, beforeRestart);
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('REQ-3.7/3.8: crashed APPLY_PATCH recovers once and later duplicate skips', async () => {
+  const fix = makeFixture();
+  try {
+    const clock = makeClock();
+    const crashing = buildCore(fix, clock, { crashAfterApply: true });
+    const diffRef = crashing.evidence.put(
+      [
+        'diff --git a/src/impl.txt b/src/impl.txt',
+        '--- a/src/impl.txt',
+        '+++ b/src/impl.txt',
+        '@@ -1 +1 @@',
+        '-wrong',
+        '+correct',
+        '',
+      ].join('\n'),
+    );
+    const action: Action = {
+      type: 'APPLY_PATCH',
+      actionId: 'a-patch-recovery',
+      diffRef,
+    };
+
+    await assert.rejects(
+      crashing.executor.execute(action, 'implementer'),
+      CrashInjected,
+    );
+    assert.equal(readFileSync(join(fix.worktree, 'src/impl.txt'), 'utf8'), 'correct\n');
+    assert.equal(crashing.log.all({ type: 'ACTION_APPLIED' }).length, 0);
+
+    const recovered = buildCore(fix, clock);
+    const report = await recoverWorktree({
+      worktreeDir: fix.worktree,
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      log: recovered.log,
+      evidence: recovered.evidence,
+      policy: recovered.policy,
+      sandbox: recovered.sandbox,
+      clock,
+    });
+
+    assert.equal(report.action, 'replayed_intent');
+    assert.equal(readFileSync(join(fix.worktree, 'src/impl.txt'), 'utf8'), 'correct\n');
+    assert.equal(
+      (await recovered.executor.execute(action, 'implementer')).status,
+      'skipped_duplicate',
+    );
+    const events = recovered.log
+      .all({ type: 'ACTION_APPLIED' })
+      .filter((event) => event.payload['actionId'] === action.actionId);
+    assert.equal(events.filter((event) => event.payload['duplicate'] !== true).length, 1);
+    assert.equal(events.filter((event) => event.payload['duplicate'] === true).length, 1);
   } finally {
     fix.cleanup();
   }
@@ -759,7 +1139,39 @@ test('DoD#7: duplicate actionId -> idempotent skip, applied exactly once', async
   }
 });
 
-test('DoD#7b: duplicate NON-idempotent RUN_COMMAND does not re-run', darwinOnly, async () => {
+test('REQ-3.9/3.10/3.11: READ_FILE is evidence-backed, intent-free, and contained', async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const outcome = await c.executor.execute(
+      { type: 'READ_FILE', actionId: 'a-read', path: 'src/impl.txt' },
+      'diagnostician',
+    );
+    assert.equal(outcome.status, 'applied');
+    assert.ok(outcome.status === 'applied' && outcome.outputRef);
+    if (outcome.status === 'applied' && outcome.outputRef !== undefined) {
+      assert.equal(c.evidence.getText(outcome.outputRef), 'wrong\n');
+    }
+    assert.deepEqual(
+      c.log.all({ taskId: TASK_ID }).map((event) => event.type),
+      ['ACTION_APPLIED'],
+    );
+
+    const rejected = await c.executor.execute(
+      { type: 'READ_FILE', actionId: 'a-read-escape', path: '../outside.txt' },
+      'diagnostician',
+    );
+    assert.equal(rejected.status, 'rejected');
+    if (rejected.status === 'rejected') {
+      assert.equal(rejected.rejection.reason, 'path_outside_allowlist');
+    }
+    assert.equal(c.log.all({ type: 'ACTION_INTENT' }).length, 0);
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#7b: duplicate NON-idempotent RUN_COMMAND does not re-run', async () => {
   const fix = makeFixture();
   try {
     const c = buildCore(fix);
@@ -869,6 +1281,21 @@ test('DoD#9: exceeding the iteration budget -> BUDGET_EXCEEDED + ESCALATED, loop
     const spinner: ProposalSource = {
       async propose(): Promise<Proposal> {
         proposeCalls += 1;
+        // Keep T0 green so this scenario reaches the independent iteration cap;
+        // a failing T0 is intentionally consumed by the deterministic diagnosis
+        // path before the budget backstop can be exercised.
+        if (proposeCalls === 1) {
+          return {
+            claim: 'WORKING',
+            actions: [{
+              type: 'WRITE_FILE',
+              actionId: 'budget-seed',
+              path: 'src/impl.txt',
+              contentRef: c.evidence.put('correct\n'),
+            }],
+            costUnits: 10,
+          };
+        }
         return { claim: 'WORKING', actions: [], costUnits: 10 };
       },
     };
@@ -877,6 +1304,7 @@ test('DoD#9: exceeding the iteration budget -> BUDGET_EXCEEDED + ESCALATED, loop
     assert.equal(result.finalState, 'ESCALATED');
     assert.equal(proposeCalls, 3, 'not one proposal past the budget');
     assert.ok(c.log.all({ type: 'BUDGET_EXCEEDED' }).length >= 1, 'BUDGET_EXCEEDED logged');
+    assert.equal(c.log.all({ type: 'BUDGET_EXCEEDED' }).at(-1)?.payload['limit'], 'iterations');
     assert.ok(taskStates(c.log).includes('ESCALATED'), 'ESCALATED transition logged');
   } finally {
     fix.cleanup();

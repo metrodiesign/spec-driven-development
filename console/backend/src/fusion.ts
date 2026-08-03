@@ -11,7 +11,17 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { createGateRunner, type Clock, type EventLog, type EvidenceStore, type ExecuteOutcome, type GateReport, type ToolHandler } from 'core';
+import {
+  createGateRunner,
+  type Clock,
+  type CoreCommandExecutor,
+  type EventLog,
+  type EvidenceStore,
+  type ExecuteOutcome,
+  type GateReport,
+  type ReportIntegrity,
+  type ToolHandler,
+} from 'core';
 import {
   runFusion,
   validateAgainstSchema,
@@ -34,11 +44,16 @@ export interface CandidateRunnerOptions {
   repoDir: string;
   /** Ladder policy path RELATIVE to the repo root (present in every checkout). */
   configRelPath: string;
+  /** Versioned convention policy path RELATIVE to the repo root. */
+  conventionPolicyRelPath?: string;
   runId: string;
   taskId: string;
   log: EventLog;
   evidence: EvidenceStore;
+  reportIntegrity: ReportIntegrity;
   clock: Clock;
+  /** Test/composition seam; production retains core's fail-closed backend. */
+  commandExecutor?: CoreCommandExecutor;
   /** Which tier to prove per candidate (default T1 — the fixture's meaningful gate). */
   tier?: GateReport['tier'];
 }
@@ -66,11 +81,18 @@ export function createCandidateEvidenceRunner(opts: CandidateRunnerOptions): Can
         const gates = createGateRunner({
           worktreeDir: wt,
           configPath: join(wt, opts.configRelPath),
+          ...(opts.conventionPolicyRelPath === undefined
+            ? {}
+            : { conventionPolicyPath: join(wt, opts.conventionPolicyRelPath) }),
           runId: opts.runId,
           taskId: opts.taskId,
           log: opts.log,
           evidence: opts.evidence,
+          reportIntegrity: opts.reportIntegrity,
           clock: opts.clock,
+          ...(opts.commandExecutor === undefined
+            ? {}
+            : { commandExecutor: opts.commandExecutor }),
         });
         return await gates.run(tier);
       } finally {

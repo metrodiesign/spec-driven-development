@@ -20,9 +20,25 @@ export function openDatabase(dbPath: string): DatabaseSync {
     CREATE TABLE IF NOT EXISTS leases (
       task_id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL,
-      lease_until INTEGER NOT NULL
+      lease_until INTEGER NOT NULL,
+      fencing_token INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS lease_fences (
+      task_id TEXT PRIMARY KEY,
+      fencing_token INTEGER NOT NULL
     );
   `);
+  // Existing Phase-0 databases predate fencing tokens.  Migrate in place and
+  // keep the migration deliberately additive so recovery never has to discard
+  // an event database merely because a newer loop implementation opened it.
+  try {
+    db.exec('ALTER TABLE leases ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0');
+  } catch (error) {
+    // SQLite raises "duplicate column name" when the column already exists;
+    // every other migration error must fail closed rather than silently using an
+    // unfenced lease table.
+    if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error;
+  }
   return db;
 }
 

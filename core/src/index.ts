@@ -1,15 +1,87 @@
 // Ring 0 public surface (vendor-neutral — INV-7).
 export * from './types.ts';
 export * from './ports.ts';
-export { openEventLog, type EventLog, type ProjectionState } from './state/event-log.ts';
-export { createLeaseManager, type LeaseManager } from './state/lease.ts';
-export { createEvidenceStore, type EvidenceStore } from './evidence/store.ts';
+export {
+  openEventLog,
+  LeaseFenceError,
+  type EventLog,
+  type FencedEventClaim,
+  type ProjectionState,
+} from './state/event-log.ts';
+export {
+  acquireTaskLease,
+  createLeaseManager,
+  createTaskLeaseSession,
+  isLeaseTtlValid,
+  LeaseConfigurationError,
+  LEASE_SAFETY_MARGIN_MS,
+  type LeaseClaim,
+  type LeaseManager,
+  type TaskLeaseSession,
+} from './state/lease.ts';
+export {
+  createEvidenceStore,
+  EvidenceStoreError,
+  type EvidenceStore,
+  type EvidenceStoreErrorCode,
+} from './evidence/store.ts';
+export {
+  canonicalEvidenceBytes,
+  openEvidenceAuthenticator,
+  EvidenceAuthenticationError,
+  type EvidenceAuthenticator,
+  type EvidenceAuthErrorCode,
+  type FrozenRunMetadata,
+  type OpenEvidenceAuthenticatorOptions,
+} from './evidence/auth.ts';
+export {
+  createReportIntegrity,
+  ReportIntegrityError,
+  type GateReportIdentity,
+  type ReportIntegrity,
+  type ReportIntegrityErrorCode,
+} from './gates/report-integrity.ts';
 export {
   createDefaultPathPolicy,
+  normalizeWorktreeRelativePath,
   type PathPolicy,
   type PolicyDecision,
 } from './executor/path-policy.ts';
-export { denyNetworkSandbox, type SandboxWrap } from './security/sandbox.ts';
+export {
+  createRedArtifactStore,
+  createCoreRedObservation,
+  RedArtifactError,
+  type FrozenRedArtifactIndex,
+  type RedArtifactRecord,
+  type RedArtifactSourceRole,
+  type RedArtifactStore,
+  type RedObservation,
+} from './gates/red-provenance.ts';
+export {
+  checkConvention,
+  DEFAULT_CONVENTION_POLICY,
+  parseConventionPolicy,
+  ConventionPolicyError,
+  type ConventionAllowedControl,
+  type ConventionPolicy,
+  type ConventionResult,
+  type ConventionRule,
+  type ConventionViolation,
+} from './gates/convention.ts';
+export {
+  createCoreCommandExecutor,
+  PHASE0_COMMAND_ARTIFACT_POLICY,
+  type CapturedCommandArtifact,
+  type CommandArtifactPolicy,
+  type CommandCaptureFailpoints,
+  type CommandCapturePhase,
+  type CommandEvidence,
+  type CoreCommandExecutor,
+  type CoreCommandOutcome,
+  type OfflineDependencyPolicy,
+  type SandboxBackendCapabilities,
+  type TrustedCommandContext,
+} from './executor/command-executor.ts';
 export { canaryTripped } from './security/canary.ts';
 export {
   checkDataPolicy,
@@ -20,9 +92,7 @@ export {
 export {
   CrashInjected,
   createExecutor,
-  packageInstallAllowed,
   recoverWorktree,
-  type DepInstallPolicy,
   type ExecuteOutcome,
   type Executor,
   type Failpoints,
@@ -30,8 +100,27 @@ export {
   type ToolHandler,
 } from './executor/executor.ts';
 export { createGateRunner, type GateRunner } from './gates/runner.ts';
-export { computeGoldenManifest, verifyGoldenManifest, type GoldenVerdict } from './gates/golden.ts';
-export { createBudget, type BudgetTracker } from './budget/budget.ts';
+export {
+  copyOperatorGoldenFixture,
+  verifyGoldenManifest,
+  verifyGoldenManifests,
+  verifyGoldenRoot,
+  GoldenFixtureError,
+  type GoldenFixtureErrorCode,
+  type GoldenFixtureProvenance,
+  type GoldenManifestCheckOptions,
+  type GoldenManifestsVerdict,
+  type GoldenVerdict,
+} from './gates/golden.ts';
+export {
+  addCostUnits,
+  createBudget,
+  validateCostUnits,
+  BudgetUsageError,
+  type BudgetTracker,
+  type CostValidation,
+  type CostValidationReason,
+} from './budget/budget.ts';
 export { ACTIVE_STATES, resumeTransition, transition, type TransitionResult, type Trigger } from './orchestrator/machine.ts';
 export { createLoopController, type LoopController } from './orchestrator/control.ts';
 export {
@@ -113,11 +202,20 @@ export {
   type DeployTrigger,
 } from './deploy/stage.ts';
 export {
+  bindGateReportToMerge,
+  bindGateReportToTaskArtifact,
+  verifyMergedArtifactBinding,
+  verifyTaskArtifactBinding,
+  type ArtifactBindingContext,
+} from './merge/artifact-binding.ts';
+export {
   computeCalibration,
+  computeGoldenCoverage,
   computeFusionCalibration,
   computeLessonHitRate,
   type CalibrationInput,
   type CalibrationResult,
+  type GoldenCoverage,
   type FusionCalibrationInput,
   type FusionCalibrationResult,
   type LessonHitRateStats,

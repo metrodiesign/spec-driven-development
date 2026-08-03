@@ -3,11 +3,23 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
 import type { Clock, IdSource } from '../../src/types.ts';
+import type { TaskLeaseSession } from '../../src/state/lease.ts';
+import type { SandboxWrap } from '../../src/security/sandbox.ts';
+import { openEvidenceAuthenticator } from '../../src/evidence/auth.ts';
+import type { EvidenceStore } from '../../src/evidence/store.ts';
+import { createReportIntegrity, type ReportIntegrity } from '../../src/gates/report-integrity.ts';
+
+/** Test-only backend for logic suites; dedicated kernel-enforcement tests opt in separately. */
+export const PASSTHROUGH_TEST_SANDBOX: SandboxWrap = {
+  kind: 'available',
+  networkPolicyHash: 'test-passthrough',
+  wrap: ({ shellCmd }) => ({ cmd: '/bin/sh', args: ['-c', shellCmd] }),
+};
 
 export interface Fixture {
   root: string;
@@ -50,7 +62,7 @@ const FIXTURE_GATE_LADDER = {
   t3: { status: 'not_enabled_phase0' },
 };
 
-export function makeFixture(opts?: { fullTests?: string }): Fixture {
+export function makeFixture(opts?: { fullTests?: string; t0Lint?: string }): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'fault-injection-'));
   const worktree = join(root, 'target');
   mkdirSync(worktree, { recursive: true });
@@ -76,6 +88,7 @@ export function makeFixture(opts?: { fullTests?: string }): Fixture {
   const gateConfigPath = join(worktree, 'gate-ladder.json');
   const ladder = structuredClone(FIXTURE_GATE_LADDER);
   if (opts?.fullTests !== undefined) ladder.t1.fullTests = opts.fullTests;
+  if (opts?.t0Lint !== undefined) ladder.t0.lint = opts.t0Lint;
   writeFileSync(gateConfigPath, JSON.stringify(ladder, null, 2) + '\n');
 
   git(worktree, 'add', '-A');
@@ -110,15 +123,46 @@ export function makeIds(): IdSource {
   return { next: (prefix: string) => `${prefix}-${++n}` };
 }
 
+/** Explicit lease capability for unit harnesses that do not need SQLite contention. */
+export function makeTestLeaseSession(taskId = 'T-1'): TaskLeaseSession {
+  const claim = { taskId, ownerId: 'test-owner', fencingToken: 1, leaseUntil: Number.MAX_SAFE_INTEGER };
+  let active = true;
+  return {
+    claim,
+    heartbeat: async () => active,
+    verifyOwnership: () => active,
+    reacquireAfterPause: async () => active,
+    startHeartbeat: () => {},
+    stopHeartbeat: () => {},
+    release: () => { active = false; },
+    ownershipLost: false,
+  };
+}
+
+/** Test composition for the per-run Ed25519 trust root (REQ-4). */
+export function makeReportIntegrity(
+  fix: Fixture,
+  evidence: EvidenceStore,
+  runId = 'RUN-1',
+): ReportIntegrity {
+  const authenticator = openEvidenceAuthenticator({
+    runStateDir: fix.root,
+    runId,
+    recovering: existsSync(join(fix.root, 'run-metadata.json')),
+    worktreeDirs: [fix.worktree],
+  });
+  return createReportIntegrity({ evidence, authenticator });
+}
+
 /**
  * A flaky test script: fails on first run, passes afterwards (marker file).
- * Every execution appends to `.runs` so tests can prove HOW MANY times the
- * gate actually ran the suite (retry must be real, not a label).
+ * Every execution prints `GATE_RUN` and appends to a disposable `.runs` marker
+ * so evidence can prove HOW MANY times the gate ran without mutating the source tree.
  */
 export function installFlakyTests(fix: Fixture): void {
   writeFileSync(
     join(fix.worktree, 'run-tests.sh'),
-    '#!/bin/sh\necho x >> .runs\nif [ -f .flaky-ran ]; then exit 0; else touch .flaky-ran; exit 1; fi\n',
+    '#!/bin/sh\necho GATE_RUN\necho x >> .runs\nif [ -f .flaky-ran ]; then exit 0; else touch .flaky-ran; exit 1; fi\n',
   );
   git(fix.worktree, 'add', '-A');
   git(fix.worktree, 'commit', '-q', '-m', 'fixture: flaky tests');
@@ -126,7 +170,10 @@ export function installFlakyTests(fix: Fixture): void {
 
 /** A deterministically failing test script — the control for flaky detection. */
 export function installAlwaysFailTests(fix: Fixture): void {
-  writeFileSync(join(fix.worktree, 'run-tests.sh'), '#!/bin/sh\necho x >> .runs\nexit 1\n');
+  writeFileSync(
+    join(fix.worktree, 'run-tests.sh'),
+    '#!/bin/sh\necho GATE_RUN\necho x >> .runs\nexit 1\n',
+  );
   git(fix.worktree, 'add', '-A');
   git(fix.worktree, 'commit', '-q', '-m', 'fixture: always-fail tests');
 }

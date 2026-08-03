@@ -13,14 +13,26 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { transition, type Trigger } from '../orchestrator/machine.ts';
 import { createGateRunner } from '../gates/runner.ts';
+import { ReportIntegrityError, type ReportIntegrity } from '../gates/report-integrity.ts';
+import {
+  bindGateReportToMerge,
+  bindGateReportToTaskArtifact,
+  verifyMergedArtifactBinding,
+  verifyTaskArtifactBinding,
+} from './artifact-binding.ts';
 import type { MergeQueue } from './queue.ts';
 import type { EventLog } from '../state/event-log.ts';
+import { LeaseFenceError, type FencedEventClaim } from '../state/event-log.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import type { RiskClass } from '../human/approval.ts';
-import type { Clock, GateReport, TaskState } from '../types.ts';
+import type { SandboxWrap } from '../security/sandbox.ts';
+import type { AuthenticatedGateReport, Clock, GateReport, TaskState } from '../types.ts';
 
 const RISK_RANK: Record<RiskClass, number> = { L0: 0, L1: 1, L2: 2, L3: 3, L4: 4 };
 
@@ -49,7 +61,8 @@ export type AutoApproveReason =
   | 'zero_acceptance_criteria'
   | 'non_golden_ac'
   | 'risk_above_l1'
-  | 'dep_touching_diff';
+  | 'dep_touching_diff'
+  | 'evidence_auth_failed';
 
 export interface AutoApproveDecision {
   autoApprove: boolean;
@@ -123,13 +136,22 @@ export interface ApprovedMergeOptions {
   originalReport: GateReport;
   /** Gate-ladder config path RELATIVE to the repo tree (present in the clean checkout). */
   gateConfigRelPath: string;
+  /** Versioned convention policy path RELATIVE to every clean checkout. */
+  conventionPolicyRelPath?: string;
   /** Percent of merged tasks to audit; deterministic threshold (REQ-8.1). */
   auditSampleRate: number;
   log: EventLog;
   evidence: EvidenceStore;
+  reportIntegrity: ReportIntegrity;
   clock: Clock;
+  /** Test/composition seam; production defaults to the fail-closed platform backend. */
+  sandbox?: SandboxWrap;
   /** When supplied, route the merge through the T2-gated queue (REQ-13.6) instead of a direct merge; the in-band sampling audit and revert below stay unchanged either way. */
   queue?: MergeQueue;
+  /** Composition-owned fenced check immediately before each merge/audit side effect. */
+  assertOwnership?: (boundary: string) => void;
+  /** Fence the post-merge audit gate's GATE_RESULT event as well. */
+  fence?: () => FencedEventClaim;
 }
 
 // approvalBasis is omitted here: runAutoMerge decides it (always 'auto_approved') when
@@ -143,13 +165,15 @@ export interface RunAutoMergeOptions extends Omit<ApprovedMergeOptions, 'approva
 export interface ApprovedMergeOutcome {
   finalState: TaskState;
   mergeCommit: string | null;
+  /** Latest signed report, including task/merge OID bindings as far as this path reached. */
+  authorizedReport: GateReport | null;
   sampled: boolean;
   /** null when not auto-merged or not sampled. */
   reproduced: boolean | null;
 }
 
 export interface AutoMergeOutcome extends ApprovedMergeOutcome {
-  decision: 'auto_approve' | 'approval_package';
+  decision: 'auto_approve' | 'approval_package' | 'evidence_invalid';
   reason: AutoApproveReason;
   /** Risk after the dependency-manifest floor (REQ-7.6) — carried on the approval_package
    * path too (REQ-2.1), so the composition root can build the package without recomputing it. */
@@ -168,6 +192,55 @@ function git(cwd: string, ...args: string[]): { code: number; stdout: string; st
 
 function gitOut(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+type DetachedMergePreparation =
+  | { outcome: 'prepared'; mergeCommit: string }
+  | { outcome: 'merge_conflict'; mergeCommit: null };
+
+function prepareDetachedMerge(
+  repoDir: string,
+  baseCommit: string,
+  artifactCommit: string,
+): DetachedMergePreparation {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'core-direct-merge-'));
+  const worktreeDir = join(temporaryRoot, 'worktree');
+  let worktreeAdded = false;
+  try {
+    const added = git(repoDir, 'worktree', 'add', '--detach', worktreeDir, baseCommit);
+    if (added.code !== 0) {
+      throw new Error(`cannot prepare detached merge worktree from signed base ${baseCommit}: ${added.stderr}`);
+    }
+    worktreeAdded = true;
+    const merge = git(worktreeDir, 'merge', '--no-ff', '--no-edit', artifactCommit);
+    if (merge.code !== 0) {
+      git(worktreeDir, 'merge', '--abort');
+      return { outcome: 'merge_conflict', mergeCommit: null };
+    }
+    return { outcome: 'prepared', mergeCommit: gitOut(worktreeDir, 'rev-parse', 'HEAD') };
+  } finally {
+    if (worktreeAdded) {
+      const removed = git(repoDir, 'worktree', 'remove', '--force', worktreeDir);
+      if (removed.code !== 0) {
+        throw new Error(`cannot remove detached merge worktree ${worktreeDir}: ${removed.stderr}`);
+      }
+    }
+    rmdirSync(temporaryRoot);
+  }
+}
+
+function evidenceAuthFailure(error: unknown, boundary: string): Record<string, unknown> {
+  const detail = error instanceof Error ? error.message : String(error);
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String(error.code)
+      : 'evidence_auth_failed';
+  const why =
+    typeof error === 'object' && error !== null && 'reason' in error &&
+    (error.reason === 'evidence_auth_unavailable' || error.reason === 'evidence_auth_mismatch')
+      ? error.reason
+      : 'evidence_auth_mismatch';
+  return { why, boundary, code, detail };
 }
 
 /**
@@ -195,6 +268,7 @@ export function auditSampleValue(runId: string, taskId: string): number {
 
 export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMergeOutcome> {
   let state: TaskState = opts.state;
+  let authorizedReport: AuthenticatedGateReport;
 
   const move = (trigger: Trigger): boolean => {
     const result = transition(state, trigger);
@@ -217,9 +291,37 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     return true;
   };
 
+  try {
+    authorizedReport = bindGateReportToTaskArtifact(opts.originalReport, opts.reportIntegrity, {
+      runId: opts.runId,
+      taskId: opts.taskId,
+      repoDir: opts.repoDir,
+      taskBranch: opts.taskBranch,
+      mainBranch: opts.mainBranch,
+    });
+  } catch (error) {
+    move('escalate');
+    opts.log.append({
+      runId: opts.runId,
+      taskId: opts.taskId,
+      type: 'ESCALATED',
+      payload: evidenceAuthFailure(error, 'auto_approval'),
+    });
+    return {
+      decision: 'evidence_invalid',
+      reason: 'evidence_auth_failed',
+      effectiveRisk: opts.decision.riskClass ?? 'L2',
+      finalState: state,
+      mergeCommit: null,
+      authorizedReport: null,
+      sampled: false,
+      reproduced: null,
+    };
+  }
+
   // Diff the task introduced against main (three-dot: merge-base..task), for the
   // dependency-manifest floor (REQ-7.6).
-  const diffPaths = gitOut(opts.repoDir, 'diff', '--name-only', `${opts.mainBranch}...${opts.taskBranch}`)
+  const diffPaths = gitOut(opts.repoDir, 'diff', '--name-only', `${authorizedReport.baseCommitHash as string}...${authorizedReport.artifactCommitHash as string}`)
     .split('\n')
     .filter(Boolean);
 
@@ -233,6 +335,7 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
       effectiveRisk: decision.effectiveRisk,
       finalState: state,
       mergeCommit: null,
+      authorizedReport,
       sampled: false,
       reproduced: null,
     };
@@ -258,13 +361,20 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
     repoDir: opts.repoDir,
     taskBranch: opts.taskBranch,
     mainBranch: opts.mainBranch,
-    originalReport: opts.originalReport,
+    originalReport: authorizedReport,
     gateConfigRelPath: opts.gateConfigRelPath,
+    ...(opts.conventionPolicyRelPath === undefined
+      ? {}
+      : { conventionPolicyRelPath: opts.conventionPolicyRelPath }),
     auditSampleRate: opts.auditSampleRate,
     log: opts.log,
     evidence: opts.evidence,
+    reportIntegrity: opts.reportIntegrity,
     clock: opts.clock,
+    ...(opts.sandbox !== undefined ? { sandbox: opts.sandbox } : {}),
     ...(opts.queue !== undefined ? { queue: opts.queue } : {}),
+    ...(opts.assertOwnership === undefined ? {} : { assertOwnership: opts.assertOwnership }),
+    ...(opts.fence === undefined ? {} : { fence: opts.fence }),
   });
 
   return { decision: 'auto_approve', reason: decision.reason, effectiveRisk: decision.effectiveRisk, ...merged };
@@ -278,6 +388,7 @@ export async function runAutoMerge(opts: RunAutoMergeOptions): Promise<AutoMerge
  */
 export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<ApprovedMergeOutcome> {
   let state: TaskState = opts.state;
+  let authorizedReport: AuthenticatedGateReport;
 
   const move = (trigger: Trigger): boolean => {
     const result = transition(state, trigger);
@@ -310,42 +421,159 @@ export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<Appr
     });
   };
 
+  const assertOwnership = (boundary: string): void => {
+    try {
+      opts.assertOwnership?.(boundary);
+    } catch (error) {
+      if (error instanceof LeaseFenceError) throw error;
+      throw new LeaseFenceError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  try {
+    authorizedReport = verifyTaskArtifactBinding(opts.originalReport, opts.reportIntegrity, {
+      runId: opts.runId,
+      taskId: opts.taskId,
+      repoDir: opts.repoDir,
+      taskBranch: opts.taskBranch,
+      mainBranch: opts.mainBranch,
+    });
+  } catch (error) {
+    const failure = evidenceAuthFailure(error, 'merge_queue_entry');
+    escalate(String(failure['why']), failure);
+    return { finalState: state, mergeCommit: null, authorizedReport: null, sampled: false, reproduced: null };
+  }
+
   move('merge_queued');
 
   let mergeCommit: string;
+  let mergedReport: AuthenticatedGateReport | undefined;
   if (opts.queue) {
+    assertOwnership('merge_queue');
     // T2-gated path (REQ-13.6) — the queue owns the merge + T2 run; the
     // sampled-audit flow below is unchanged either way.
     const result = await opts.queue.process({
       taskId: opts.taskId,
       taskBranch: opts.taskBranch,
       approvalBasis: opts.approvalBasis,
-      originalReport: opts.originalReport,
+      originalReport: authorizedReport,
     });
     if (result.outcome === 'merge_conflict') {
       escalate('merge_conflict', { taskBranch: opts.taskBranch });
-      return { finalState: state, mergeCommit: null, sampled: false, reproduced: null };
+      return { finalState: state, mergeCommit: null, authorizedReport, sampled: false, reproduced: null };
     }
     if (result.outcome === 'rejected_t2') {
       escalate('t2_failed', { taskBranch: opts.taskBranch, attribution: result.attribution });
-      return { finalState: state, mergeCommit: null, sampled: false, reproduced: null };
+      return { finalState: state, mergeCommit: null, authorizedReport, sampled: false, reproduced: null };
+    }
+    if (result.outcome === 'evidence_invalid') {
+      // The queue already emitted the structured evidence-auth ESCALATED event;
+      // this layer owns only the task-state transition, avoiding a duplicate event.
+      move('escalate');
+      return { finalState: state, mergeCommit: null, authorizedReport, sampled: false, reproduced: null };
     }
     mergeCommit = result.mergeCommit as string;
   } else {
-    // Merge task/<taskId> -> main, --no-ff (single merge commit = single revert target).
-    git(opts.repoDir, 'checkout', '-q', opts.mainBranch);
-    const merge = git(opts.repoDir, 'merge', '--no-ff', '--no-edit', opts.taskBranch);
-    if (merge.code !== 0) {
-      git(opts.repoDir, 'merge', '--abort'); // no automatic resolution (REQ-7.5)
-      escalate('merge_conflict', { taskBranch: opts.taskBranch });
-      return { finalState: state, mergeCommit: null, sampled: false, reproduced: null };
+    assertOwnership('direct_merge_prepare');
+    let prepared: DetachedMergePreparation;
+    try {
+      prepared = prepareDetachedMerge(
+        opts.repoDir,
+        authorizedReport.baseCommitHash as string,
+        authorizedReport.artifactCommitHash as string,
+      );
+    } catch (error) {
+      escalate('merge_preparation_failed', {
+        boundary: 'direct_merge_prepare',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return { finalState: state, mergeCommit: null, authorizedReport, sampled: false, reproduced: null };
     }
-    mergeCommit = gitOut(opts.repoDir, 'rev-parse', 'HEAD');
+    if (prepared.outcome === 'merge_conflict') {
+      escalate('merge_conflict', { taskBranch: opts.taskBranch });
+      return { finalState: state, mergeCommit: null, authorizedReport, sampled: false, reproduced: null };
+    }
+    mergeCommit = prepared.mergeCommit;
+
+    try {
+      mergedReport = bindGateReportToMerge(authorizedReport, mergeCommit, opts.reportIntegrity, {
+        runId: opts.runId,
+        taskId: opts.taskId,
+        repoDir: opts.repoDir,
+        taskBranch: opts.taskBranch,
+        mainBranch: opts.mainBranch,
+      });
+    } catch (error) {
+      const failure = evidenceAuthFailure(error, 'direct_merge_prepare');
+      escalate(String(failure['why']), failure);
+      return { finalState: state, mergeCommit: null, authorizedReport, sampled: false, reproduced: null };
+    }
+
+    assertOwnership('direct_merge_update');
+    const advanced = git(
+      opts.repoDir,
+      'update-ref',
+      `refs/heads/${opts.mainBranch}`,
+      mergeCommit,
+      authorizedReport.baseCommitHash as string,
+    );
+    if (advanced.code !== 0) {
+      const failure = evidenceAuthFailure(
+        new ReportIntegrityError(
+          'artifact_identity_mismatch',
+          `current ${opts.mainBranch} changed after authorization; refusing to overwrite it`,
+        ),
+        'direct_merge_update',
+      );
+      escalate(String(failure['why']), failure);
+      return { finalState: state, mergeCommit: null, authorizedReport, sampled: false, reproduced: null };
+    }
   }
+
+  try {
+    mergedReport ??= bindGateReportToMerge(authorizedReport, mergeCommit, opts.reportIntegrity, {
+      runId: opts.runId,
+      taskId: opts.taskId,
+      repoDir: opts.repoDir,
+      taskBranch: opts.taskBranch,
+      mainBranch: opts.mainBranch,
+    });
+    verifyMergedArtifactBinding(mergedReport, opts.reportIntegrity, {
+      runId: opts.runId,
+      taskId: opts.taskId,
+      repoDir: opts.repoDir,
+      taskBranch: opts.taskBranch,
+      mainBranch: opts.mainBranch,
+    }, mergeCommit, opts.mainBranch);
+  } catch (error) {
+    const failure = evidenceAuthFailure(error, 'merge_result');
+    escalate(String(failure['why']), failure);
+    return { finalState: state, mergeCommit, authorizedReport: null, sampled: false, reproduced: null };
+  }
+  authorizedReport = mergedReport;
+  opts.log.append({
+    runId: opts.runId,
+    taskId: opts.taskId,
+    type: 'EVIDENCE_AUTHORIZED',
+    payload: { ...authorizedReport } as unknown as Record<string, unknown>,
+  });
 
   // Deterministic sampling (REQ-8.1).
   const sampled = auditSampleValue(opts.runId, opts.taskId) < opts.auditSampleRate;
   if (!sampled) {
+    try {
+      verifyMergedArtifactBinding(authorizedReport, opts.reportIntegrity, {
+        runId: opts.runId,
+        taskId: opts.taskId,
+        repoDir: opts.repoDir,
+        taskBranch: opts.taskBranch,
+        mainBranch: opts.mainBranch,
+      }, mergeCommit, opts.mainBranch);
+    } catch (error) {
+      const failure = evidenceAuthFailure(error, 'completion');
+      escalate(String(failure['why']), failure);
+      return { finalState: state, mergeCommit, authorizedReport, sampled: false, reproduced: null };
+    }
     opts.log.append({
       runId: opts.runId,
       taskId: opts.taskId,
@@ -354,7 +582,7 @@ export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<Appr
     });
     move('audited');
     move('completed');
-    return { finalState: state, mergeCommit, sampled: false, reproduced: null };
+    return { finalState: state, mergeCommit, authorizedReport, sampled: false, reproduced: null };
   }
 
   opts.log.append({
@@ -365,6 +593,7 @@ export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<Appr
   });
 
   // Re-run T1 from a CLEAN checkout of the merged tree (REQ-8.2).
+  assertOwnership('audit_gate');
   const auditDir = `${opts.repoDir}-audit-${mergeCommit.slice(0, 12)}`;
   git(opts.repoDir, 'worktree', 'add', '--detach', auditDir, mergeCommit);
   let auditReport: GateReport;
@@ -372,18 +601,37 @@ export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<Appr
     const auditGates = createGateRunner({
       worktreeDir: auditDir,
       configPath: `${auditDir}/${opts.gateConfigRelPath}`,
+      ...(opts.conventionPolicyRelPath === undefined
+        ? {}
+        : { conventionPolicyPath: `${auditDir}/${opts.conventionPolicyRelPath}` }),
       runId: opts.runId,
       taskId: opts.taskId,
       log: opts.log,
       evidence: opts.evidence,
+      reportIntegrity: opts.reportIntegrity,
       clock: opts.clock,
+      ...(opts.sandbox === undefined ? {} : { sandbox: opts.sandbox }),
+      ...(opts.fence === undefined ? {} : { fence: opts.fence }),
     });
-    auditReport = await auditGates.run('T1');
+    auditReport = auditGates.verify(await auditGates.run('T1'));
   } finally {
     git(opts.repoDir, 'worktree', 'remove', '--force', auditDir);
   }
 
-  const reproduced = reproduces(opts.originalReport, auditReport);
+  try {
+    verifyMergedArtifactBinding(authorizedReport, opts.reportIntegrity, {
+      runId: opts.runId,
+      taskId: opts.taskId,
+      repoDir: opts.repoDir,
+      taskBranch: opts.taskBranch,
+      mainBranch: opts.mainBranch,
+    }, mergeCommit, opts.mainBranch);
+  } catch (error) {
+    const failure = evidenceAuthFailure(error, 'audit_comparison');
+    escalate(String(failure['why']), failure);
+    return { finalState: state, mergeCommit, authorizedReport, sampled: true, reproduced: null };
+  }
+  const reproduced = reproduces(authorizedReport, auditReport);
   opts.log.append({
     runId: opts.runId,
     taskId: opts.taskId,
@@ -399,18 +647,30 @@ export async function runApprovedMerge(opts: ApprovedMergeOptions): Promise<Appr
   if (!reproduced) {
     // Single escalate(audit_mismatch) whose handling reverts the merge commit as a
     // side effect — no separate roll_back transition on this path (REQ-8.3, AZ-5).
-    // The MergeQueue path only ever advances main via a plain `update-ref` in its OWN
-    // worktree (queue.ts) — it never checks out main in opts.repoDir — so opts.repoDir's
-    // working tree could still be sitting on the task branch here; check out main first
-    // so the revert always lands on the branch that was actually advanced (PR #50
-    // review; a no-op on the direct path, which already checked out main above).
+    // Both merge paths prepare outside opts.repoDir and advance main with `update-ref`,
+    // so its working tree may still be sitting on the task branch. Check out main first
+    // so the revert always lands on the branch that was actually advanced (PR #50 review).
+    assertOwnership('audit_revert');
     git(opts.repoDir, 'checkout', '-q', opts.mainBranch);
     git(opts.repoDir, 'revert', '-m', '1', '--no-edit', mergeCommit);
     escalate('audit_mismatch', { mergeCommit });
-    return { finalState: state, mergeCommit, sampled: true, reproduced: false };
+    return { finalState: state, mergeCommit, authorizedReport, sampled: true, reproduced: false };
   }
 
+  try {
+    verifyMergedArtifactBinding(authorizedReport, opts.reportIntegrity, {
+      runId: opts.runId,
+      taskId: opts.taskId,
+      repoDir: opts.repoDir,
+      taskBranch: opts.taskBranch,
+      mainBranch: opts.mainBranch,
+    }, mergeCommit, opts.mainBranch);
+  } catch (error) {
+    const failure = evidenceAuthFailure(error, 'completion');
+    escalate(String(failure['why']), failure);
+    return { finalState: state, mergeCommit, authorizedReport, sampled: true, reproduced: null };
+  }
   move('audited');
   move('completed');
-  return { finalState: state, mergeCommit, sampled: true, reproduced: true };
+  return { finalState: state, mergeCommit, authorizedReport, sampled: true, reproduced: true };
 }

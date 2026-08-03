@@ -32,6 +32,10 @@ export interface HandlerDeps {
   approvals: Map<string, ApprovalPackage>;
   log: EventLog;
   onDecision(taskId: string, decision: 'approve' | 'reject'): { ok: boolean; state?: string; detail?: string };
+  /** Re-dereference and authenticate every approval-package ref before approval can advance state. */
+  verifyApprovalEvidence?(pkg: ApprovalPackage, boundary: 'human_approval' | 'deploy_approval'): void;
+  /** Composition-owned state escalation when evidence authentication fails. */
+  onEvidenceInvalid?(taskId: string, error: unknown, boundary: 'human_approval' | 'deploy_approval'): void;
   onKill(): void;
   rateOk(): boolean;
   /**
@@ -93,6 +97,16 @@ function authed(req: HttpLike, token: string): boolean {
   return req.headers['authorization'] === `Bearer ${token}`;
 }
 
+function verifierUnavailable(detail: string): Error & {
+  reason: 'evidence_auth_unavailable';
+  code: 'verifier_unavailable';
+} {
+  return Object.assign(new Error(detail), {
+    reason: 'evidence_auth_unavailable' as const,
+    code: 'verifier_unavailable' as const,
+  });
+}
+
 export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult {
   if (!deps.rateOk()) return { status: 429, body: { error: 'rate_limited' } };
   if (!authed(req, deps.token)) return { status: 401, body: { error: 'unauthorized' } };
@@ -139,6 +153,22 @@ export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult
       const given = new Set(Array.isArray(parsed.attestations) ? parsed.attestations.map(String) : []);
       const complete = pkg.attestations.every((a) => given.has(a));
       if (!complete) return { status: 400, body: { error: 'attestations_incomplete' } };
+    }
+    if (deps.verifyApprovalEvidence === undefined) {
+      const error = verifierUnavailable('approval evidence authenticator is unavailable');
+      deps.onEvidenceInvalid?.(pkg.taskId, error, 'human_approval');
+      return { status: 409, body: { error: 'evidence_auth_unavailable' } };
+    }
+    try {
+      deps.verifyApprovalEvidence(pkg, 'human_approval');
+    } catch (error) {
+      deps.onEvidenceInvalid?.(pkg.taskId, error, 'human_approval');
+      const reason =
+        typeof error === 'object' && error !== null && 'reason' in error &&
+        (error.reason === 'evidence_auth_unavailable' || error.reason === 'evidence_auth_mismatch')
+          ? error.reason
+          : 'evidence_auth_mismatch';
+      return { status: 409, body: { error: reason } };
     }
     deps.log.append({
       runId: deps.runId,
@@ -193,6 +223,22 @@ export function handleHumanRequest(req: HttpLike, deps: HandlerDeps): HttpResult
       const given = new Set(Array.isArray(parsed.attestations) ? parsed.attestations.map(String) : []);
       const complete = pending.attestations.every((a) => given.has(a));
       if (!complete) return { status: 400, body: { error: 'attestations_incomplete' } };
+      if (deps.verifyApprovalEvidence === undefined) {
+        const error = verifierUnavailable('deploy evidence authenticator is unavailable');
+        deps.onEvidenceInvalid?.(pending.taskId, error, 'deploy_approval');
+        return { status: 409, body: { error: 'evidence_auth_unavailable' } };
+      }
+      try {
+        deps.verifyApprovalEvidence(pending, 'deploy_approval');
+      } catch (error) {
+        deps.onEvidenceInvalid?.(pending.taskId, error, 'deploy_approval');
+        const reason =
+          typeof error === 'object' && error !== null && 'reason' in error &&
+          (error.reason === 'evidence_auth_unavailable' || error.reason === 'evidence_auth_mismatch')
+            ? error.reason
+            : 'evidence_auth_mismatch';
+        return { status: 409, body: { error: reason } };
+      }
     }
     deps.log.append({
       runId: deps.runId,

@@ -4,10 +4,15 @@
 // Live runs are gated STRUCTURALLY, not just by procedure.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
-import { freezeContract, type TaskContract } from 'core';
+import {
+  freezeContract,
+  type OfflineDependencyPolicy,
+  type Role,
+  type TaskContract,
+} from 'core';
 import { PASS_FAIL_PROBES, type ConformanceRecord } from 'aal';
 
 import { validateGoalShape } from './goal-schema.ts';
@@ -48,6 +53,175 @@ export function loadTaskGraphOption(goalPath: string): { rawBytes: Uint8Array; p
     throw new Error(`task graph file failed schema validation:\n  ${shapeErrors.join('\n  ')}`);
   }
   return { rawBytes, parsed };
+}
+
+const PHASE0_ROLES = new Set<Role>([
+  'planner',
+  'test_designer',
+  'implementer',
+  'diagnostician',
+  'reviewer',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isSafeRelativePath(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    !value.startsWith('/') &&
+    !value.split('/').some((component) => component === '' || component === '.' || component === '..')
+  );
+}
+
+/**
+ * Parse the governance-pinned minimal offline dependency policy at the production
+ * edge. An invalid or missing policy fails closed before adapter construction; the
+ * returned object can authorize only exact, lifecycle-disabled, network:none installs.
+ */
+export function loadOfflineDependencyPolicy(path: string): OfflineDependencyPolicy {
+  let root: unknown;
+  try {
+    root = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  } catch (error) {
+    throw new Error(
+      `offline dependency policy unavailable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const raw = isRecord(root) ? root['offlineDependency'] : undefined;
+  if (!isRecord(raw)) {
+    throw new Error('security-plane offlineDependency policy is missing');
+  }
+  const allowedRoles = raw['allowedRoles'];
+  const commands = raw['commands'];
+  const manifestPath = raw['manifestPath'];
+  const manifestHash = raw['manifestHash'];
+  const lockfilePath = raw['lockfilePath'];
+  const lockfileHash = raw['lockfileHash'];
+  const approvedSourceHashes = raw['approvedSourceHashes'];
+  const approvedSources = raw['approvedSources'];
+  const approvedOutputMetadata = raw['approvedOutputMetadata'];
+  const persistentOutputRoots = raw['persistentOutputRoots'];
+  if (
+    raw['version'] !== 1 ||
+    !isStringArray(allowedRoles) ||
+    allowedRoles.length === 0 ||
+    !allowedRoles.every((role): role is Role => PHASE0_ROLES.has(role as Role)) ||
+    !isStringArray(commands) ||
+    commands.length === 0 ||
+    !commands.every(
+      (command) =>
+        command.includes('--offline') &&
+        command.includes('--frozen-lockfile') &&
+        command.includes('--ignore-scripts'),
+    ) ||
+    !isSafeRelativePath(manifestPath) ||
+    typeof manifestHash !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(manifestHash) ||
+    !isSafeRelativePath(lockfilePath) ||
+    typeof lockfileHash !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(lockfileHash) ||
+    !isStringArray(approvedSourceHashes) ||
+    approvedSourceHashes.length === 0 ||
+    !approvedSourceHashes.every((hash) => /^[0-9a-f]{64}$/u.test(hash)) ||
+    !Array.isArray(approvedSources) ||
+    approvedSources.length === 0 ||
+    approvedSources.length !== approvedSourceHashes.length ||
+    !approvedSources.every(
+      (source) =>
+        isRecord(source) &&
+        typeof source['packageName'] === 'string' &&
+        source['packageName'].length > 0 &&
+        isSafeRelativePath(source['targetPath']) &&
+        source['specifier'] === `file:${source['targetPath']}` &&
+        isSafeRelativePath(source['sourcePath']) &&
+        typeof source['contentHash'] === 'string' &&
+        approvedSourceHashes.includes(source['contentHash']),
+    ) ||
+    !isStringArray(persistentOutputRoots) ||
+    persistentOutputRoots.length === 0 ||
+    !persistentOutputRoots.every(isSafeRelativePath) ||
+    !Array.isArray(approvedOutputMetadata) ||
+    approvedOutputMetadata.length === 0 ||
+    !approvedOutputMetadata.every(
+      (metadata) =>
+        isRecord(metadata) &&
+        isSafeRelativePath(metadata['path']) &&
+        typeof metadata['validator'] === 'string' &&
+        [
+          'exact_lockfile_v1',
+          'pnpm_modules_json_v1',
+          'pnpm_package_map_json_v1',
+          'pnpm_workspace_state_json_v1',
+        ].includes(metadata['validator']) &&
+        (metadata['validator'] === 'pnpm_modules_json_v1'
+          ? typeof metadata['packageManager'] === 'string' &&
+            /^pnpm@\d+\.\d+\.\d+$/u.test(metadata['packageManager'])
+          : metadata['packageManager'] === undefined) &&
+        persistentOutputRoots.some(
+          (root) =>
+            metadata['path'] === root ||
+            (typeof metadata['path'] === 'string' &&
+              metadata['path'].startsWith(`${root}/`)),
+        ),
+    ) ||
+    new Set(
+      approvedOutputMetadata.flatMap((metadata) =>
+        isRecord(metadata) && typeof metadata['path'] === 'string'
+          ? [metadata['path']]
+          : [],
+      ),
+    ).size !== approvedOutputMetadata.length ||
+    raw['lifecycleScripts'] !== 'disabled' ||
+    raw['network'] !== 'none'
+  ) {
+    throw new Error('security-plane offlineDependency policy is invalid');
+  }
+  return {
+    version: 1,
+    allowedRoles,
+    commands,
+    manifestPath,
+    manifestHash,
+    lockfilePath,
+    lockfileHash,
+    approvedSourceHashes,
+    approvedSources: approvedSources.map((source) => {
+      const record = source as Record<string, string>;
+      return {
+        packageName: record['packageName'] as string,
+        specifier: record['specifier'] as string,
+        targetPath: record['targetPath'] as string,
+        sourcePath: resolve(dirname(path), record['sourcePath'] as string),
+        contentHash: record['contentHash'] as string,
+      };
+    }),
+    approvedOutputMetadata: approvedOutputMetadata.map((metadata) => {
+      const record = metadata as Record<string, unknown>;
+      return {
+        path: record['path'] as string,
+        validator: record['validator'] as
+          | 'exact_lockfile_v1'
+          | 'pnpm_modules_json_v1'
+          | 'pnpm_package_map_json_v1'
+          | 'pnpm_workspace_state_json_v1',
+        ...(typeof record['packageManager'] === 'string'
+          ? { packageManager: record['packageManager'] }
+          : {}),
+      };
+    }),
+    persistentOutputRoots,
+    lifecycleScripts: 'disabled',
+    network: 'none',
+  };
 }
 
 export interface LiveGuardInput {

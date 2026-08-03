@@ -4,6 +4,8 @@
 // `maxRounds` times, then gives up with a structured result (valid: false).
 
 import type { AdapterInterface, AgentRequest, AgentResponse } from './protocol.ts';
+import { AdapterError } from './protocol.ts';
+import { addCostUnits } from 'core';
 
 export interface RepairOutcome {
   response: AgentResponse;
@@ -86,13 +88,13 @@ export async function proposeWithRepair(
   maxRounds: number,
 ): Promise<RepairOutcome> {
   let response = await adapter.send(req);
-  let totalCost = response.usage.costUnits;
+  let totalCost = chargeUsage(0, usageOf(response));
   let check = validateAgainstSchema(response.structuredResult, req.outputSchema);
   let rounds = 0;
   while (!check.valid && rounds < maxRounds) {
     rounds += 1;
     response = await adapter.send(repairRequest(req, check.errors, rounds));
-    totalCost += response.usage.costUnits;
+    totalCost = chargeUsage(totalCost, usageOf(response));
     check = validateAgainstSchema(response.structuredResult, req.outputSchema);
   }
   return {
@@ -102,4 +104,19 @@ export async function proposeWithRepair(
     errors: check.errors,
     totalUsage: { costUnits: totalCost },
   };
+}
+
+function usageOf(response: unknown): unknown {
+  if (typeof response !== 'object' || response === null) return undefined;
+  const usage = (response as Record<string, unknown>)['usage'];
+  if (typeof usage !== 'object' || usage === null) return undefined;
+  return (usage as Record<string, unknown>)['costUnits'];
+}
+
+function chargeUsage(total: number, increment: unknown): number {
+  const checked = addCostUnits(total, increment);
+  if (!checked.ok) {
+    throw new AdapterError('invalid_response', `invalid response usage: ${checked.detail}`);
+  }
+  return checked.value;
 }

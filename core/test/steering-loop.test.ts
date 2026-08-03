@@ -12,12 +12,19 @@ import { createDefaultPathPolicy } from '../src/executor/path-policy.ts';
 import { createEvidenceStore } from '../src/evidence/store.ts';
 import { createExecutor } from '../src/executor/executor.ts';
 import { createGateRunner } from '../src/gates/runner.ts';
-import { denyNetworkSandbox } from '../src/security/sandbox.ts';
 import { openEventLog } from '../src/state/event-log.ts';
 import { runTaskLoop, type LoopOptions } from '../src/orchestrator/loop.ts';
 import type { LoopControl, Proposal, ProposalInput, ProposalSource } from '../src/ports.ts';
 import type { BudgetLimits } from '../src/types.ts';
-import { makeClock, makeFixture, makeIds, type Fixture } from './helpers/fixture.ts';
+import {
+  makeClock,
+  makeFixture,
+  makeIds,
+  makeReportIntegrity,
+  PASSTHROUGH_TEST_SANDBOX,
+  makeTestLeaseSession,
+  type Fixture,
+} from './helpers/fixture.ts';
 
 const RUN_ID = 'RUN-1';
 const TASK_ID = 'T-1';
@@ -28,15 +35,18 @@ function build(fix: Fixture, limits: BudgetLimits, clock = makeClock()) {
   const budget = createBudget(limits, clock);
   const executor = createExecutor({
     worktreeDir: fix.worktree, runId: RUN_ID, taskId: TASK_ID, log, evidence,
-    policy: createDefaultPathPolicy(), sandbox: denyNetworkSandbox(process.platform), clock,
+    policy: createDefaultPathPolicy(), sandbox: PASSTHROUGH_TEST_SANDBOX, clock,
   });
   const gates = createGateRunner({
-    worktreeDir: fix.worktree, configPath: fix.gateConfigPath, runId: RUN_ID, taskId: TASK_ID, log, evidence, clock,
+    worktreeDir: fix.worktree, configPath: fix.gateConfigPath, runId: RUN_ID, taskId: TASK_ID, log, evidence,
+    reportIntegrity: makeReportIntegrity(fix, evidence), clock,
+    sandbox: PASSTHROUGH_TEST_SANDBOX,
   });
   const run = (source: ProposalSource, extra?: Partial<LoopOptions>) =>
     runTaskLoop({
       runId: RUN_ID, taskId: TASK_ID, role: 'implementer', source, executor, gates,
       log, budget, clock, evidence, ids: makeIds(), ...extra,
+      lease: extra?.lease ?? makeTestLeaseSession(TASK_ID),
     });
   return { log, evidence, clock, run };
 }
@@ -124,9 +134,23 @@ test('ACTIVE wallclock trips under a tickable clock — the trip impossible unde
   try {
     const clock = makeClock();
     const c = build(fix, { maxIterations: 100, maxCostUnits: 1000, maxWallclockMs: 100 }, clock);
+    let calls = 0;
     const source: ProposalSource = {
       async propose(): Promise<Proposal> {
+        calls += 1;
         clock.tick(40); // each round of "real" work advances the wall clock
+        if (calls === 1) {
+          return {
+            claim: 'WORKING',
+            actions: [{
+              type: 'WRITE_FILE',
+              actionId: 'wallclock-seed',
+              path: 'src/impl.txt',
+              contentRef: c.evidence.put('correct\n'),
+            }],
+            costUnits: 0,
+          };
+        }
         return { claim: 'WORKING', actions: [], costUnits: 0 };
       },
     };
@@ -134,6 +158,7 @@ test('ACTIVE wallclock trips under a tickable clock — the trip impossible unde
     assert.equal(result.finalState, 'ESCALATED');
     const esc = c.log.all({ type: 'ESCALATED' }).at(-1);
     assert.equal(esc?.payload['why'], 'budget:wallclock');
+    assert.equal(c.log.all({ type: 'BUDGET_EXCEEDED' }).at(-1)?.payload['limit'], 'wallclock');
   } finally {
     fix.cleanup();
   }

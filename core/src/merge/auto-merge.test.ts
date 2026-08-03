@@ -5,12 +5,13 @@
 // host — no darwin gate.
 
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { createEvidenceStore } from '../evidence/store.ts';
 import { createGateRunner } from '../gates/runner.ts';
+import { ReportIntegrityError, type ReportIntegrity } from '../gates/report-integrity.ts';
 import { createLeaseManager } from '../state/lease.ts';
 import { openEventLog } from '../state/event-log.ts';
 import { createMergeQueue } from './queue.ts';
@@ -18,12 +19,21 @@ import {
   auditSampleValue,
   decideAutoApprove,
   matchesDepManifest,
+  runApprovedMerge,
   runAutoMerge,
   type MappedAc,
 } from './auto-merge.ts';
+import { bindGateReportToTaskArtifact } from './artifact-binding.ts';
 import type { EventLog } from '../state/event-log.ts';
 import type { GateReport } from '../types.ts';
-import { git, makeClock, makeFixture, type Fixture } from '../../test/helpers/fixture.ts';
+import {
+  git,
+  makeClock,
+  makeFixture,
+  makeReportIntegrity,
+  PASSTHROUGH_TEST_SANDBOX,
+  type Fixture,
+} from '../../test/helpers/fixture.ts';
 
 const RUN_ID = 'RUN-1';
 const TASK_ID = 'T-1';
@@ -137,7 +147,9 @@ function runT1(fix: Fixture, log: EventLog, evidence: ReturnType<typeof createEv
     taskId: TASK_ID,
     log,
     evidence,
+    reportIntegrity: makeReportIntegrity(fix, evidence),
     clock,
+    sandbox: PASSTHROUGH_TEST_SANDBOX,
   });
   return gates.run('T1');
 }
@@ -152,6 +164,8 @@ test('L1 task auto-merges and a sampled audit reproduces -> COMPLETED (REQ-7, RE
     const { log, clock } = openLog(fix);
     const evidence = createEvidenceStore(fix.evidenceDir);
     setupTaskBranch(fix, { 'src/impl.txt': 'correct\n' });
+    const signedArtifact = git(fix.worktree, 'rev-parse', TASK_BRANCH).trim();
+    const signedBase = git(fix.worktree, 'rev-parse', 'main').trim();
     const originalReport = await runT1(fix, log, evidence, clock);
     assert.equal(originalReport.pass, true, 'task branch is genuinely green');
 
@@ -168,7 +182,9 @@ test('L1 task auto-merges and a sampled audit reproduces -> COMPLETED (REQ-7, RE
       auditSampleRate: 100,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
     assert.equal(out.decision, 'auto_approve');
@@ -188,6 +204,8 @@ test('L1 task auto-merges and a sampled audit reproduces -> COMPLETED (REQ-7, RE
     assert.equal(readFileSync(join(fix.worktree, 'src/impl.txt'), 'utf8'), 'correct\n');
     const parents = git(fix.worktree, 'rev-list', '--parents', '-1', 'HEAD').trim().split(/\s+/);
     assert.equal(parents.length, 3, 'HEAD is a merge commit (2 parents) — --no-ff');
+    assert.equal(parents[1], signedBase, 'direct merge first parent is the exact signed base');
+    assert.equal(parents[2], signedArtifact, 'direct merge second parent is the exact signed task artifact');
   } finally {
     fix.cleanup();
   }
@@ -215,7 +233,9 @@ test('unsampled merged task proceeds audited -> COMPLETED without a re-run (REQ-
       auditSampleRate: 0, // sha256(...) mod 100 < 0 is never true -> unsampled
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
     assert.equal(out.sampled, false);
@@ -229,22 +249,139 @@ test('unsampled merged task proceeds audited -> COMPLETED without a re-run (REQ-
   }
 });
 
-test('sampled audit that does NOT reproduce -> single escalate(audit_mismatch) + merge reverted (REQ-8.3)', async () => {
+test('P0-04 C1: a signed green report cannot authorize a later red task-branch commit', async () => {
   const fix = makeFixture();
   try {
     const { log, clock } = openLog(fix);
     const evidence = createEvidenceStore(fix.evidenceDir);
-    // Task branch is actually RED (impl still 'wrong') but adds a feature file;
-    // we feed a fabricated green report — the audit must catch the drift.
-    setupTaskBranch(fix, { 'src/impl.txt': 'wrong\n', 'src/feature.txt': 'ship\n' });
-    const fabricatedGreen: GateReport = {
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n' });
+    const signedGreen = await runT1(fix, log, evidence, clock);
+    assert.equal(signedGreen.pass, true, 'control: commit A is genuinely green');
+
+    writeFileSync(join(fix.worktree, 'src/impl.txt'), 'wrong\n');
+    git(fix.worktree, 'add', '-A');
+    git(fix.worktree, 'commit', '-q', '-m', 'commit B invalidates the signed artifact');
+    const redCommit = git(fix.worktree, 'rev-parse', 'HEAD').trim();
+    const mainBefore = git(fix.worktree, 'rev-parse', 'main').trim();
+
+    const out = await runAutoMerge({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      state: 'REVIEWING',
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+      decision: { riskClass: 'L0', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
+      originalReport: signedGreen,
+      gateConfigRelPath: 'gate-ladder.json',
+      auditSampleRate: 0,
+      log,
+      evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
+      clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
+    });
+
+    assert.equal(out.finalState, 'ESCALATED');
+    assert.equal(out.mergeCommit, null, 'the stale report never reaches the merge callback');
+    assert.ok(!states(log).includes('COMPLETED'));
+    assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['code'], 'artifact_identity_mismatch');
+    assert.equal(git(fix.worktree, 'rev-parse', 'main').trim(), mainBefore, 'main is not advanced to commit B');
+    assert.notEqual(git(fix.worktree, 'rev-parse', 'main').trim(), redCommit);
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('P0-04 Task 39: a concurrent main advance after direct verification loses the signed-base CAS', async () => {
+  const fix = makeFixture();
+  try {
+    const { log, clock } = openLog(fix);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    const reportIntegrity = makeReportIntegrity(fix, evidence);
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n' });
+    const gated = await runT1(fix, log, evidence, clock);
+    const authorized = bindGateReportToTaskArtifact(gated, reportIntegrity, {
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+    });
+    const signedBase = authorized.baseCommitHash as string;
+    let concurrentCommit = '';
+    let injected = false;
+    const interleavingLog: EventLog = {
+      append(event) {
+        const appended = log.append(event);
+        if (!injected && event.type === 'TASK_STATE' && event.payload['state'] === 'MERGE_QUEUED') {
+          injected = true;
+          git(fix.worktree, 'checkout', '-q', 'main');
+          writeFileSync(join(fix.worktree, 'src', 'concurrent.txt'), 'must survive\n');
+          git(fix.worktree, 'add', '-A');
+          git(fix.worktree, 'commit', '-q', '-m', 'concurrent main advance');
+          concurrentCommit = git(fix.worktree, 'rev-parse', 'main').trim();
+        }
+        return appended;
+      },
+      appendFenced(event, claim, now) {
+        return log.appendFenced(event, claim, now);
+      },
+      all: (filter) => log.all(filter),
+      exportJsonl: () => log.exportJsonl(),
+      projection: () => log.projection(),
+      close: () => log.close(),
+    };
+
+    const out = await runApprovedMerge({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      state: 'APPROVED',
+      approvalBasis: 'human_approved',
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+      originalReport: authorized,
+      gateConfigRelPath: 'gate-ladder.json',
+      auditSampleRate: 0,
+      log: interleavingLog,
+      evidence,
+      reportIntegrity,
+      clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
+    });
+
+    assert.ok(injected);
+    assert.notEqual(concurrentCommit, signedBase);
+    assert.equal(out.finalState, 'ESCALATED');
+    assert.equal(out.mergeCommit, null);
+    assert.equal(git(fix.worktree, 'rev-parse', 'main').trim(), concurrentCommit);
+    assert.equal(log.all({ type: 'EVIDENCE_AUTHORIZED' }).length, 0);
+    assert.ok(!states(log).includes('COMPLETED'));
+    const escalation = log.all({ type: 'ESCALATED' }).at(-1);
+    assert.equal(escalation?.payload['boundary'], 'direct_merge_update');
+    assert.equal(escalation?.payload['code'], 'artifact_identity_mismatch');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('REQ-4.9-4.13: unsigned evidence cannot trigger auto-approval or merge', async () => {
+  const fix = makeFixture();
+  try {
+    const { log, clock } = openLog(fix);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    const reportIntegrity = makeReportIntegrity(fix, evidence);
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n' });
+    const mainBefore = git(fix.worktree, 'rev-parse', 'main').trim();
+    const unsigned: GateReport = {
       tier: 'T1',
       pass: true,
       gateConfigHash: 'x',
       commitHash: 'x',
       worktreeHash: 'x',
       envHash: 'x',
-      checks: [{ name: 'fullTests', pass: true, evidenceRef: 'blob://' + '0'.repeat(64) }],
+      checks: [{ name: 'fullTests', pass: true, evidenceRef: evidence.put('green') }],
       scopeNote: 'x',
     };
 
@@ -256,12 +393,113 @@ test('sampled audit that does NOT reproduce -> single escalate(audit_mismatch) +
       taskBranch: TASK_BRANCH,
       mainBranch: 'main',
       decision: { riskClass: 'L1', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
-      originalReport: fabricatedGreen,
+      originalReport: unsigned,
+      gateConfigRelPath: 'gate-ladder.json',
+      auditSampleRate: 0,
+      log,
+      evidence,
+      reportIntegrity,
+      clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
+    });
+
+    assert.equal(out.decision, 'evidence_invalid');
+    assert.equal(out.finalState, 'ESCALATED');
+    assert.equal(out.mergeCommit, null);
+    assert.equal(log.all({ type: 'AUTO_APPROVED' }).length, 0);
+    assert.equal(git(fix.worktree, 'rev-parse', 'main').trim(), mainBefore);
+    assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['code'], 'signature_missing');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('REQ-4.9-4.13: completion re-verifies and cannot advance after authentication fails', async () => {
+  const fix = makeFixture();
+  try {
+    const { log, clock } = openLog(fix);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n' });
+    const originalReport = await runT1(fix, log, evidence, clock);
+    const base = makeReportIntegrity(fix, evidence);
+    let verifications = 0;
+    const reportIntegrity: ReportIntegrity = {
+      signGateReport: (report, identity) => base.signGateReport(report, identity),
+      verifyGateReport(report, identity) {
+        verifications += 1;
+        if (verifications === 5) {
+          throw new ReportIntegrityError('signature_mismatch', 'injected completion-boundary failure');
+        }
+        return base.verifyGateReport(report, identity);
+      },
+      verifyGateReportRef: (ref, identity) => base.verifyGateReportRef(ref, identity),
+      verifyEvidenceRef: (ref) => base.verifyEvidenceRef(ref),
+    };
+
+    const out = await runAutoMerge({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      state: 'REVIEWING',
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+      decision: { riskClass: 'L1', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
+      originalReport,
+      gateConfigRelPath: 'gate-ladder.json',
+      auditSampleRate: 0,
+      log,
+      evidence,
+      reportIntegrity,
+      clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
+    });
+
+    assert.equal(verifications, 5);
+    assert.equal(out.finalState, 'ESCALATED');
+    assert.ok(out.mergeCommit, 'merge happened before the separate completion boundary');
+    assert.ok(!states(log).includes('COMPLETED'));
+    assert.equal(log.all({ type: 'AUDIT_RESULT' }).length, 0);
+    assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['boundary'], 'completion');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('sampled audit that does NOT reproduce -> single escalate(audit_mismatch) + merge reverted (REQ-8.3)', async () => {
+  const fix = makeFixture();
+  try {
+    const { log, clock } = openLog(fix);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    // The gated Git bytes remain immutable, while an external probe prerequisite
+    // disappears before the clean-checkout audit. This is a genuine non-repro,
+    // not a stale signed report (which is now rejected before merge).
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n', 'src/feature.txt': 'ship\n' });
+    const marker = join(fix.root, 'external-service-ready');
+    writeFileSync(marker, 'ready\n');
+    writeFileSync(join(fix.worktree, 'run-tests.sh'), `#!/bin/sh\ntest -f '${marker}'\n`);
+    git(fix.worktree, 'add', '-A');
+    git(fix.worktree, 'commit', '-q', '-m', 'gate against external prerequisite');
+    const reportIntegrity = makeReportIntegrity(fix, evidence);
+    const originalReport = await runT1(fix, log, evidence, clock);
+    assert.equal(originalReport.pass, true);
+    unlinkSync(marker);
+
+    const out = await runAutoMerge({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      state: 'REVIEWING',
+      repoDir: fix.worktree,
+      taskBranch: TASK_BRANCH,
+      mainBranch: 'main',
+      decision: { riskClass: 'L1', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
+      originalReport,
       gateConfigRelPath: 'gate-ladder.json',
       auditSampleRate: 100,
       log,
       evidence,
+      reportIntegrity,
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
     assert.equal(out.reproduced, false);
@@ -308,7 +546,9 @@ test('a conflicting merge escalates merge_conflict with no auto-resolution (REQ-
       auditSampleRate: 100,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
     assert.equal(out.mergeCommit, null);
@@ -350,7 +590,9 @@ test('runAutoMerge routed through the queue: T2 not_enabled -> merges, sampled a
       taskId: TASK_ID,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
     const queue = createMergeQueue({
       runId: RUN_ID,
@@ -358,6 +600,7 @@ test('runAutoMerge routed through the queue: T2 not_enabled -> merges, sampled a
       mainBranch: 'main',
       worktreeDir: integrationDir,
       gates,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       log,
       lease,
     });
@@ -375,7 +618,9 @@ test('runAutoMerge routed through the queue: T2 not_enabled -> merges, sampled a
       auditSampleRate: 100,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
       queue,
     });
 
@@ -419,7 +664,9 @@ test('runAutoMerge routed through the queue: T2 fails -> ESCALATED(t2_failed), m
       taskId: TASK_ID,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
     const queue = createMergeQueue({
       runId: RUN_ID,
@@ -427,6 +674,7 @@ test('runAutoMerge routed through the queue: T2 fails -> ESCALATED(t2_failed), m
       mainBranch: 'main',
       worktreeDir: integrationDir,
       gates,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       log,
       lease,
     });
@@ -444,7 +692,9 @@ test('runAutoMerge routed through the queue: T2 fails -> ESCALATED(t2_failed), m
       auditSampleRate: 100,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
       queue,
     });
 
@@ -463,22 +713,21 @@ test('runAutoMerge routed through the queue: sampled audit does NOT reproduce ->
   try {
     const { log, clock } = openLog(fix);
     const evidence = createEvidenceStore(fix.evidenceDir);
-    // Task branch is actually RED (impl still 'wrong') but adds a feature file; a
-    // fabricated green report forces a merge the audit must then catch and revert.
+    // The task bytes are genuinely gated, then an external prerequisite disappears
+    // so the sampled clean-checkout audit produces a real non-repro.
     // The queue never checks out main in fix.worktree (only integrationDir + an
     // update-ref) — fix.worktree stays on TASK_BRANCH from setupTaskBranch, which is
     // exactly the state the revert-target bug needs to be caught.
-    setupTaskBranch(fix, { 'src/impl.txt': 'wrong\n', 'src/feature.txt': 'ship\n' });
-    const fabricatedGreen: GateReport = {
-      tier: 'T1',
-      pass: true,
-      gateConfigHash: 'x',
-      commitHash: 'x',
-      worktreeHash: 'x',
-      envHash: 'x',
-      checks: [{ name: 'fullTests', pass: true, evidenceRef: 'blob://' + '0'.repeat(64) }],
-      scopeNote: 'x',
-    };
+    setupTaskBranch(fix, { 'src/impl.txt': 'correct\n', 'src/feature.txt': 'ship\n' });
+    const marker = join(fix.root, 'external-service-ready-queue');
+    writeFileSync(marker, 'ready\n');
+    writeFileSync(join(fix.worktree, 'run-tests.sh'), `#!/bin/sh\ntest -f '${marker}'\n`);
+    git(fix.worktree, 'add', '-A');
+    git(fix.worktree, 'commit', '-q', '-m', 'gate against external prerequisite');
+    const reportIntegrity = makeReportIntegrity(fix, evidence);
+    const originalReport = await runT1(fix, log, evidence, clock);
+    assert.equal(originalReport.pass, true);
+    unlinkSync(marker);
 
     const integrationDir = setupIntegrationWorktree(fix);
     const lease = createLeaseManager(fix.dbPath, clock, RUN_ID);
@@ -489,7 +738,9 @@ test('runAutoMerge routed through the queue: sampled audit does NOT reproduce ->
       taskId: TASK_ID,
       log,
       evidence,
+      reportIntegrity,
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
     const queue = createMergeQueue({
       runId: RUN_ID,
@@ -497,6 +748,7 @@ test('runAutoMerge routed through the queue: sampled audit does NOT reproduce ->
       mainBranch: 'main',
       worktreeDir: integrationDir,
       gates,
+      reportIntegrity,
       log,
       lease,
     });
@@ -509,12 +761,14 @@ test('runAutoMerge routed through the queue: sampled audit does NOT reproduce ->
       taskBranch: TASK_BRANCH,
       mainBranch: 'main',
       decision: { riskClass: 'L1', gatesGreen: true, acceptanceCriteria: GOLDEN_AC, depManifestPatterns: NO_DEP },
-      originalReport: fabricatedGreen,
+      originalReport,
       gateConfigRelPath: 'gate-ladder.json',
       auditSampleRate: 100,
       log,
       evidence,
+      reportIntegrity,
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
       queue,
     });
 
@@ -554,7 +808,9 @@ test('a non-qualifying task routes to the approval package: no merge, state unch
       auditSampleRate: 100,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
     assert.equal(out.decision, 'approval_package');

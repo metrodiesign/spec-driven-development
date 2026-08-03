@@ -1,18 +1,21 @@
 // Supervised-loop composition (spec §14 Phase 1). Wires core (log/evidence/
 // executor/gates/budget) + AAL (context source + registry/router) + an adapter
-// into runTaskLoop against a synthetic fixture target repo. The adapter is a
+// into runTaskLoop against a fixture target repo. Operational runs copy an explicit
+// operator-supplied golden directory; only named test seams use synthetic bytes. The adapter is a
 // factory: the CI/stub path uses the FakeAdapter (no quota); `--live` passes the
 // real Claude adapter over the SDK. This is the capstone that produces the first
 // calibration numbers when a human triggers a live run (task 11).
 
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   applyGovernanceApproval,
+  acquireTaskLease,
   attestationsFor,
   buildApprovalPackage,
   computeCalibration,
@@ -22,10 +25,12 @@ import {
   createEvidenceStore,
   createExecutor,
   createGateRunner,
+  createRedArtifactStore,
+  createReportIntegrity,
   createHumanPlaneServer,
   createLeaseManager,
+  isLeaseTtlValid,
   createLoopController,
-  denyNetworkSandbox,
   foldConfirmedHypotheses,
   freezeTaskGraph,
   selectNextTask,
@@ -33,17 +38,24 @@ import {
   TaskGraphGateError,
   listPendingProposals,
   openEventLog,
+  openEvidenceAuthenticator,
   pendingQuarantines,
   promoteLesson,
   proposeLessonFromHypothesis,
   readGovernanceLog,
+  ReportIntegrityError,
   runApprovedMerge,
   runAutoMerge,
   runDeployStage,
   runManualRollback,
   runTaskLoop,
+  LeaseFenceError,
   DEFAULT_REPAIR_POLICY,
   transition,
+  verifyMergedArtifactBinding,
+  verifyTaskArtifactBinding,
+  copyOperatorGoldenFixture,
+  GoldenFixtureError,
   type ApprovalPackage,
   type CalibrationResult,
   type Clock,
@@ -54,8 +66,11 @@ import {
   type HandlerDeps,
   type LessonHitRateStats,
   type MappedAc,
+  type OfflineDependencyPolicy,
   type Role,
+  type ReportIntegrity,
   type TaskContract,
+  type TaskLeaseSession,
   type TaskGraph,
   type TaskGraphTask,
   type TaskProjection,
@@ -87,6 +102,35 @@ import {
   type ShadowProofReport,
 } from 'aal';
 import { runPlannerFusion } from './fusion.ts';
+
+const PHASE0_OFFLINE_FIXTURE_LOCKFILE = [
+  "lockfileVersion: '9.0'",
+  '',
+  'settings:',
+  '  autoInstallPeers: true',
+  '  excludeLinksFromLockfile: false',
+  '',
+  'importers:',
+  '',
+  '  .:',
+  '    dependencies:',
+  '      phase0-offline-dependency:',
+  '        specifier: file:.phase0-offline-sources/phase0-offline-dependency',
+  '        version: file:.phase0-offline-sources/phase0-offline-dependency',
+  '',
+  'packages:',
+  '',
+  '  phase0-offline-dependency@file:.phase0-offline-sources/phase0-offline-dependency:',
+  '    resolution: {directory: .phase0-offline-sources/phase0-offline-dependency, type: directory}',
+  '',
+  'snapshots:',
+  '',
+  '  phase0-offline-dependency@file:.phase0-offline-sources/phase0-offline-dependency: {}',
+  '',
+].join('\n');
+
+const PHASE0_OFFLINE_FIXTURE_MANIFEST =
+  '{"name":"phase0-offline-fixture","version":"0.0.0","private":true,"dependencies":{"phase0-offline-dependency":"file:.phase0-offline-sources/phase0-offline-dependency"}}\n';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -222,22 +266,69 @@ export function wrapRouterForShadow(
   };
 }
 
-/** A synthetic target repo whose tests pass iff src/impl.txt contains `correct`. */
-export function makeFixtureRepo(): { root: string; wt: string; gateConfigPath: string; cleanup: () => void } {
+/** Internal fixture shape shared by the operator and test-only seams. */
+type FixtureRepo = {
+  root: string;
+  wt: string;
+  gateConfigPath: string;
+  conventionPolicyPath: string;
+  goldenFixture?: ReturnType<typeof copyOperatorGoldenFixture>;
+  cleanup: () => void;
+};
+
+/**
+ * Operational target fixture. Golden bytes are accepted only from an explicit
+ * operator directory; callers cannot fall back to generated truth.
+ */
+export function makeFixtureRepo(options: { operatorGoldenFixtureDir: string }): FixtureRepo {
+  return createFixtureRepo(options);
+}
+
+/**
+ * Explicit test-only synthetic seam. This helper is intentionally named and
+ * scoped for tests so production/CLI composition cannot accidentally mint truth.
+ */
+export function makeSyntheticFixtureRepoForTests(): FixtureRepo {
+  return createFixtureRepo({ syntheticTestOnly: true });
+}
+
+function createFixtureRepo(options: { operatorGoldenFixtureDir?: string; syntheticTestOnly?: true }): FixtureRepo {
+  if (options.operatorGoldenFixtureDir === undefined && options.syntheticTestOnly !== true) {
+    throw new GoldenFixtureError('operator_golden_fixture_missing', 'operator_golden_fixture_missing');
+  }
   const root = mkdtempSync(join(tmpdir(), 'loop-fixture-'));
   const wt = join(root, 'target');
   mkdirSync(join(wt, 'src'), { recursive: true });
+  const conventionPolicyPath = join(wt, '.ai', 'policies', 'convention.json');
+  mkdirSync(join(wt, '.ai', 'policies'), { recursive: true });
+  const sourceConventionPolicy = fileURLToPath(new URL('../../../.ai/policies/convention.json', import.meta.url));
+  writeFileSync(conventionPolicyPath, readFileSync(sourceConventionPolicy));
   mkdirSync(join(wt, 'test', 'golden'), { recursive: true });
   git(wt, 'init', '-q', '-b', 'main');
   git(wt, 'config', 'user.email', 'fixture@example.invalid');
   git(wt, 'config', 'user.name', 'fixture');
   writeFileSync(join(wt, 'src', 'impl.txt'), 'wrong\n');
-  const goldenFile = join(wt, 'test', 'golden', 'expected.txt');
-  writeFileSync(goldenFile, 'golden truth\n');
   writeFileSync(
-    join(wt, 'test', 'golden', '_MANIFEST.sha256'),
-    `${sha256(readFileSync(goldenFile))}  ${relative(join(wt, 'test', 'golden'), goldenFile)}\n`,
+    join(wt, 'package.json'),
+    PHASE0_OFFLINE_FIXTURE_MANIFEST,
   );
+  writeFileSync(join(wt, 'pnpm-lock.yaml'), PHASE0_OFFLINE_FIXTURE_LOCKFILE);
+  writeFileSync(join(wt, '.gitignore'), 'node_modules/\n');
+  let goldenFixture: ReturnType<typeof copyOperatorGoldenFixture> | undefined;
+  if (options.operatorGoldenFixtureDir !== undefined) {
+    // Operational path: copy the operator's exact bytes and manifest. The
+    // provisioner refuses missing/tampered input and never regenerates truth.
+    goldenFixture = copyOperatorGoldenFixture(options.operatorGoldenFixtureDir, join(wt, 'test', 'golden'));
+  } else {
+    // Explicit test-only seam; this branch is unreachable from operational
+    // composition because createFixtureRepo refuses absent operator bytes above.
+    const goldenFile = join(wt, 'test', 'golden', 'expected.txt');
+    writeFileSync(goldenFile, 'golden truth\n');
+    writeFileSync(
+      join(wt, 'test', 'golden', '_MANIFEST.sha256'),
+      `${sha256(readFileSync(goldenFile))}  ${relative(join(wt, 'test', 'golden'), goldenFile)}\n`,
+    );
+  }
   writeFileSync(join(wt, 'run-tests.sh'), '#!/bin/sh\ngrep -q correct src/impl.txt\n');
   const gateConfigPath = join(wt, 'gate-ladder.json');
   writeFileSync(
@@ -251,7 +342,7 @@ export function makeFixtureRepo(): { root: string; wt: string; gateConfigPath: s
   );
   git(wt, 'add', '-A');
   git(wt, 'commit', '-qm', 'fixture');
-  return { root, wt, gateConfigPath, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return { root, wt, gateConfigPath, conventionPolicyPath, ...(goldenFixture !== undefined ? { goldenFixture } : {}), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 function passingRecord(adapterId: string): ConformanceRecord {
@@ -268,6 +359,8 @@ export interface LoopRunResult {
   finalState: string;
   iterations: number;
   calibration: CalibrationResult;
+  /** REQ-8.11: authenticated provenance for operator-supplied golden bytes. */
+  goldenFixture?: ReturnType<typeof copyOperatorGoldenFixture> & { evidenceRef: string };
   /** REQ-24.1: lesson injection count + hit-rate PROXY, folded from this run's own log. */
   lessonHitRate: LessonHitRateStats;
   /** REQ-24.2: a shadowProven snapshot over this run's own log — evidence for a human's
@@ -335,6 +428,12 @@ export async function runSupervisedLoop(opts: {
    * below (REQ-2/3), same as any other non-qualifying decision.
    */
   autoMerge?: { auditSampleRate: number; depManifestPatterns: string[] };
+  /**
+   * Governance-loaded Phase 0 dependency policy. The composition root validates
+   * this object before constructing an adapter, then binds it to the sole command
+   * orchestrator. It never widens network beyond `none`.
+   */
+  offlineDependencyPolicy?: OfflineDependencyPolicy;
   /**
    * Approval-package tuning (REQ-2.4/3.4) for the path above when auto-merge does
    * NOT fire. `maxDiffBudget` defaults to 400 (§11.2). `timeoutMs` is OPT-IN and gates
@@ -418,12 +517,31 @@ export async function runSupervisedLoop(opts: {
    */
   taskGraph?: { rawBytes: Uint8Array; parsed: unknown };
   /**
-   * REQ-4.6: per-task lease TTL. Default = the contract's max_wallclock_per_task_min
+   * REQ-6.3: per-task lease TTL. Default = the contract's max_wallclock_per_task_min
    * plus 5 minutes of slack, so a lease this run never renews still outlives any
-   * legal task (D6). Multi-task mode only — the single-task path claims no lease.
+   * legal task (D6). Both single-task and graph modes claim this lease.
    */
   leaseTtlMs?: number;
+  /** Maximum duration of one executor/gate atomic operation; defaults to task wallclock. */
+  maxAtomicDurationMs?: number;
+  /**
+   * Operator-supplied `test/golden` directory. When present, fixture provisioning
+   * is copy-only and returns source/hash provenance; no manifest is generated.
+   */
+  operatorGoldenFixtureDir?: string;
+  /** Require the operator fixture for an operational run (missing => explicit blocker). */
+  requireOperatorGoldenFixture?: boolean;
+  /** Explicit test-only seam; never set by console/CLI production callers. */
+  syntheticGoldenFixtureForTests?: boolean;
 }): Promise<LoopRunResult> {
+  // Operational composition must name immutable operator bytes before any other
+  // planning/setup path can run. Only the explicit test seam may omit this input.
+  if (opts.syntheticGoldenFixtureForTests !== true && opts.operatorGoldenFixtureDir === undefined) {
+    throw new GoldenFixtureError('operator_golden_fixture_missing', 'operator_golden_fixture_missing');
+  }
+  if (opts.requireOperatorGoldenFixture === true && opts.operatorGoldenFixtureDir === undefined) {
+    throw new GoldenFixtureError('operator_golden_fixture_missing', 'operator_golden_fixture_missing');
+  }
   // Fail-closed BEFORE any state is created: a planning dispatcher assembled wider
   // than the contract's governance ceiling is a composition bug, refused up front —
   // the dispatcher is opaque after construction, so it cannot be clamped here
@@ -439,19 +557,65 @@ export async function runSupervisedLoop(opts: {
       throw new Error(`planning dispatcher parallelism ${eff} exceeds contract max_parallel_agents ${cap}`);
     }
   }
-  const fx = makeFixtureRepo();
+  // Keep held-out pass rate paired with the unique AC denominator.  Coverage is
+  // computed from the frozen contract/task graph, never inferred from the number
+  // of loop outcomes (an unexecuted or duplicate AC must not inflate coverage).
+  const calibrationFor = (
+    heldOut: boolean[],
+    reruns: boolean[],
+    acceptanceCriteria: readonly { id: string; golden?: boolean }[] = opts.contract.acceptanceCriteria,
+  ): CalibrationResult => computeCalibration({
+    heldOut,
+    reruns,
+    inScopeAcIds: acceptanceCriteria.map((ac) => ac.id),
+    goldenAcIds: acceptanceCriteria.filter((ac) => ac.golden === true).map((ac) => ac.id),
+  });
+  const useSyntheticFixture = opts.syntheticGoldenFixtureForTests === true && opts.operatorGoldenFixtureDir === undefined;
+  const fx = useSyntheticFixture
+    ? makeSyntheticFixtureRepoForTests()
+    : makeFixtureRepo({ operatorGoldenFixtureDir: opts.operatorGoldenFixtureDir as string });
   const clock = opts.clock;
   const stateDir = opts.persistDir ?? fx.root; // fixture root is rm'd in finally; persistDir survives
-  const log = openEventLog(join(stateDir, 'events.db'), clock);
+  const eventsPath = join(stateDir, 'events.db');
+  // A pre-existing event DB may contain only a foreign/concurrent lease written
+  // before this invocation. Recovery starts from the frozen run trust root, not
+  // from SQLite-file existence; once metadata exists, a missing key still fails
+  // closed inside openEvidenceAuthenticator.
+  const recovering = existsSync(join(stateDir, 'run-metadata.json'));
+  const log = openEventLog(eventsPath, clock);
   const evidence = createEvidenceStore(join(stateDir, 'evidence'));
   const RUN_ID = 'RUN-LIVE';
   const TASK_ID = 'T-1';
+  const leaseTtlMs = opts.leaseTtlMs ?? opts.contract.budget.maxWallclockMs + 5 * 60_000;
+  const maxAtomicDurationMs = opts.maxAtomicDurationMs ?? opts.contract.budget.maxWallclockMs;
+  const leaseOwner = `${RUN_ID}#${randomUUID()}`;
+  const lease = createLeaseManager(join(stateDir, 'events.db'), clock, RUN_ID);
+  const goldenFixture = fx.goldenFixture;
+  const goldenFixtureProvenance = goldenFixture === undefined
+    ? undefined
+    : {
+        ...goldenFixture,
+        evidenceRef: evidence.put(JSON.stringify(goldenFixture)),
+      };
+  if (goldenFixtureProvenance !== undefined) {
+    log.append({
+      runId: RUN_ID,
+      taskId: null,
+      type: 'GOLDEN_FIXTURE_PROVISIONED',
+      payload: { ...goldenFixtureProvenance },
+    });
+  }
+  const goldenResult = goldenFixtureProvenance === undefined
+    ? {}
+    : { goldenFixture: goldenFixtureProvenance };
   // Run-level closures (breaker callback, router wrappers, human-plane handlers, the
   // post-run lesson fold) outlive any single task, so they read the CURRENTLY executing
   // task id instead of binding one at construction (design D4 layer 1). `executeTask`
   // sets it; the single-task path never moves it off T-1.
   let activeTask: string = TASK_ID;
+  let activeTaskLease: TaskLeaseSession | null = null;
   const activeTaskId = (): string => activeTask;
+  const activeLeaseOwns = (): boolean => activeTaskLease === null || activeTaskLease.verifyOwnership();
   // shadowProven thresholds for the calibration snapshot (REQ-24.2) — threaded from
   // routing.json's outcomeRouting block via opts, not hard-coded (PR #50 review).
   const shadowProof = {
@@ -459,6 +623,55 @@ export async function runSupervisedLoop(opts: {
     minDivergences: opts.outcomeRouting?.minDivergences ?? 1,
   };
   try {
+    // Refuse unsafe leases before any adapter, executor, or task branch is created.
+    // This is a composition error, not a task failure, so the event is explicit and
+    // the result remains non-executing.
+    if (!isLeaseTtlValid(leaseTtlMs, maxAtomicDurationMs)) {
+      log.append({
+        runId: RUN_ID,
+        taskId: null,
+        type: 'ESCALATED',
+        payload: { why: 'invalid_lease_ttl', ttlMs: leaseTtlMs, maxAtomicDurationMs },
+      });
+      return {
+        finalState: 'ESCALATED',
+        iterations: 0,
+        calibration: calibrationFor([], []),
+        ...goldenResult,
+        ...calibrationExtras(log, shadowProof),
+      };
+    }
+    let reportIntegrity: ReportIntegrity;
+    try {
+      reportIntegrity = createReportIntegrity({
+        evidence,
+        authenticator: openEvidenceAuthenticator({
+          runStateDir: stateDir,
+          runId: RUN_ID,
+          recovering,
+          worktreeDirs: [fx.wt],
+        }),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? String(error.code)
+          : 'evidence_auth_failed';
+      const why =
+        typeof error === 'object' && error !== null && 'reason' in error &&
+        (error.reason === 'evidence_auth_unavailable' || error.reason === 'evidence_auth_mismatch')
+          ? error.reason
+          : 'evidence_auth_mismatch';
+      log.append({ runId: RUN_ID, taskId: null, type: 'ESCALATED', payload: { why, boundary: 'run_recovery', code, detail } });
+      return {
+        finalState: 'ESCALATED',
+        iterations: 0,
+        calibration: calibrationFor([], []),
+        ...goldenResult,
+        ...calibrationExtras(log, shadowProof),
+      };
+    }
     // Planning gate (REQ-4.8/D5): freeze the graph EXACTLY ONCE, here — after the
     // event log opens (both outcomes must be recorded) and before any adapter or
     // agent is constructed (a rejected graph must reach nothing). The edge validated
@@ -481,7 +694,8 @@ export async function runSupervisedLoop(opts: {
         return {
           finalState: 'BLOCKED',
           iterations: 0,
-          calibration: computeCalibration({ heldOut: [], reruns: [] }),
+          calibration: calibrationFor([], []),
+          ...goldenResult,
           ...calibrationExtras(log, shadowProof),
           tasks: declaredTaskIds(opts.taskGraph.parsed).map((id) => ({ id, finalState: 'NOT_STARTED', iterations: 0 })),
         };
@@ -580,8 +794,8 @@ export async function runSupervisedLoop(opts: {
     // Single resolver in a closure var, same shape as `createLoopController`'s
     // `resumeResolve` (control.ts) — at most one package is ever pending at a time in
     // this single-task loop.
-    let pendingApprovalResolve: ((outcome: 'approve' | 'reject' | 'killed') => void) | null = null;
-    const waitForApprovalDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout' | 'killed'> =>
+    let pendingApprovalResolve: ((outcome: 'approve' | 'reject' | 'killed' | 'evidence_invalid') => void) | null = null;
+    const waitForApprovalDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout' | 'killed' | 'evidence_invalid'> =>
       new Promise((resolve) => {
         const timer = setTimeout(() => {
           pendingApprovalResolve = null;
@@ -594,6 +808,7 @@ export async function runSupervisedLoop(opts: {
         };
       });
     const onDecision: HandlerDeps['onDecision'] = (taskId, decision) => {
+      if (!activeLeaseOwns()) return { ok: false, reason: 'lease_lost' };
       // REQ-4.14: with several tasks per run a decision must NAME a task that actually
       // has a package pending, or it would land on whatever state the named task
       // happens to be in. Multi-task only — the single-task path has exactly one task,
@@ -609,6 +824,7 @@ export async function runSupervisedLoop(opts: {
       return { ok: true, state: tr.next };
     };
     const onInject: HandlerDeps['onInject'] = (guidance, opts) => {
+      if (!activeLeaseOwns()) return { ok: false, reason: 'lease_lost' };
       // REQ-17.3: mode is purely an observability label — both paths feed the SAME
       // guidanceQueue that runTaskLoop's takeGuidance() drains at its next boundary
       // (REQ-17.2); PAUSED-immediate already sits at that boundary, so there is no
@@ -649,7 +865,7 @@ export async function runSupervisedLoop(opts: {
     // architect finding #1). `deployState` derives from the log so it stays correct
     // across the async gap between a decision and the stage's first recorded event.
     let currentDeployApproval: ApprovalPackage | null = null;
-    let pendingDeployResolve: ((outcome: 'approve' | 'reject' | 'killed') => void) | null = null;
+    let pendingDeployResolve: ((outcome: 'approve' | 'reject' | 'killed' | 'evidence_invalid') => void) | null = null;
     let deployDeps: DeployStageDeps | null = null;
     let manualRollback: Promise<unknown> | null = null;
     // REQ-3.5/3.6 + design.md "kill switch covers interruption": kill must end the
@@ -666,7 +882,7 @@ export async function runSupervisedLoop(opts: {
       if (last !== undefined) return last.payload['state'] as DeployState;
       return currentDeployApproval !== null ? 'PENDING_APPROVAL' : null;
     };
-    const waitForDeployDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout' | 'killed'> =>
+    const waitForDeployDecision = (timeoutMs: number): Promise<'approve' | 'reject' | 'timeout' | 'killed' | 'evidence_invalid'> =>
       new Promise((resolve) => {
         const timer = setTimeout(() => {
           pendingDeployResolve = null;
@@ -679,6 +895,7 @@ export async function runSupervisedLoop(opts: {
         };
       });
     const onDeployDecision: HandlerDeps['onDeployDecision'] = (decision) => {
+      if (!activeLeaseOwns()) return { ok: false, detail: 'lease_lost' };
       audit({ event: 'deploy_decision', taskId: activeTaskId(), decision });
       pendingDeployResolve?.(decision);
       return { ok: true };
@@ -694,6 +911,11 @@ export async function runSupervisedLoop(opts: {
       // state (PR #50 review). Record a terminal ESCALATED/rollback_failed event so
       // the window still closes cleanly and deployState never hangs at ROLLING_BACK.
       manualRollback = runManualRollback(deployDeps).catch((err) => {
+        // A stale owner must not publish a deploy terminal event after its lease
+        // generation has been replaced. The deploy command path is fenced by the
+        // executor; suppress this side-channel catch for that structured loss and
+        // keep the outer task outcome fail-closed.
+        if (err instanceof LeaseFenceError) return;
         log.append({
           runId: RUN_ID,
           taskId: activeTaskId(),
@@ -707,6 +929,60 @@ export async function runSupervisedLoop(opts: {
     // REQ-2.2: the same Map instance the Human Plane server reads GET /approvals from —
     // populated below once a task actually needs a human decision.
     const approvals = new Map<string, ApprovalPackage>();
+    const verifyApprovalEvidence = (
+      pkg: ApprovalPackage,
+      boundary: 'human_approval' | 'deploy_approval',
+    ): void => {
+      const reviewedDiff = new TextDecoder().decode(reportIntegrity.verifyEvidenceRef(pkg.diffRef));
+      for (const ref of pkg.evidence.gateReports) {
+        const report = reportIntegrity.verifyGateReportRef(ref, { runId: pkg.runId, taskId: pkg.taskId });
+        if (report.worktreeHash !== pkg.evidence.worktreeHash) {
+          throw new ReportIntegrityError(
+            'artifact_identity_mismatch',
+            `approval worktree ${pkg.evidence.worktreeHash} does not match signed report ${report.worktreeHash}`,
+          );
+        }
+        if (boundary === 'deploy_approval') {
+          if (typeof report.mergedCommitHash !== 'string') {
+            throw new ReportIntegrityError('artifact_identity_missing', 'deploy report is missing its merge commit binding');
+          }
+          verifyMergedArtifactBinding(report, reportIntegrity, {
+            runId: pkg.runId,
+            taskId: pkg.taskId,
+            repoDir: fx.wt,
+            taskBranch: `task/${pkg.taskId}`,
+            mainBranch: 'main',
+          }, report.mergedCommitHash, 'main');
+          const actualDiff = gitOut(
+            fx.wt,
+            'diff',
+            '--no-color',
+            `${report.mergedCommitHash}^1`,
+            report.mergedCommitHash,
+          );
+          if (reviewedDiff !== actualDiff) {
+            throw new ReportIntegrityError('artifact_identity_mismatch', 'deploy diff evidence does not match the signed merge commit');
+          }
+        } else {
+          verifyTaskArtifactBinding(report, reportIntegrity, {
+            runId: pkg.runId,
+            taskId: pkg.taskId,
+            repoDir: fx.wt,
+            taskBranch: `task/${pkg.taskId}`,
+            mainBranch: 'main',
+          });
+          const actualDiff = gitOut(
+            fx.wt,
+            'diff',
+            '--no-color',
+            `${report.baseCommitHash as string}...${report.artifactCommitHash as string}`,
+          );
+          if (reviewedDiff !== actualDiff) {
+            throw new ReportIntegrityError('artifact_identity_mismatch', 'approval diff evidence does not match the signed task artifact');
+          }
+        }
+      }
+    };
     const server = await createHumanPlaneServer({
       runDir: stateDir,
       deps: {
@@ -714,6 +990,40 @@ export async function runSupervisedLoop(opts: {
         approvals,
         log,
         onDecision,
+        verifyApprovalEvidence,
+        onEvidenceInvalid: (taskId, error, boundary) => {
+          if (!activeLeaseOwns()) {
+            pendingApprovalResolve?.('evidence_invalid');
+            pendingDeployResolve?.('evidence_invalid');
+            return;
+          }
+          if (boundary === 'human_approval') {
+            const tr = transition(currentState(taskId), 'escalate');
+            if (tr.ok) {
+              log.append({ runId: RUN_ID, taskId, type: 'TASK_STATE', payload: { state: tr.next, trigger: 'escalate' } });
+            }
+            pendingApprovalResolve?.('evidence_invalid');
+          } else {
+            log.append({
+              runId: RUN_ID,
+              taskId,
+              type: 'DEPLOY_STATE',
+              payload: { state: 'ESCALATED', trigger: 'evidence_invalid', simulation: true },
+            });
+            pendingDeployResolve?.('evidence_invalid');
+          }
+          const detail = error instanceof Error ? error.message : String(error);
+          const code =
+            typeof error === 'object' && error !== null && 'code' in error
+              ? String(error.code)
+              : 'evidence_auth_failed';
+          const why =
+            typeof error === 'object' && error !== null && 'reason' in error &&
+            (error.reason === 'evidence_auth_unavailable' || error.reason === 'evidence_auth_mismatch')
+              ? error.reason
+              : 'evidence_auth_mismatch';
+          log.append({ runId: RUN_ID, taskId, type: 'ESCALATED', payload: { why, boundary, code, detail } });
+        },
         onKill: () => {
           audit({ event: 'kill' });
           // REQ-3.6: a pending approval wait ends via the same kill path as a mid-loop
@@ -750,9 +1060,15 @@ export async function runSupervisedLoop(opts: {
      */
     const executeTask = async (
       taskId: string,
-      graphTask?: TaskGraphTask,
+      graphTask: TaskGraphTask | undefined,
+      taskLease: TaskLeaseSession,
     ): Promise<{ finalState: string; iterations: number; reachedReviewing: boolean }> => {
       activeTask = taskId;
+      activeTaskLease = taskLease;
+      if (!taskLease.verifyOwnership()) {
+        log.append({ runId: RUN_ID, taskId, type: 'ESCALATED', payload: { why: 'lease_lost', boundary: 'task_start' } });
+        return { finalState: 'ESCALATED', iterations: 0, reachedReviewing: false };
+      }
       const taskBranch = `task/${taskId}`;
       // Deferred quarantine (REQ-9.5): a flaky_quarantine approved via the CLI while no
       // run was live takes effect when the next run LOADS that task — never runs it.
@@ -766,6 +1082,10 @@ export async function runSupervisedLoop(opts: {
       // Merge topology (REQ-7.1): each task runs on its own `task/<taskId>` branch,
       // created from the fixture main BEFORE the loop so the executor's snapshot commits
       // land on it; auto-merge merges it into main with --no-ff (one revert target).
+      if (!taskLease.verifyOwnership()) {
+        log.append({ runId: RUN_ID, taskId, type: 'ESCALATED', payload: { why: 'lease_lost', boundary: 'branch_create', fencingToken: taskLease.claim.fencingToken } });
+        return { finalState: 'ESCALATED', iterations: 0, reachedReviewing: false };
+      }
       git(fx.wt, 'checkout', '-q', '-b', taskBranch);
       // REQ-4.12: a fresh tracker per task — task N's spend never depletes task N+1's.
       // Single-task calls this exactly once, where the run used to.
@@ -794,6 +1114,7 @@ export async function runSupervisedLoop(opts: {
         evidence,
         log,
         ids,
+        fence: () => taskLease.claim,
         outputSchema: { type: 'object', required: ['claim', 'actionRequests'], properties: { claim: { type: 'string', enum: ['WORKING', 'READY_FOR_VERIFICATION', 'BLOCKED'] }, actionRequests: { type: 'array' } } },
         maxRepairRounds: 2,
         budgetRemaining: () => budget.remaining(),
@@ -808,16 +1129,31 @@ export async function runSupervisedLoop(opts: {
       });
       // Hoisted (not inlined) so the deploy stage (REQ-6, post-COMPLETED) can run every
       // deploy command through this SAME executor instance.
+      // RED provenance is rehydrated from the core event log for this task and is
+      // threaded through the same policy object used by WRITE_FILE/APPLY_PATCH/
+      // RUN_COMMAND, so no production mutator can bypass frozen artifacts.
+      const redArtifacts = createRedArtifactStore({
+        evidence,
+        log,
+        reportIntegrity,
+        worktreeDir: fx.wt,
+        runId: RUN_ID,
+        taskId,
+      });
       const executor = createExecutor({
         worktreeDir: fx.wt,
         runId: RUN_ID,
         taskId,
         log,
         evidence,
-        policy: createDefaultPathPolicy(),
-        sandbox: denyNetworkSandbox(process.platform),
+        policy: createDefaultPathPolicy({ frozenRedArtifacts: redArtifacts }),
         clock,
+        ...(opts.offlineDependencyPolicy === undefined
+          ? {}
+          : { offlineDependencyPolicy: opts.offlineDependencyPolicy }),
         ...(opts.toolHandlers !== undefined ? { toolHandlers: opts.toolHandlers } : {}),
+        redArtifacts,
+        fence: () => taskLease.claim,
       });
       const result = await runTaskLoop({
         runId: RUN_ID,
@@ -825,7 +1161,18 @@ export async function runSupervisedLoop(opts: {
         role: 'implementer',
         source,
         executor,
-        gates: createGateRunner({ worktreeDir: fx.wt, configPath: fx.gateConfigPath, runId: RUN_ID, taskId, log, evidence, clock }),
+        gates: createGateRunner({
+          worktreeDir: fx.wt,
+          configPath: fx.gateConfigPath,
+          conventionPolicyPath: fx.conventionPolicyPath,
+          runId: RUN_ID,
+          taskId,
+          log,
+          evidence,
+          reportIntegrity,
+          clock,
+          fence: () => taskLease.claim,
+        }),
         log,
         budget,
         clock,
@@ -840,10 +1187,22 @@ export async function runSupervisedLoop(opts: {
         // folds guidance injected while paused into the next round as marked data.
         control: controller.port,
         takeGuidance: () => guidanceQueue.splice(0),
+        lease: taskLease,
+        releaseLease: false,
       });
       // Held-out (golden) verification passed iff the loop reached REVIEWING —
       // captured BEFORE auto-merge, which may carry the state on to COMPLETED.
       const reachedReviewing = result.finalState === 'REVIEWING';
+
+      // Every post-loop side effect is fenced independently. The lease heartbeat
+      // remains active while this composition waits for a human decision; a
+      // replacement owner can therefore stop this invocation before commit,
+      // merge, audit-gate, or deploy begins.
+      const requireTaskLease = (boundary: string): boolean => {
+        if (taskLease.verifyOwnership()) return true;
+        log.append({ runId: RUN_ID, taskId, type: 'ESCALATED', payload: { why: 'lease_lost', boundary, fencingToken: taskLease.claim.fencingToken } });
+        return false;
+      };
 
       // Post-REVIEWING auto-merge L0/L1 (REQ-7/8). The pure gate ignores the agent
       // claim by construction; risk comes from the frozen contract, gatesGreen from
@@ -851,10 +1210,14 @@ export async function runSupervisedLoop(opts: {
       // dep-touching → the human approval package below (REQ-2/3).
       let finalState: string = result.finalState;
       if (reachedReviewing && result.lastGateReport !== undefined) {
+        if (!requireTaskLease('post_loop')) {
+          return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
+        }
         // Commit the work (review #6): the executor snapshots BEFORE each write for
         // rollback, so the final write is still uncommitted in the worktree at
         // REVIEWING. Commit it onto task/<taskId> so auto-merge has a real branch tip
         // to merge (and `git checkout main` is not blocked by the dirty worktree).
+        if (!requireTaskLease('commit')) return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
         git(fx.wt, 'add', '-A');
         git(fx.wt, 'commit', '-q', '--allow-empty', '-m', `task ${taskId} work`);
         const acceptanceCriteria: MappedAc[] = taskAcs.map((a) => ({
@@ -862,7 +1225,10 @@ export async function runSupervisedLoop(opts: {
           ...(a.golden !== undefined ? { golden: a.golden } : {}),
         }));
         const gateReport = result.lastGateReport;
-        const merge = await runAutoMerge({
+        if (!requireTaskLease('auto_merge')) return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
+        let merge: Awaited<ReturnType<typeof runAutoMerge>>;
+        try {
+          merge = await runAutoMerge({
           runId: RUN_ID,
           taskId,
           state: 'REVIEWING',
@@ -877,18 +1243,39 @@ export async function runSupervisedLoop(opts: {
           },
           originalReport: gateReport,
           gateConfigRelPath: 'gate-ladder.json',
+          conventionPolicyRelPath: '.ai/policies/convention.json',
           auditSampleRate: opts.autoMerge?.auditSampleRate ?? 0,
           log,
           evidence,
-          clock,
-        });
+        reportIntegrity,
+        clock,
+        assertOwnership: (boundary) => {
+          if (!requireTaskLease(`merge:${boundary}`)) throw new Error('lease_lost');
+        },
+        fence: () => taskLease.claim,
+          });
+        } catch (error) {
+          if (error instanceof LeaseFenceError) {
+            return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
+          }
+          throw error;
+        }
+        let authorizedReport = merge.authorizedReport;
 
         if (merge.decision !== 'approval_package') {
           finalState = merge.finalState;
         } else {
+          if (authorizedReport === null) {
+            throw new Error('approval package cannot be built without an artifact-bound gate report');
+          }
           // REQ-2: build a real package for a human to decide instead of leaving the
           // run stuck at REVIEWING with nothing in the approvals Map (Phase-3 gap #1).
-          const diff = gitOut(fx.wt, 'diff', '--no-color', `main...${taskBranch}`);
+          const diff = gitOut(
+            fx.wt,
+            'diff',
+            '--no-color',
+            `${authorizedReport.baseCommitHash as string}...${authorizedReport.artifactCommitHash as string}`,
+          );
           const diffLineCount = countChangedLines(diff);
           const built = buildApprovalPackage({
             id: taskId,
@@ -902,8 +1289,8 @@ export async function runSupervisedLoop(opts: {
             // checks.max_diff_budget_per_task — resolved at freeze) replaces the
             // composition default for this mode only.
             maxDiffBudget: graphTask?.diffBudget ?? opts.approval?.maxDiffBudget ?? 400,
-            gateReports: [evidence.put(JSON.stringify(gateReport))],
-            worktreeHash: gateReport.worktreeHash,
+            gateReports: [evidence.put(JSON.stringify(authorizedReport))],
+            worktreeHash: authorizedReport.worktreeHash,
             assumptions: [],
             unresolvedRisks: [],
             riskClass: merge.effectiveRisk,
@@ -924,6 +1311,7 @@ export async function runSupervisedLoop(opts: {
             escalateTask('split_required', { detail: built.detail });
             finalState = 'ESCALATED';
           } else {
+            if (!requireTaskLease('approval_package')) return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
             approvals.set(built.package.id, built.package);
             log.append({ runId: RUN_ID, taskId, type: 'APPROVAL_PACKAGE_CREATED', payload: { approvalId: built.package.id } });
             audit({ event: 'approval_package_created', taskId, approvalId: built.package.id });
@@ -936,10 +1324,14 @@ export async function runSupervisedLoop(opts: {
             // human decision passes approval.timeoutMs explicitly (the live CLI does).
             const timeoutMs = opts.approval?.timeoutMs;
             const outcome = timeoutMs === undefined ? 'reviewing' : await waitForApprovalDecision(timeoutMs);
+            if (!requireTaskLease('approval_decision')) return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
             if (outcome === 'reviewing') {
               finalState = 'REVIEWING';
             } else if (outcome === 'approve') {
-              const approvedMerge = await runApprovedMerge({
+              if (!requireTaskLease('approved_merge')) return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
+              let approvedMerge: Awaited<ReturnType<typeof runApprovedMerge>>;
+              try {
+                approvedMerge = await runApprovedMerge({
                 runId: RUN_ID,
                 taskId,
                 state: currentState(taskId),
@@ -947,13 +1339,26 @@ export async function runSupervisedLoop(opts: {
                 repoDir: fx.wt,
                 taskBranch,
                 mainBranch: 'main',
-                originalReport: gateReport,
+                originalReport: authorizedReport,
                 gateConfigRelPath: 'gate-ladder.json',
+                conventionPolicyRelPath: '.ai/policies/convention.json',
                 auditSampleRate: opts.autoMerge?.auditSampleRate ?? 0,
                 log,
                 evidence,
+                reportIntegrity,
                 clock,
-              });
+                assertOwnership: (boundary) => {
+                  if (!requireTaskLease(`merge:${boundary}`)) throw new Error('lease_lost');
+                },
+                fence: () => taskLease.claim,
+                });
+              } catch (error) {
+                if (error instanceof LeaseFenceError) {
+                  return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
+                }
+                throw error;
+              }
+              authorizedReport = approvedMerge.authorizedReport;
               finalState = approvedMerge.finalState;
             } else if (outcome === 'reject') {
               // REQ-3.3: terminal for this run — no silent retry.
@@ -961,6 +1366,9 @@ export async function runSupervisedLoop(opts: {
             } else if (outcome === 'timeout') {
               approvals.delete(built.package.id);
               escalateTask('approval_timeout', { approvalId: built.package.id });
+              finalState = 'ESCALATED';
+            } else if (outcome === 'evidence_invalid') {
+              approvals.delete(built.package.id);
               finalState = 'ESCALATED';
             } else {
               // REQ-3.6: kill while pending — the same terminal state a mid-loop kill
@@ -978,15 +1386,28 @@ export async function runSupervisedLoop(opts: {
         // finding #1). Deploy has its own state machine and never changes finalState:
         // the task stays COMPLETED whatever the deploy outcome.
         if (finalState === 'COMPLETED' && opts.contract.deploy !== undefined) {
+          if (authorizedReport === null || typeof authorizedReport.mergedCommitHash !== 'string') {
+            throw new Error('deploy package cannot be built without a merge-bound gate report');
+          }
           const deployConfig = opts.contract.deploy;
+          const deployDiff = gitOut(
+            fx.wt,
+            'diff',
+            '--no-color',
+            `${authorizedReport.mergedCommitHash}^1`,
+            authorizedReport.mergedCommitHash,
+          );
           currentDeployApproval = {
             id: `deploy-${taskId}`,
             taskId,
             runId: RUN_ID,
             goalExcerpt: opts.contract.goal.objective,
             acIds: opts.contract.acceptanceCriteria.map((a) => a.id),
-            diffRef: gitOut(fx.wt, 'rev-parse', 'main').trim(),
-            evidence: { gateReports: [evidence.put(JSON.stringify(gateReport))], worktreeHash: gateReport.worktreeHash },
+            diffRef: evidence.put(deployDiff),
+            evidence: {
+              gateReports: [evidence.put(JSON.stringify(authorizedReport))],
+              worktreeHash: authorizedReport.worktreeHash,
+            },
             assumptions: ['network: none (simulation)'],
             unresolvedRisks: [],
             // Architect finding #7: L4 is the only risk class attesting recoverability/
@@ -1007,15 +1428,21 @@ export async function runSupervisedLoop(opts: {
           // The task stays COMPLETED regardless; deploy never changes finalState.
           const deployTimeoutMs = opts.approval?.timeoutMs;
           const deployDecision = deployTimeoutMs === undefined ? 'skip' : await waitForDeployDecision(deployTimeoutMs);
+          if (!requireTaskLease('deploy_decision')) return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
           if (deployDecision === 'timeout' || deployDecision === 'killed') {
             // No HTTP call happened, so (unlike approve/reject, recorded by api.ts) the
             // timeout/kill event + audit is composition's own job (mirrors escalateTask above).
             log.append({ runId: RUN_ID, taskId, type: 'DEPLOY_DECISION', payload: { approvalId: currentDeployApproval.id, decision: deployDecision } });
             audit({ event: 'deploy_decision', taskId, decision: deployDecision });
           }
+          const approvedDeployPackage = currentDeployApproval;
           currentDeployApproval = null;
 
           if (deployDecision === 'approve') {
+            if (!requireTaskLease('deploy')) return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
+            if (approvedDeployPackage === null) {
+              throw new Error('approved deploy package disappeared before stage verification');
+            }
             // No production wait exists anywhere in core yet (task 2 finding) — real here,
             // tests just configure small interval_ms/expandedWindowMs.
             // .unref() the wait timer so a kill during the EXPANDED window (which wins
@@ -1024,8 +1451,28 @@ export async function runSupervisedLoop(opts: {
             // review). The Human Plane server keeps the loop alive while the stage runs,
             // so an unref'd inter-probe wait still fires normally.
             const deployClock: DeployClock = { now: () => clock.now(), wait: (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref(); }) };
-            deployDeps = { runId: RUN_ID, taskId, config: deployConfig, executor, log, evidence, clock: deployClock };
-            const deployOutcome = await runDeployStage(deployDeps);
+            deployDeps = {
+              runId: RUN_ID,
+              taskId,
+              config: deployConfig,
+              executor,
+              log,
+              evidence,
+              clock: deployClock,
+              verifyApprovalEvidence: () => verifyApprovalEvidence(approvedDeployPackage, 'deploy_approval'),
+              assertOwnership: (boundary) => {
+                if (!requireTaskLease(`deploy:${boundary}`)) throw new LeaseFenceError('lease_lost');
+              },
+            };
+            let deployOutcome: Awaited<ReturnType<typeof runDeployStage>>;
+            try {
+              deployOutcome = await runDeployStage(deployDeps);
+            } catch (error) {
+              if (error instanceof LeaseFenceError) {
+                return { finalState: 'ESCALATED', iterations: result.iterations, reachedReviewing: false };
+              }
+              throw error;
+            }
             if (deployOutcome.finalState === 'EXPANDED') {
               const expandedWindowMs = opts.deploy?.expandedWindowMs ?? 10 * 60_000;
               // REQ-3.5/3.6: kill must also end this wait, not just the elapsed timer
@@ -1055,14 +1502,7 @@ export async function runSupervisedLoop(opts: {
       frozen: TaskGraph,
       frozenAt: number,
     ): Promise<{ finalState: string; iterations: number; calibration: CalibrationResult; tasks: NonNullable<LoopRunResult['tasks']> }> => {
-      const ttlMs = opts.leaseTtlMs ?? opts.contract.budget.maxWallclockMs + 5 * 60_000;
-      // Lease owner is unique per INVOCATION, not the run id (Codex P1, PR #124): the
-      // CAS in lease.ts lets a claimer take over a lease it already owns, so two runs
-      // sharing a persistDir under the same owner would each read the other's live
-      // lease as its own and work the same task concurrently. The run id stays the
-      // event-log identity; only ownership is per-invocation.
-      const leaseOwner = `${RUN_ID}#${randomUUID()}`;
-      const lease = createLeaseManager(join(stateDir, 'events.db'), clock, RUN_ID);
+      const ttlMs = leaseTtlMs;
       // Closed = never selectable again this run: a lease held by someone else (D4)
       // and, defensively, any task already executed — a task that somehow recorded no
       // TASK_STATE would otherwise be re-selected forever.
@@ -1086,28 +1526,39 @@ export async function runSupervisedLoop(opts: {
           }
           const task = selectNextTask(frozen, projection);
           if (task === null) break;
-          if (!lease.claim(task.id, leaseOwner, ttlMs)) {
+          const taskLease = acquireTaskLease(lease, task.id, leaseOwner, ttlMs);
+          if (taskLease === null) {
             closed.add(task.id);
             continue;
           }
-          // Branch hygiene (D1): return the worktree to main and drop everything the
-          // previous task left behind, so `git diff main...task/<id>` — and therefore the
-          // diff budget and the approval package — covers THIS task only. executeTask
-          // cuts the `task/<id>` branch itself, which completes the sequence.
-          git(fx.wt, 'checkout', '-q', 'main');
-          git(fx.wt, 'reset', '-q', '--hard', 'main');
-          git(fx.wt, 'clean', '-qfd');
+          if (!taskLease.verifyOwnership()) {
+            closed.add(task.id);
+            taskLease.release();
+            continue;
+          }
           try {
-            const outcome = await executeTask(task.id, task);
+            // Branch hygiene (D1): return the worktree to main and drop everything the
+            // previous task left behind, so `git diff main...task/<id>` — and therefore the
+            // diff budget and the approval package — covers THIS task only. executeTask
+            // cuts the `task/<id>` branch itself, which completes the sequence.
+            if (!taskLease.verifyOwnership()) {
+              closed.add(task.id);
+              continue;
+            }
+            git(fx.wt, 'checkout', '-q', 'main');
+            git(fx.wt, 'reset', '-q', '--hard', 'main');
+            git(fx.wt, 'clean', '-qfd');
+            const outcome = await executeTask(task.id, task, taskLease);
             outcomes.set(task.id, { finalState: outcome.finalState, iterations: outcome.iterations });
             heldOut.push(outcome.reachedReviewing);
           } finally {
             closed.add(task.id);
-            lease.release(task.id, leaseOwner);
+            taskLease.release();
           }
         }
       } finally {
-        lease.close();
+        // The invocation-scoped lease manager is closed by the outer run finally;
+        // keep it open here so post-graph bookkeeping cannot double-close SQLite.
       }
       // REQ-4.4/4.11: a task whose dependency ended outside the dep-satisfied set was
       // never selectable and is labeled SKIPPED — transitively, since its own
@@ -1144,7 +1595,11 @@ export async function runSupervisedLoop(opts: {
         iterations: tasks.reduce((sum, t) => sum + t.iterations, 0),
         // Held-out (golden) verification per EXECUTED task — never-run tasks are not
         // evidence either way, so they contribute no sample (D9).
-        calibration: computeCalibration({ heldOut, reruns: heldOut.filter(Boolean).map(() => true) }),
+        calibration: calibrationFor(
+          heldOut,
+          heldOut.filter(Boolean).map(() => true),
+          frozen.tasks.flatMap((task) => opts.contract.acceptanceCriteria.filter((ac) => task.satisfies.includes(ac.id))),
+        ),
         tasks,
       };
     };
@@ -1157,15 +1612,31 @@ export async function runSupervisedLoop(opts: {
         tasks?: NonNullable<LoopRunResult['tasks']>;
       };
       if (graph === null) {
-        const single = await executeTask(TASK_ID);
-        outcome = {
-          finalState: single.finalState,
-          iterations: single.iterations,
-          calibration: computeCalibration({
-            heldOut: [single.reachedReviewing],
-            reruns: single.reachedReviewing ? [true] : [],
-          }),
-        };
+        const taskLease = acquireTaskLease(lease, TASK_ID, leaseOwner, leaseTtlMs);
+        if (taskLease === null) {
+          log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'ESCALATED', payload: { why: 'lease_held', boundary: 'claim' } });
+          outcome = {
+            finalState: 'BLOCKED',
+            iterations: 0,
+            calibration: calibrationFor([], []),
+          };
+        } else {
+          try {
+            const single = await executeTask(TASK_ID, undefined, taskLease);
+            outcome = {
+              finalState: single.finalState,
+              iterations: single.iterations,
+              calibration: calibrationFor(
+                [single.reachedReviewing],
+                single.reachedReviewing ? [true] : [],
+              ),
+            };
+          } finally {
+            // Covers composition exceptions after the core loop (approval, merge,
+            // deploy) as well as the ordinary terminal path.
+            taskLease.release();
+          }
+        }
       } else {
         outcome = await runTaskGraph(graph, frozenSeq);
       }
@@ -1194,6 +1665,7 @@ export async function runSupervisedLoop(opts: {
         finalState: outcome.finalState,
         iterations: outcome.iterations,
         calibration: outcome.calibration,
+        ...goldenResult,
         ...calibrationExtras(log, shadowProof),
         // Additive and multi-task only — the single-task result keeps its exact shape
         // and key order (REQ-4.3/4.11).
@@ -1203,6 +1675,7 @@ export async function runSupervisedLoop(opts: {
       await server.close();
     }
   } finally {
+    lease.close();
     log.close();
     // AZ-4/REQ-15.9: F-Loop defines "ended" as discovery-file-absent-or-tombstoned
     // (REQ-15.6) — never a stale {url,token} that LOOKS live after the server that

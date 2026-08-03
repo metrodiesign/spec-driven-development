@@ -24,6 +24,10 @@ import { runSupervisedLoop } from './loop-run.ts';
 
 const clock = { now: () => 1_000_000 };
 
+// Explicit test-only synthetic golden seam; operational callers pass operator bytes.
+const runSyntheticLoop = (opts: Parameters<typeof runSupervisedLoop>[0]) =>
+  runSupervisedLoop({ ...opts, syntheticGoldenFixtureForTests: true });
+
 /** A contract whose ACs a graph can split one per task; all golden, risk L2. */
 function contractOf(acIds: string[]): TaskContract {
   return {
@@ -116,7 +120,7 @@ async function expectRejected(contract: TaskContract, graph: unknown): Promise<s
   const persistDir = mkdtempSync(join(tmpdir(), 'graph-fi-reject-'));
   let adapterBuilt = false;
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract,
       adapterFactory: (put) => {
         adapterBuilt = true;
@@ -189,7 +193,7 @@ test('TG#2b: an orphan task blocks the run at the planning gate, before any disp
 test('TG#3: with A <- B, B is never dispatched before A reaches PASSED — asserted from the log (REQ-6.3)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'graph-fi-order-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: contractOf(['AC-1', 'AC-2']),
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -240,7 +244,7 @@ test('TG#3: with A <- B, B is never dispatched before A reaches PASSED — asser
 test('TG#4: a task lying READY_FOR_VERIFICATION never reaches PASSED and its dependents are skipped (REQ-6.4)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'graph-fi-fakegreen-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: contractOf(['AC-1', 'AC-2', 'AC-3']),
       // Task 2 of the chain claims READY_FOR_VERIFICATION every round while writing
       // the pre-fix marker, and diagnoses with causes that never confirm — DoD#1's
@@ -298,7 +302,7 @@ test('TG#4: a task lying READY_FOR_VERIFICATION never reaches PASSED and its dep
 test('branch isolation: a task\'s approval diff carries its own work only, never the previous task\'s (design D1)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'graph-fi-branch-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: contractOf(['AC-1', 'AC-2']),
       // Each task writes the marker the gate greps for PLUS a file only it touches,
       // so a leaked branch would be visible in the next task's diff. Same-file writes

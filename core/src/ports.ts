@@ -34,10 +34,12 @@ export interface Proposal {
    * A DIAGNOSING round returns testable hypotheses here instead of actions
    * (REQ-5.1); core validates and runs the probes itself. Absent for every other
    * role, so existing sources are unaffected (append-only — INV-8/10).
-   */
+  */
   hypotheses?: Hypothesis[];
   /** Cost units the source reports for this round (stub-declared in this phase). */
   costUnits?: number;
+  /** Source-side validation failure that core must escalate before any action/gate. */
+  error?: { reason: 'invalid_response'; detail?: string };
 }
 
 export interface ProposalSource {

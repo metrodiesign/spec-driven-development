@@ -146,6 +146,9 @@ function fakeLog(): EventLog & { appended: PlatformEvent[] } {
       appended.push(event);
       return event;
     },
+    appendFenced(e) {
+      return this.append(e);
+    },
     all(filter) {
       return appended.filter(
         (e) =>
@@ -268,6 +271,7 @@ test('a persistently-failing log never blocks the round — safeAppend swallows 
   // already decided, so eligibleAdapters must still return, not double-throw out.
   const throwingLog: EventLog = {
     append() { throw new Error('disk full'); },
+    appendFenced() { throw new Error('disk full'); },
     all: () => [],
     exportJsonl: () => '',
     projection: () => ({ tasks: {}, eventCount: 0 }),

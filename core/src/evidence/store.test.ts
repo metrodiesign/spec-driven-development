@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -34,6 +34,42 @@ test('tampered blob fails verification on get (REQ-4.3)', () => {
     const hash = ref.slice('blob://'.length);
     writeFileSync(join(t.dir, hash), 'tampered\n');
     assert.throws(() => store.get(ref), /hash mismatch/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('REQ-4.7/4.8: put refuses a corrupt blob already published at the content address', () => {
+  const t = tempDir();
+  try {
+    const store = createEvidenceStore(t.dir);
+    const ref = store.put('original\n');
+    const hash = ref.slice('blob://'.length);
+    writeFileSync(join(t.dir, hash), 'forged existing bytes\n');
+
+    assert.throws(
+      () => store.put('original\n'),
+      /existing evidence|hash mismatch/,
+      'deduplication must verify existing bytes instead of trusting path existence',
+    );
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('REQ-4.7/4.8: publication and reads reject a symlink at a content address', () => {
+  const t = tempDir();
+  try {
+    const store = createEvidenceStore(t.dir);
+    const ref = store.put('original\n');
+    const path = join(t.dir, ref.slice('blob://'.length));
+    const outside = join(t.dir, 'outside');
+    writeFileSync(outside, 'original\n');
+    unlinkSync(path);
+    symlinkSync(outside, path);
+
+    assert.throws(() => store.put('original\n'), /regular file|existing evidence/);
+    assert.throws(() => store.get(ref), /regular file|hash mismatch/);
   } finally {
     t.cleanup();
   }

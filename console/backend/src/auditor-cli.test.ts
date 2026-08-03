@@ -9,7 +9,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { createEvidenceStore, createGateRunner, openEventLog, type EventLog, type EvidenceStore } from 'core';
+import {
+  createEvidenceStore,
+  createGateRunner,
+  createReportIntegrity,
+  openEvidenceAuthenticator,
+  openEventLog,
+  type EventLog,
+  type EvidenceStore,
+} from 'core';
 
 import { runAuditorCommand } from './auditor-cli.ts';
 
@@ -56,6 +64,15 @@ function fixture(): Fixture {
 
 async function seedCompletedTask(f: Fixture, taskId: string): Promise<void> {
   const mergeCommit = git(f.repoDir, 'rev-parse', 'main').trim();
+  const reportIntegrity = createReportIntegrity({
+    evidence: f.evidence,
+    authenticator: openEvidenceAuthenticator({
+      runStateDir: f.root,
+      runId: 'RUN-1',
+      recovering: false,
+      worktreeDirs: [f.repoDir],
+    }),
+  });
   const gates = createGateRunner({
     worktreeDir: f.repoDir,
     configPath: join(f.repoDir, 'gate-ladder.json'),
@@ -63,6 +80,7 @@ async function seedCompletedTask(f: Fixture, taskId: string): Promise<void> {
     taskId,
     log: f.log,
     evidence: f.evidence,
+    reportIntegrity,
     clock,
   });
   await gates.run('T1');
@@ -79,7 +97,6 @@ test('unknown subcommand -> usage error', async () => {
       repoDir: f.repoDir,
       gateConfigRelPath: 'gate-ladder.json',
       defaultRate: 100,
-      evidenceDir: f.evidenceDir,
       now,
     });
     assert.notEqual(r.code, 0);
@@ -99,7 +116,6 @@ test('run with no eligible targets -> exit 0, says so', async () => {
       repoDir: f.repoDir,
       gateConfigRelPath: 'gate-ladder.json',
       defaultRate: 100,
-      evidenceDir: f.evidenceDir,
       now,
     });
     assert.equal(r.code, 0);
@@ -120,12 +136,62 @@ test('run finds an eligible COMPLETED task at the default rate and reports it re
       repoDir: f.repoDir,
       gateConfigRelPath: 'gate-ladder.json',
       defaultRate: 100,
-      evidenceDir: f.evidenceDir,
       now,
     });
     assert.equal(r.code, 0);
     assert.match(r.out, /T-1/);
     assert.match(r.out, /reproduced/);
+  } finally {
+    f.log.close();
+    f.cleanup();
+  }
+});
+
+test('P0-04 H3: auditor derives the single run-scoped evidence store from the selected db', async () => {
+  const f = fixture();
+  try {
+    await seedCompletedTask(f, 'T-1');
+    const r = await runAuditorCommand({
+      argv: ['run'],
+      dbPath: f.dbPath,
+      repoDir: f.repoDir,
+      gateConfigRelPath: 'gate-ladder.json',
+      defaultRate: 100,
+      now,
+    });
+
+    assert.equal(r.code, 0);
+    assert.match(r.out, /T-1/);
+    assert.match(r.out, /reproduced/);
+    assert.equal(f.log.all({ type: 'ESCALATED' }).length, 0);
+  } finally {
+    f.log.close();
+    f.cleanup();
+  }
+});
+
+test('P0-04 H4: a COMPLETED target missing its T1 report escalates and exits non-zero', async () => {
+  const f = fixture();
+  try {
+    const mergeCommit = git(f.repoDir, 'rev-parse', 'main').trim();
+    f.log.append({ runId: 'RUN-1', taskId: 'T-missing', type: 'AUDIT_RESULT', payload: { sampled: false, mergeCommit } });
+    f.log.append({ runId: 'RUN-1', taskId: 'T-missing', type: 'TASK_STATE', payload: { state: 'COMPLETED' } });
+
+    const r = await runAuditorCommand({
+      argv: ['run'],
+      dbPath: f.dbPath,
+      repoDir: f.repoDir,
+      gateConfigRelPath: 'gate-ladder.json',
+      defaultRate: 100,
+      now,
+    });
+
+    assert.equal(r.code, 2);
+    assert.match(r.err, /gate_report_missing/);
+    const escalation = f.log.all({ type: 'ESCALATED' }).at(-1);
+    assert.equal(escalation?.payload['boundary'], 'oob_audit');
+    assert.equal(escalation?.payload['code'], 'gate_report_missing');
+    assert.equal(f.log.all({ type: 'OOB_AUDIT_RESULT' }).length, 0, 'auditor remains detection-only');
   } finally {
     f.log.close();
     f.cleanup();
@@ -142,7 +208,6 @@ test('--rate overrides the default: rate=0 finds nothing even with an eligible t
       repoDir: f.repoDir,
       gateConfigRelPath: 'gate-ladder.json',
       defaultRate: 100,
-      evidenceDir: f.evidenceDir,
       now,
     });
     assert.equal(r.code, 0);
@@ -164,7 +229,6 @@ test('--db/--repo override the defaults', async () => {
       repoDir: wrong.repoDir,
       gateConfigRelPath: 'gate-ladder.json',
       defaultRate: 100,
-      evidenceDir: f.evidenceDir,
       now,
     });
     assert.equal(r.code, 0);
@@ -186,7 +250,6 @@ test('invalid --rate -> validation error, never runs', async () => {
       repoDir: f.repoDir,
       gateConfigRelPath: 'gate-ladder.json',
       defaultRate: 100,
-      evidenceDir: f.evidenceDir,
       now,
     });
     assert.notEqual(r.code, 0);
@@ -204,17 +267,31 @@ test('a genuine non_repro exits non-zero (signal for automation/cron)', async ()
     git(f.repoDir, 'add', '-A');
     git(f.repoDir, 'commit', '-q', '-m', 'flip to a failing check');
     const mergeCommit = git(f.repoDir, 'rev-parse', 'main').trim();
-    const fabricated = {
+    const reportIntegrity = createReportIntegrity({
+      evidence: f.evidence,
+      authenticator: openEvidenceAuthenticator({
+        runStateDir: f.root,
+        runId: 'RUN-1',
+        recovering: false,
+        worktreeDirs: [f.repoDir],
+      }),
+    });
+    const fabricated = reportIntegrity.signGateReport({
       tier: 'T1',
       pass: true,
       gateConfigHash: 'x',
-      commitHash: 'x',
-      worktreeHash: 'x',
+      commitHash: mergeCommit,
+      worktreeHash: git(f.repoDir, 'rev-parse', `${mergeCommit}^{tree}`).trim(),
       envHash: 'x',
-      checks: [{ name: 'fullTests', pass: true, evidenceRef: 'blob://' + '0'.repeat(64) }],
+      checks: [{ name: 'fullTests', pass: true, evidenceRef: f.evidence.put('stale green output') }],
       scopeNote: 'x',
-    };
-    f.log.append({ runId: 'RUN-1', taskId: 'T-1', type: 'GATE_RESULT', payload: fabricated });
+    }, { runId: 'RUN-1', taskId: 'T-1' });
+    f.log.append({
+      runId: 'RUN-1',
+      taskId: 'T-1',
+      type: 'GATE_RESULT',
+      payload: { ...fabricated } as unknown as Record<string, unknown>,
+    });
     f.log.append({ runId: 'RUN-1', taskId: 'T-1', type: 'AUDIT_RESULT', payload: { sampled: false, mergeCommit } });
     f.log.append({ runId: 'RUN-1', taskId: 'T-1', type: 'TASK_STATE', payload: { state: 'COMPLETED' } });
 
@@ -224,7 +301,6 @@ test('a genuine non_repro exits non-zero (signal for automation/cron)', async ()
       repoDir: f.repoDir,
       gateConfigRelPath: 'gate-ladder.json',
       defaultRate: 100,
-      evidenceDir: f.evidenceDir,
       now,
     });
     assert.equal(r.code, 2);

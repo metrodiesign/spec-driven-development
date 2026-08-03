@@ -19,6 +19,7 @@ import type { AdapterInterface, AgentRequest } from '../protocol.ts';
 import type { RegisteredAdapter } from '../registry.ts';
 import type { Router } from '../router.ts';
 import type { createDispatcher, DispatchItem } from '../dispatch.ts';
+import { addCostUnits, validateCostUnits } from 'core';
 import type { Action, ContextBundle, EventLog, EvidenceStore, GateReport } from 'core';
 
 /** Core-produced gate evidence per candidate (REQ-9.2) — the port that keeps core the sole measurer. */
@@ -44,7 +45,8 @@ export type FusionEscalateReason =
   | 'depth_exceeded'
   | 'no_gate_survivor'
   | 'judge_invalid'
-  | 'panel_degraded';
+  | 'panel_degraded'
+  | 'invalid_response';
 
 export interface FusionOutcome {
   winner: { structuredResult: unknown; actions: Action[] } | null;
@@ -85,6 +87,14 @@ function escalate(
     type: 'FUSION_RESOLVED',
     payload: { artifact: profile.artifact, resolved: profile.resolve, winner: false, escalateReason: reason },
   });
+  if (reason === 'invalid_response') {
+    deps.log.append({
+      runId: deps.runId,
+      taskId: deps.taskId,
+      type: 'ESCALATED',
+      payload: { why: 'invalid_response' },
+    });
+  }
   return { winner: null, deliberationRef, dissentRefs: [], usage: { costUnits: usage }, resolved: profile.resolve, escalateReason: reason, panelSize };
 }
 
@@ -156,6 +166,8 @@ function buildJudgeRequest(deps: FusionDeps, base: AgentRequest, candidates: Pan
 }
 
 export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: AgentRequest): Promise<FusionOutcome> {
+  const baseBudget = validateCostUnits(base.budget.costUnits);
+  if (!baseBudget.ok) return escalate(deps, profile, 'invalid_response', 0);
   const estimate = profile.estimateCostUnitsPerCandidate;
 
   // REQ-10.7 pre-panel budget cap: N x per-candidate estimate must fit the profile
@@ -188,11 +200,22 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
 
   const candidates: PanelCandidate[] = [];
   let usage = 0;
-  results.forEach((r, i) => {
+  for (let i = 0; i < results.length; i += 1) {
+    const r = results[i] as (typeof results)[number];
     const slot = slots[i] as PanelSlot;
     if (r.outcome.ok) {
       const resp = r.outcome.response;
-      usage += resp.usage.costUnits;
+      const nextUsage = addCostUnits(usage, resp?.usage?.costUnits);
+      if (!nextUsage.ok) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'FUSION_CANDIDATE',
+          payload: { requestId: slot.request.requestId, ok: false, errorKind: 'invalid_response', detail: nextUsage.detail },
+        });
+        return escalate(deps, profile, 'invalid_response', usage, slots.length);
+      }
+      usage = nextUsage.value;
       candidates.push({
         index: candidates.length,
         requestId: slot.request.requestId,
@@ -209,6 +232,9 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
         payload: { index: candidates.length - 1, requestId: slot.request.requestId, adapterId: resp.adapterMeta.adapterId, ok: true, costUnits: resp.usage.costUnits },
       });
     } else {
+      if (r.outcome.error.kind === 'invalid_response') {
+        return escalate(deps, profile, 'invalid_response', usage, slots.length);
+      }
       deps.log.append({
         runId: deps.runId,
         taskId: deps.taskId,
@@ -216,7 +242,7 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
         payload: { requestId: slot.request.requestId, ok: false, errorKind: r.outcome.error.kind },
       });
     }
-  });
+  }
 
   // REQ-9.8: fewer than two surviving candidates after AdapterErrors -> escalate,
   // never resolve a one-candidate "panel".
@@ -244,13 +270,18 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
       const judgeAdapter = deps.router.route('reviewer');
       const judgeReq = buildJudgeRequest(deps, base, candidates);
       const outcome = await proposeWithRepair(judgeAdapter, judgeReq, 1); // one bounded repair round (REQ-9.4)
-      usage += outcome.totalUsage.costUnits;
+      const nextUsage = addCostUnits(usage, outcome.totalUsage.costUnits);
+      if (!nextUsage.ok) return escalate(deps, profile, 'invalid_response', usage, slots.length);
+      usage = nextUsage.value;
       if (outcome.valid) {
         judgeValid = true;
         judgeAnalysisRef = deps.evidence.put(JSON.stringify(asDeliberation(outcome.response.structuredResult)));
       }
     } catch (err) {
       // No reviewer adapter (NoCapacityError) or a transport failure -> judge unavailable.
+      if (err instanceof AdapterError && err.kind === 'invalid_response') {
+        return escalate(deps, profile, 'invalid_response', usage, slots.length);
+      }
       if (!(err instanceof NoCapacityError) && !(err instanceof AdapterError)) throw err;
     }
   }

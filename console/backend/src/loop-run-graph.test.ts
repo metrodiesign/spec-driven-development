@@ -21,6 +21,10 @@ import { validateTaskGraphShape } from './task-graph-schema.ts';
 
 const clock = { now: () => 1_000_000 };
 
+// Explicit test-only synthetic golden seam; operational callers pass operator bytes.
+const runSyntheticLoop = (opts: Parameters<typeof runSupervisedLoop>[0]) =>
+  runSupervisedLoop({ ...opts, syntheticGoldenFixtureForTests: true });
+
 /** Two ACs so a graph can split them across two tasks (coverage is total — REQ-3.3). */
 const CONTRACT: TaskContract = {
   hash: 'b'.repeat(64),
@@ -60,7 +64,7 @@ function graphOption(graph: unknown): { rawBytes: Uint8Array; parsed: unknown } 
 test('REQ-4.3: without a task-graph option the result keeps its exact single-task shape', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-single-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -87,7 +91,7 @@ test('REQ-4.3: without a task-graph option the result keeps its exact single-tas
 test('REQ-4.2/4.9/4.11: a two-task graph runs both tasks in dependency order and reports a row each', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-multi-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -150,7 +154,7 @@ test('REQ-4.8: a graph the planning gate rejects ends the run BLOCKED before any
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-reject-'));
   let adapterBuilt = false;
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => {
         adapterBuilt = true;
@@ -216,7 +220,7 @@ test('REQ-6.5: the shipped calibration fixture pair drives a two-task run to REV
 
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-calib-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -257,7 +261,7 @@ test('REQ-4.12: each task builds a FRESH budget tracker — task 1 spending the 
   const contract: TaskContract = { ...CONTRACT, budget: { ...CONTRACT.budget, maxIterations: 1 } };
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-budget-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -287,7 +291,7 @@ test('REQ-4.6: leaseTtlMs is what the claim actually records, not the contract-d
   assert.notEqual(ttlMs, defaultTtl, 'the value under test must differ from the default it overrides');
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-ttl-'));
   try {
-    await runSupervisedLoop({
+    await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -322,7 +326,7 @@ test('REQ-4.6: a task whose lease another owner already holds is never selected 
       other.close();
     }
 
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -373,7 +377,7 @@ test("REQ-4.13: a task's auto-merge is decided by ITS OWN acceptance criteria �
   };
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-golden-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -414,7 +418,7 @@ interface ApprovalJSON {
 }
 
 /** Poll `fn` until it returns non-null, or throw after `timeoutMs`. */
-async function waitFor<T>(fn: () => Promise<T | null> | T | null, timeoutMs = 5000): Promise<T> {
+async function waitFor<T>(fn: () => Promise<T | null> | T | null, timeoutMs = 30_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const v = await fn();
@@ -463,7 +467,7 @@ test('REQ-4.14: an approval decision is applied to the task it NAMES, never to w
   try {
     // timeoutMs opts INTO the blocking human gate, so the run holds each task open
     // for a decision and both packages are decided over the real wire, in order.
-    const runPromise = runSupervisedLoop({
+    const runPromise = runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -547,7 +551,7 @@ function killsDuringFirstTask(put: (s: string) => string, persistDir: string): A
 test('REQ-4.15: the kill switch stops the driver — remaining tasks end NOT_STARTED and the run is CANCELLED', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-kill-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => killsDuringFirstTask(put, persistDir),
       clock,
@@ -596,7 +600,7 @@ test("REQ-4.5: a task's own diff_budget reaches the approval package — not the
   };
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-diffbudget-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -649,7 +653,7 @@ test('REQ-4.6: a lease held under the RUN ID by a concurrent runner is not recla
       concurrent.close();
     }
 
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,

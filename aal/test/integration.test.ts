@@ -25,13 +25,22 @@ import {
   createEvidenceStore,
   createExecutor,
   createGateRunner,
-  denyNetworkSandbox,
+  createReportIntegrity,
   handleHumanRequest,
   openEventLog,
+  openEvidenceAuthenticator,
   runTaskLoop,
   transition,
 } from 'core';
 import type { ApprovalPackage, BudgetLimits, HandlerDeps, TaskContractExcerpt, TaskState } from 'core';
+
+const PASSTHROUGH_TEST_SANDBOX = {
+  kind: 'available' as const,
+  wrap: ({ shellCmd }: { shellCmd: string }) => ({
+    cmd: '/bin/sh',
+    args: ['-c', shellCmd],
+  }),
+};
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -99,6 +108,15 @@ function runWith(adapterFactory: (evidence: ReturnType<typeof createEvidenceStor
   const clock = { now: () => 1_000_000 };
   const log = openEventLog(join(f.root, 'events.db'), clock);
   const evidence = createEvidenceStore(join(f.root, 'evidence'));
+  const reportIntegrity = createReportIntegrity({
+    evidence,
+    authenticator: openEvidenceAuthenticator({
+      runStateDir: f.root,
+      runId: 'RUN-1',
+      recovering: false,
+      worktreeDirs: [f.wt],
+    }),
+  });
   const adapter = adapterFactory(evidence);
   const executor = createExecutor({
     worktreeDir: f.wt,
@@ -107,7 +125,7 @@ function runWith(adapterFactory: (evidence: ReturnType<typeof createEvidenceStor
     log,
     evidence,
     policy: createDefaultPathPolicy(),
-    sandbox: denyNetworkSandbox(process.platform),
+    sandbox: PASSTHROUGH_TEST_SANDBOX,
     clock,
   });
   const gates = createGateRunner({
@@ -117,7 +135,9 @@ function runWith(adapterFactory: (evidence: ReturnType<typeof createEvidenceStor
     taskId: 'T-1',
     log,
     evidence,
+    reportIntegrity,
     clock,
+    sandbox: PASSTHROUGH_TEST_SANDBOX,
   });
   const breaker = createBreaker(DEFAULT_BREAKER_OPTIONS, () => clock.now(), () => {});
   const reg = createRegistry({ breaker });
@@ -138,7 +158,7 @@ function runWith(adapterFactory: (evidence: ReturnType<typeof createEvidenceStor
     maxRepairRounds: 2,
   });
   return {
-    run: () =>
+      run: () =>
       runTaskLoop({
         runId: 'RUN-1',
         taskId: 'T-1',
@@ -149,9 +169,20 @@ function runWith(adapterFactory: (evidence: ReturnType<typeof createEvidenceStor
         log,
         budget: createBudget(LIMITS, clock),
         clock,
+        lease: {
+          claim: { taskId: 'T-1', ownerId: 'aal-test', fencingToken: 1, leaseUntil: Number.MAX_SAFE_INTEGER },
+          heartbeat: async () => true,
+          verifyOwnership: () => true,
+          reacquireAfterPause: async () => true,
+          startHeartbeat: () => {},
+          stopHeartbeat: () => {},
+          release: () => {},
+          ownershipLost: false,
+        },
       }),
     log,
     evidence,
+    reportIntegrity,
     cleanup: () => { log.close(); f.cleanup(); },
   };
 }
@@ -209,10 +240,10 @@ test('E2E: REVIEWING -> Human Plane API approve -> APPROVED (REQ-10.2, REQ-11.1)
       runId: 'RUN-1',
       goalExcerpt: CONTRACT.objective,
       acIds: ['AC-1'],
-      diffRef: 'blob://diff',
+      diffRef: h.evidence.put('reviewed diff'),
       diffLineCount: 10,
       maxDiffBudget: 400,
-      gateReports: h.log.all({ type: 'GATE_RESULT' }).map((e) => String(e.payload['worktreeHash'])),
+      gateReports: h.log.all({ type: 'GATE_RESULT' }).map((e) => h.evidence.put(JSON.stringify(e.payload))),
       worktreeHash: 'h',
       assumptions: [],
       unresolvedRisks: [],
@@ -229,6 +260,12 @@ test('E2E: REVIEWING -> Human Plane API approve -> APPROVED (REQ-10.2, REQ-11.1)
       token: 'tok',
       approvals: new Map<string, ApprovalPackage>([['A-1', built.package]]),
       log: h.log,
+      verifyApprovalEvidence: (pkg) => {
+        h.reportIntegrity.verifyEvidenceRef(pkg.diffRef);
+        for (const ref of pkg.evidence.gateReports) {
+          h.reportIntegrity.verifyGateReportRef(ref, { runId: pkg.runId, taskId: pkg.taskId });
+        }
+      },
       onDecision: (_taskId, decision) => {
         const t = transition('REVIEWING', decision === 'approve' ? 'human_approved' : 'changes_requested');
         if (t.ok) state = t.next;

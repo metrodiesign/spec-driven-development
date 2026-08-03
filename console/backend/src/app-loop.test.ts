@@ -73,6 +73,7 @@ async function makeLiveRun(runsRoot: string, runId: string, over?: Partial<Handl
         calls.push(`decision:${taskId}:${decision}`);
         return { ok: true, state: decision === 'approve' ? 'APPROVED' : 'CHANGES_REQUESTED' };
       },
+      verifyApprovalEvidence: () => {},
       onKill: () => calls.push('kill'),
       rateOk: () => true,
       // A steerable-but-not-PAUSED state: lets an approve decision through (REQ-10.9

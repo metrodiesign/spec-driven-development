@@ -9,6 +9,8 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 import type { GateRunner } from '../gates/runner.ts';
+import { ReportIntegrityError, type ReportIntegrity } from '../gates/report-integrity.ts';
+import { verifyTaskArtifactBinding } from './artifact-binding.ts';
 import type { EventLog } from '../state/event-log.ts';
 import type { LeaseManager } from '../state/lease.ts';
 import type { GateReport } from '../types.ts';
@@ -33,13 +35,14 @@ export interface MergeQueueOptions {
   worktreeDir: string;
   /** Bound to worktreeDir and this candidate's taskId (construct fresh per candidate). */
   gates: GateRunner;
+  reportIntegrity: ReportIntegrity;
   log: EventLog;
   lease: LeaseManager;
 }
 
 export interface MergeQueueResult {
   taskId: string;
-  outcome: 'merged' | 'rejected_t2' | 'merge_conflict';
+  outcome: 'merged' | 'rejected_t2' | 'merge_conflict' | 'evidence_invalid';
   mergeCommit: string | null;
   t2Report: GateReport | null;
   attribution: string;
@@ -70,7 +73,7 @@ function gitOut(cwd: string, ...args: string[]): string {
  * both must exist before the queue's first `process()` call); this only
  * resets + cleans an existing one.
  */
-function ensureWorktreeAtMainHead(opts: Pick<MergeQueueOptions, 'repoDir' | 'mainBranch' | 'worktreeDir'>): void {
+function ensureWorktreeAtMainHead(opts: Pick<MergeQueueOptions, 'repoDir' | 'mainBranch' | 'worktreeDir'>): string {
   if (!existsSync(join(opts.worktreeDir, '.git'))) {
     throw new Error(
       `merge queue: integration worktree not set up at ${opts.worktreeDir} (expected \`git worktree add\` ahead of time)`,
@@ -83,9 +86,36 @@ function ensureWorktreeAtMainHead(opts: Pick<MergeQueueOptions, 'repoDir' | 'mai
   if (status !== '') {
     throw new Error(`merge queue: integration worktree not clean after reset: ${status}`);
   }
+  return mainHead;
 }
 
 export function createMergeQueue(opts: MergeQueueOptions): MergeQueue {
+  const evidenceInvalid = (candidate: MergeCandidate, error: unknown, boundary: string): MergeQueueResult => {
+    const detail = error instanceof Error ? error.message : String(error);
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String(error.code)
+        : 'evidence_auth_failed';
+    const why =
+      typeof error === 'object' && error !== null && 'reason' in error &&
+      (error.reason === 'evidence_auth_unavailable' || error.reason === 'evidence_auth_mismatch')
+        ? error.reason
+        : 'evidence_auth_mismatch';
+    opts.log.append({
+      runId: opts.runId,
+      taskId: candidate.taskId,
+      type: 'ESCALATED',
+      payload: { why, boundary, code, detail },
+    });
+    return {
+      taskId: candidate.taskId,
+      outcome: 'evidence_invalid',
+      mergeCommit: null,
+      t2Report: null,
+      attribution: candidate.taskId,
+    };
+  };
+
   return {
     async process(candidate: MergeCandidate): Promise<MergeQueueResult> {
       const ownerId = candidate.taskId;
@@ -96,6 +126,18 @@ export function createMergeQueue(opts: MergeQueueOptions): MergeQueue {
         );
       }
       try {
+        let verifiedReport: GateReport;
+        try {
+          verifiedReport = verifyTaskArtifactBinding(candidate.originalReport, opts.reportIntegrity, {
+            runId: opts.runId,
+            taskId: candidate.taskId,
+            repoDir: opts.repoDir,
+            taskBranch: candidate.taskBranch,
+            mainBranch: opts.mainBranch,
+          });
+        } catch (error) {
+          return evidenceInvalid(candidate, error, 'merge_queue');
+        }
         opts.log.append({
           runId: opts.runId,
           taskId: candidate.taskId,
@@ -107,9 +149,25 @@ export function createMergeQueue(opts: MergeQueueOptions): MergeQueue {
           },
         });
 
-        ensureWorktreeAtMainHead(opts);
+        const mainHead = ensureWorktreeAtMainHead(opts);
+        if (mainHead !== verifiedReport.baseCommitHash) {
+          return evidenceInvalid(
+            candidate,
+            new ReportIntegrityError(
+              'artifact_identity_mismatch',
+              `queue base ${mainHead} does not match signed base commit ${String(verifiedReport.baseCommitHash)}`,
+            ),
+            'merge_queue',
+          );
+        }
 
-        const merge = git(opts.worktreeDir, 'merge', '--no-ff', '--no-edit', candidate.taskBranch);
+        const merge = git(
+          opts.worktreeDir,
+          'merge',
+          '--no-ff',
+          '--no-edit',
+          candidate.originalReport.artifactCommitHash as string,
+        );
         if (merge.code !== 0) {
           git(opts.worktreeDir, 'merge', '--abort');
           const result: MergeQueueResult = {
@@ -128,7 +186,12 @@ export function createMergeQueue(opts: MergeQueueOptions): MergeQueue {
           return result;
         }
 
-        const t2Report = await opts.gates.run('T2');
+        let t2Report: GateReport;
+        try {
+          t2Report = opts.gates.verify(await opts.gates.run('T2'));
+        } catch (error) {
+          return evidenceInvalid(candidate, error, 't2_result');
+        }
         // Not-enabled T2 never blocks the merge — only a REAL, executed T2
         // failure does (AZ-7 posture carried into the queue).
         if (t2Report.pass === false) {
@@ -149,7 +212,23 @@ export function createMergeQueue(opts: MergeQueueOptions): MergeQueue {
         }
 
         const newCommit = gitOut(opts.worktreeDir, 'rev-parse', 'HEAD');
-        git(opts.repoDir, 'update-ref', `refs/heads/${opts.mainBranch}`, newCommit);
+        const advanced = git(
+          opts.repoDir,
+          'update-ref',
+          `refs/heads/${opts.mainBranch}`,
+          newCommit,
+          verifiedReport.baseCommitHash as string,
+        );
+        if (advanced.code !== 0) {
+          return evidenceInvalid(
+            candidate,
+            new ReportIntegrityError(
+              'artifact_identity_mismatch',
+              `current ${opts.mainBranch} changed after authorization; refusing to overwrite it`,
+            ),
+            'merge_queue_update',
+          );
+        }
         const tier = t2Report.pass === 'not_enabled' ? 't1_only' : 't2';
         const result: MergeQueueResult = {
           taskId: candidate.taskId,

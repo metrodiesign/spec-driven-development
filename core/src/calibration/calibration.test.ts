@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { computeCalibration, computeFusionCalibration, computeLessonHitRate } from './calibration.ts';
+import { computeCalibration, computeFusionCalibration, computeGoldenCoverage, computeLessonHitRate } from './calibration.ts';
 import type { PlatformEvent } from '../types.ts';
 
 test('held-out pass rate + range + reproducibility', () => {
@@ -19,6 +19,41 @@ test('empty inputs are safe (no runs yet)', () => {
   const r = computeCalibration({ heldOut: [], reruns: [] });
   assert.equal(r.heldOutPassRate, 0);
   assert.equal(r.reproducibility, 1);
+});
+
+test('golden coverage deduplicates unique in-scope IDs and pairs with held-out rate (REQ-8.7/8.8/8.9)', () => {
+  const r = computeCalibration({
+    heldOut: [true, false],
+    reruns: [true],
+    inScopeAcIds: ['AC-1', 'AC-1', 'AC-2', 'AC-3'],
+    goldenAcIds: ['AC-1', 'AC-1', 'AC-9'],
+  });
+  assert.deepEqual(r.goldenCoverage, { goldenAcCount: 1, inScopeAcCount: 3, rate: 1 / 3 });
+  assert.equal(r.heldOutPassRate, 0.5);
+});
+
+test('zero in-scope IDs reports explicit zero coverage (REQ-8.8)', () => {
+  assert.deepEqual(computeGoldenCoverage({ inScopeAcIds: [], goldenAcIds: ['AC-1'] }), {
+    goldenAcCount: 0,
+    inScopeAcCount: 0,
+    rate: 0,
+  });
+});
+
+test('frozen-contract acceptance criteria can supply coverage directly', () => {
+  const r = computeCalibration({ heldOut: [], reruns: [], acceptanceCriteria: [
+    { id: 'AC-1', golden: true },
+    { id: 'AC-1', golden: false },
+  ] });
+  assert.deepEqual(r.goldenCoverage, { goldenAcCount: 1, inScopeAcCount: 1, rate: 1 });
+});
+
+test('all unique in-scope IDs golden-backed reports full coverage', () => {
+  assert.deepEqual(computeGoldenCoverage({ inScopeAcIds: ['AC-1', 'AC-2'], goldenAcIds: ['AC-1', 'AC-2'] }), {
+    goldenAcCount: 2,
+    inScopeAcCount: 2,
+    rate: 1,
+  });
 });
 
 test('fusion uplift = fused rate − single rate, reported as an interval band (REQ-11.1)', () => {

@@ -1,0 +1,44 @@
+# Operator goal: auth-test-loop-01. Converted 2026-08-03 from the operator-supplied
+# goal.yaml (~/Downloads/How to Create and Verify Golden Fixture Bytes (1)/goal.yaml,
+# sha256 e68aa172...846a0f) to conform to .ai/schemas/goal.schema.json. AC ids,
+# descriptions, and golden flags are the operator's verbatim. Budget mapping:
+#   max_iterations 10          -> max_iterations_per_task 10
+#   max_wallclock_seconds 1800 -> max_wallclock_per_task_min 30
+#   max_cost_usd 2.0           -> max_cost_units_per_task 200 (1 unit = 1k tokens,
+#                                 ~$2 at blended Sonnet pricing)
+# Fields with no schema slot were dropped (iteration_budget_usd,
+# warning_threshold_usd, cooldown_seconds). Fields the operator did not specify
+# take the calibration-fixture defaults: max_hypotheses_per_failure 3,
+# max_total_tasks 30, max_parallel_agents 3.
+goal:
+  id: "auth-test-loop-01"
+  title: "Test Authentication System"
+  objective: "Verify the core functionality of the authentication system including registration, login, logout, and session management using Golden Fixtures."
+
+acceptance_criteria:
+  - id: "AC-1"
+    description: "User can successfully register with valid credentials."
+    golden: true
+  - id: "AC-2"
+    description: "User cannot register with invalid or duplicate credentials."
+    golden: true
+  - id: "AC-3"
+    description: "User can successfully log in with registered credentials."
+    golden: true
+  - id: "AC-4"
+    description: "User cannot log in with incorrect credentials."
+    golden: true
+  - id: "AC-5"
+    description: "User can log out successfully."
+    golden: false
+  - id: "AC-6"
+    description: "Session management (e.g., token validity, expiration) is handled correctly."
+    golden: false
+
+budget:
+  max_iterations_per_task: 10
+  max_hypotheses_per_failure: 3
+  max_total_tasks: 30
+  max_parallel_agents: 3
+  max_cost_units_per_task: 200
+  max_wallclock_per_task_min: 30
