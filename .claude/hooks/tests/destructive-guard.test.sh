@@ -135,6 +135,13 @@ check block "push --all --force"     'git push --all --force origin'
 check block "push --force --all"     'git push --force --all origin'
 check block "push --all -f"          'git push --all -f origin'
 
+# gh api ref-deletion bypass of Tier 1 (.githooks/pre-push) — found live, PR #125/#126
+check block "gh api -X DELETE ref"          'gh api -X DELETE repos/o/r/git/refs/heads/feat'
+check block "gh api --method DELETE ref"    'gh api --method DELETE repos/o/r/git/refs/heads/feat'
+check block "gh api ref -X DELETE (flag after path)" 'gh api repos/o/r/git/refs/heads/feat -X DELETE'
+check block "gh api -XDELETE ref (no space)" 'gh api -XDELETE repos/o/r/git/refs/heads/feat'
+check block "gh api -x delete lowercase"    'gh api -x delete repos/o/r/git/refs/heads/feat'
+
 # --- MUST ALLOW: safe ---
 check allow "rm single file"         'rm /tmp/onefile'
 # allow-push เป็น env-dependent (branch-protection บล็อก git push ทุกตัวบน main/develop) -> skip ที่นั่น
@@ -166,6 +173,11 @@ check_allow_push "branch maintenance"     'git push origin maintenance'
 # unconditionally, unlike other push cases above (not env-dependent on BR_NOW).
 check allow "push --delete other branch"  'git push origin --delete codex/some-feature'
 check allow "push -d other branch"        'git push origin -d codex/some-feature'
+# benign baselines for gh api ref-deletion rule — must NOT false-positive
+check allow "gh api GET ref (no delete)"     'gh api repos/o/r/git/refs/heads/feat'
+check allow "gh api POST create ref"         'gh api -X POST repos/o/r/git/refs -f ref=refs/heads/feat'
+check allow "gh api DELETE unrelated path"   'gh api -X DELETE repos/o/r/issues/comments/1'
+check allow "gh pr merge --delete-branch"    'gh pr merge 123 --delete-branch'
 
 echo "---"
 echo "pass=$pass fail=$fail skip=$skip"
