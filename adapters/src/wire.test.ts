@@ -7,10 +7,10 @@ import { test } from 'node:test';
 import { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';
 import type { AgentRequest } from 'aal';
 
-function req(objective = 'fix impl'): AgentRequest {
+function req(objective = 'fix impl', agentRole: AgentRequest['agentRole'] = 'implementer'): AgentRequest {
   return {
     requestId: 'r-1',
-    agentRole: 'implementer',
+    agentRole,
     taskContract: { goalId: 'G', title: 't', objective, acceptanceCriteria: [{ id: 'AC-1', description: 'd' }] },
     contextBundle: { pieces: [{ id: 'p-0', kind: 'file', path: 'src/impl.txt', content: 'wrong', reason: 'seed' }], canaryToken: 'CANARY', stats: { bytes: 5, pieceCount: 1 } },
     manifestRef: 'blob://m',
@@ -67,6 +67,29 @@ test('buildProposePrompt: fenceGuard false drops the no-fences clause but keeps 
   }
   // Default (no opts) behaves as fenceGuard true.
   assert.match(buildProposePrompt(req()), /no markdown fences/);
+});
+
+test('buildProposePrompt: advertises READ_FILE as a proposal type (bugfix-wire-prompt-vocabulary F1)', () => {
+  const prompt = buildProposePrompt(req());
+  assert.match(prompt, /"type":"READ_FILE"/);
+});
+
+test('buildProposePrompt: diagnostician gets a distinct protocol teaching Hypothesis shape, never WRITE_FILE (bugfix-wire-prompt-vocabulary F2)', () => {
+  const implementerPrompt = buildProposePrompt(req('fix impl', 'implementer'));
+  const diagnosticianPrompt = buildProposePrompt(req('fix impl', 'diagnostician'));
+
+  assert.notEqual(diagnosticianPrompt, implementerPrompt);
+  assert.match(diagnosticianPrompt, /hypotheses/);
+  assert.match(diagnosticianPrompt, /probes/);
+  assert.doesNotMatch(diagnosticianPrompt, /"type":"WRITE_FILE"/);
+  // still keeps the shared, role-agnostic escape hatches
+  assert.match(diagnosticianPrompt, /"type":"READ_FILE"/);
+  assert.match(diagnosticianPrompt, /"type":"REQUEST_TOOL"/);
+});
+
+test('buildProposePrompt: serializes acceptance criteria into the prompt when present (bugfix-wire-prompt-vocabulary F3)', () => {
+  const prompt = buildProposePrompt(req());
+  assert.match(prompt, /AC-1: d/);
 });
 
 test('classifyAdapterError: quota/auth patterns, else transport (REQ-1.5)', () => {
