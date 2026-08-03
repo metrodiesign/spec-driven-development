@@ -46,3 +46,27 @@ test('wallclock counts ACTIVE time only — excluded intervals never trip it (RE
   clock.tick(300);
   assert.deepEqual(b.exceeded(), { limit: 'wallclock' });
 });
+
+test('rejects negative and non-finite usage without crediting cost (REQ-7.1/7.5)', () => {
+  const b = createBudget({ maxIterations: 10, maxCostUnits: 100, maxWallclockMs: 1000 }, makeClock());
+  b.noteIteration(3);
+  for (const invalid of [-1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.throws(() => b.noteIteration(invalid), /costUnits/i, `rejects ${String(invalid)}`);
+  }
+  assert.equal(b.remaining(), 97, 'invalid usage leaves prior accumulated cost unchanged');
+  assert.equal(b.exceeded(), false, 'invalid usage does not exhaust a backstop');
+});
+
+test('rejects usage aggregate overflow before crediting it (REQ-7.3/7.5)', () => {
+  const b = createBudget({ maxIterations: 10, maxCostUnits: Number.MAX_VALUE, maxWallclockMs: 1000 }, makeClock());
+  b.noteIteration(Number.MAX_VALUE);
+  const remainingAfterFirst = b.remaining();
+  assert.throws(() => b.noteIteration(Number.MAX_VALUE), /overflow/i);
+  assert.equal(b.remaining(), remainingAfterFirst, 'overflow attempt does not alter prior cost');
+});
+
+test('accepts zero usage as a valid charge (REQ-7.6)', () => {
+  const b = createBudget({ maxIterations: 2, maxCostUnits: 10, maxWallclockMs: 1000 }, makeClock());
+  assert.doesNotThrow(() => b.noteIteration(0));
+  assert.equal(b.remaining(), 10);
+});

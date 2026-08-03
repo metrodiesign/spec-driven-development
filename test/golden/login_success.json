@@ -1,0 +1,5 @@
+{
+  "status": "success",
+  "message": "User logged in successfully",
+  "token": "<JWT_TOKEN>"
+}

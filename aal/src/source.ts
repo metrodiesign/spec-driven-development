@@ -6,14 +6,14 @@
 // an AdapterError — records the failure with the breaker and re-routes ONCE to
 // the next eligible adapter before a clean BLOCKED(no_capacity) (REQ-3).
 
-import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy, loadApprovedLessons } from 'core';
+import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy, loadApprovedLessons, LeaseFenceError, validateCostUnits } from 'core';
 import { SecretInContextError } from 'core';
 import { breakerKey, type Breaker } from './breaker.ts';
 import { AdapterError } from './protocol.ts';
 import { proposeWithRepair, type RepairOutcome } from './repair.ts';
 import type { RegisteredAdapter } from './registry.ts';
 import type { RouteHints, Router } from './router.ts';
-import type { EvidenceStore, ProviderDataPolicy } from 'core';
+import type { EvidenceStore, FencedEventClaim, ProviderDataPolicy } from 'core';
 import type {
   Action,
   ContextBundle,
@@ -24,6 +24,7 @@ import type {
   ProposalClaim,
   ProposalInput,
   ProposalSource,
+  Role,
   TaskContractExcerpt,
 } from 'core';
 
@@ -38,6 +39,8 @@ export interface AALSourceDeps {
   seedPaths: string[];
   evidence: EvidenceStore;
   log: EventLog;
+  /** Current task lease generation; proposal intent is atomically fenced when supplied. */
+  fence?: () => FencedEventClaim;
   /** Injectable ids for determinism in tests (requestId + per-request canary). */
   ids: { requestId(): string; canary(): string };
   outputSchema: Record<string, unknown>;
@@ -101,6 +104,21 @@ function asHypotheses(structuredResult: unknown): Hypothesis[] {
 const keyOf = (r: RegisteredAdapter): string => breakerKey(r.record.adapterId, r.record.modelVersion);
 
 export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
+  const appendProposalIntent = (requestId: string, role: Role): void => {
+    const event = {
+      runId: deps.runId,
+      taskId: deps.taskId,
+      type: 'PROPOSAL_INTENT' as const,
+      payload: { requestId, role },
+    };
+    if (deps.fence === undefined) {
+      deps.log.append(event);
+      return;
+    }
+    const appended = deps.log.appendFenced(event, deps.fence());
+    if (appended === null) throw new LeaseFenceError('task lease was lost before proposal intent commit');
+  };
+
   // Paths the model has legitimately requested via READ_FILE accumulate across
   // rounds and expand the provenance-allowed set (REQ-5.4).
   const readRequested = new Set<string>();
@@ -247,12 +265,7 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
 
       const requestId = deps.ids.requestId();
       // P8/crash-safety: record intent BEFORE the call so replay reuses the id (REQ-5.2).
-      deps.log.append({
-        runId: deps.runId,
-        taskId: deps.taskId,
-        type: 'PROPOSAL_INTENT',
-        payload: { requestId, role },
-      });
+      appendProposalIntent(requestId, role);
 
       const req = {
         requestId,
@@ -303,6 +316,21 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
           break;
         } catch (err) {
           if (!(err instanceof AdapterError)) throw err;
+          if (err.kind === 'invalid_response') {
+            deps.log.append({
+              runId: deps.runId,
+              taskId: deps.taskId,
+              type: 'ERROR',
+              payload: { reason: 'invalid_response', boundary: 'response_usage', detail: err.message },
+            });
+            deps.log.append({
+              runId: deps.runId,
+              taskId: deps.taskId,
+              type: 'ESCALATED',
+              payload: { why: 'invalid_response', boundary: 'response_usage' },
+            });
+            return { claim: 'BLOCKED', actions: [], costUnits: 0, error: { reason: 'invalid_response', detail: err.message } };
+          }
           deps.breaker.recordFailure(key, err.kind);
           failed.add(key);
           const next = rerouted ? undefined : eligible.find((a) => !failed.has(keyOf(a)));
@@ -321,7 +349,23 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
         }
       }
 
-      const costUnits = out.totalUsage.costUnits;
+      const usage = validateCostUnits(out.totalUsage.costUnits);
+      if (!usage.ok) {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'ERROR',
+          payload: { reason: 'invalid_response', boundary: 'repair_usage', detail: usage.detail },
+        });
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'ESCALATED',
+          payload: { why: 'invalid_response', boundary: 'repair_usage' },
+        });
+        return { claim: 'BLOCKED', actions: [], costUnits: 0, error: { reason: 'invalid_response', detail: usage.detail } };
+      }
+      const costUnits = usage.value;
 
       // Runtime injection canary (REQ-11.1): the round's token surfacing in the
       // model's own output is the signature of a prompt injection — reject the

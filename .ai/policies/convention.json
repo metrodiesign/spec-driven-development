@@ -1,0 +1,38 @@
+{
+  "_comment": "Versioned Phase 0 syntactic convention policy. These regular expressions detect source text only; they do not claim semantic test correctness.",
+  "version": 1,
+  "roots": ["test", "tests", "__tests__"],
+  "rules": [
+    {
+      "id": "focused-or-skipped-test",
+      "pattern": "\\.\\s*(?:only|skip)\\s*\\(",
+      "extensions": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+    },
+    {
+      "id": "typecheck-bypass",
+      "pattern": "(?:@ts-(?:ignore|nocheck)|skipLibCheck\\s*[:=]\\s*true|noEmitOnError\\s*[:=]\\s*false)",
+      "extensions": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".json"]
+    },
+    {
+      "id": "lint-rule-disable",
+      "pattern": "(?:eslint-disable(?:-next-line)?|biome-ignore|tslint:disable)",
+      "extensions": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"],
+      "allowedControls": [
+        {
+          "id": "documented-lint-disable",
+          "pattern": "convention\\s*:\\s*allow\\b.*(?:reason|because|--)"
+        }
+      ]
+    },
+    {
+      "id": "coverage-bypass",
+      "pattern": "(?:\\b(?:c8|istanbul)\\s+ignore\\b|--coverage(?:\\s|=)+false)",
+      "extensions": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".json"]
+    },
+    {
+      "id": "unexplained-ignore",
+      "pattern": "(?:\\bignore(?:-next-line)?\\b|@ts-ignore)",
+      "extensions": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+    }
+  ]
+}

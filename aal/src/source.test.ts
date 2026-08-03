@@ -14,7 +14,7 @@ import { createBreaker, DEFAULT_BREAKER_OPTIONS } from './breaker.ts';
 import { createRegistry } from './registry.ts';
 import { createRouter, type RouteHints } from './router.ts';
 import { FakeAdapter } from './fake-adapter.ts';
-import { PASS_FAIL_PROBES, type ConformanceRecord } from './protocol.ts';
+import { PASS_FAIL_PROBES, type AdapterHealth, type AdapterInterface, type AgentResponse, type ConformanceRecord } from './protocol.ts';
 import { createEvidenceStore, openEventLog } from 'core';
 import type { ProposalInput, ProviderDataPolicy, TaskContractExcerpt } from 'core';
 
@@ -37,8 +37,8 @@ function passingRecord(id: string, susceptibilityScore = 0): ConformanceRecord {
 
 function harness(opts: {
   seedFiles: Record<string, string>;
-  adapter?: FakeAdapter;
-  adapters?: FakeAdapter[];
+  adapter?: AdapterInterface;
+  adapters?: AdapterInterface[];
   register?: boolean;
   contract?: TaskContractExcerpt;
   dataPolicyFor?: (adapterId: string) => ProviderDataPolicy | undefined;
@@ -61,7 +61,10 @@ function harness(opts: {
   const reg = createRegistry({ breaker });
   const adapters = opts.adapters ?? [opts.adapter ?? new FakeAdapter({ id: 'ok' })];
   if (opts.register !== false) {
-    for (const a of adapters) reg.register(a, passingRecord(a.manifest().adapterId, opts.susceptibility), a.healthProbe);
+    for (const a of adapters) {
+      const healthProbe = (a as AdapterInterface & { healthProbe?: () => Promise<AdapterHealth> }).healthProbe;
+      reg.register(a, passingRecord(a.manifest().adapterId, opts.susceptibility), healthProbe);
+    }
   }
   const router = createRouter(reg);
   let n = 0;
@@ -91,6 +94,20 @@ function harness(opts: {
 }
 
 const INPUT: ProposalInput = { taskId: 'T-1', state: 'IMPLEMENTING', role: 'implementer', feedback: null };
+
+function invalidUsageAdapter(costUnits: number): AdapterInterface {
+  const response: AgentResponse = {
+    structuredResult: { claim: 'WORKING', actionRequests: [] },
+    actionRequests: [],
+    usage: { costUnits, raw: {} },
+    rawTranscriptRef: null,
+    adapterMeta: { adapterId: 'invalid-usage', modelVersion: 'v', interactive: false, toolUseCount: 0 },
+  };
+  return {
+    manifest: () => ({ adapterId: 'invalid-usage', structuredOutput: true, toolCalling: false, contextWindowTokens: 1000, executionBackend: false, determinism: 'none' }),
+    async send() { return response; },
+  };
+}
 
 test('records PROPOSAL_INTENT before mapping a valid response to a Proposal (REQ-5.1/5.2/5.5)', async () => {
   const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' } });
@@ -132,6 +149,22 @@ test('no eligible adapter -> BLOCKED(no_capacity), escalation logged, NO throw (
     assert.equal(h.log.all({ type: 'ESCALATED' })[0]?.payload['why'], 'no_capacity');
   } finally {
     h.cleanup();
+  }
+});
+
+test('invalid AAL usage escalates invalid_response and does not reroute or charge a proposal (REQ-7.1/7.4/7.5)', async () => {
+  for (const costUnits of [-1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    const h = harness({ seedFiles: { 'src/impl.txt': 'x\n' }, adapter: invalidUsageAdapter(costUnits) });
+    try {
+      const p = await h.source.propose(INPUT);
+      assert.equal(p.claim, 'BLOCKED');
+      assert.equal(p.error?.reason, 'invalid_response');
+      const esc = h.log.all({ type: 'ESCALATED' }).at(-1);
+      assert.equal(esc?.payload['why'], 'invalid_response');
+      assert.equal(h.log.all({ type: 'PROPOSAL_INTENT' }).length, 1);
+    } finally {
+      h.cleanup();
+    }
   }
 });
 

@@ -12,6 +12,18 @@ import type { PlatformEvent } from '../types.ts';
 export interface CalibrationInput {
   heldOut: boolean[]; // per task: did the held-out/golden check pass?
   reruns: boolean[]; // per COMPLETED task: did a clean-checkout re-run reproduce the result?
+  /** All unique acceptance criteria in scope for this calibration sample. */
+  inScopeAcIds?: readonly string[];
+  /** Golden-backed acceptance criteria; the numerator is intersected with scope. */
+  goldenAcIds?: readonly string[];
+  /** Convenience shape for callers holding the frozen contract directly. */
+  acceptanceCriteria?: readonly { id: string; golden?: boolean }[];
+}
+
+export interface GoldenCoverage {
+  goldenAcCount: number;
+  inScopeAcCount: number;
+  rate: number;
 }
 
 export interface CalibrationResult {
@@ -20,6 +32,8 @@ export interface CalibrationResult {
   /** [low, high] — a plain ±1/√n band, since n is small (§12 "รายงานเป็นช่วง"). */
   range: [number, number];
   reproducibility: number;
+  /** Coverage is always reported beside held-out pass rate, including zero-n. */
+  goldenCoverage: GoldenCoverage;
 }
 
 function clamp01(x: number): number {
@@ -38,6 +52,31 @@ export function computeCalibration(input: CalibrationInput): CalibrationResult {
     heldOutPassRate: rate,
     range: [clamp01(rate - band), clamp01(rate + band)],
     reproducibility,
+    goldenCoverage: computeGoldenCoverage({
+      inScopeAcIds: input.inScopeAcIds ?? input.acceptanceCriteria?.map((ac) => ac.id) ?? [],
+      goldenAcIds: input.goldenAcIds ?? input.acceptanceCriteria?.filter((ac) => ac.golden === true).map((ac) => ac.id) ?? [],
+    }),
+  };
+}
+
+/**
+ * Count unique acceptance-criterion IDs.  IDs outside the in-scope set cannot
+ * inflate the numerator, and an empty denominator is explicitly zero rather than
+ * being treated as 100% coverage.
+ */
+export function computeGoldenCoverage(input: {
+  inScopeAcIds: readonly string[];
+  goldenAcIds: readonly string[];
+}): GoldenCoverage {
+  const inScope = new Set(input.inScopeAcIds.filter((id) => typeof id === 'string' && id.length > 0));
+  const golden = new Set(input.goldenAcIds.filter((id) => typeof id === 'string' && id.length > 0));
+  let goldenAcCount = 0;
+  for (const id of golden) if (inScope.has(id)) goldenAcCount += 1;
+  const inScopeAcCount = inScope.size;
+  return {
+    goldenAcCount,
+    inScopeAcCount,
+    rate: inScopeAcCount === 0 ? 0 : goldenAcCount / inScopeAcCount,
   };
 }
 

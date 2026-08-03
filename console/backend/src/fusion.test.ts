@@ -4,19 +4,22 @@
 // wired through the executor's toolHandlers seam. All on the fixture repo — no quota.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { createCandidateEvidenceRunner, createFusionToolHandler, fusionActive, runPlannerFusion, PLAN_SCHEMA } from './fusion.ts';
-import { makeFixtureRepo } from './loop-run.ts';
+import { makeSyntheticFixtureRepoForTests } from './loop-run.ts';
 import { decideLiveRun } from './loop-cli.ts';
 import {
   createDefaultPathPolicy,
   createEvidenceStore,
   createExecutor,
-  denyNetworkSandbox,
+  createReportIntegrity,
+  openEvidenceAuthenticator,
   openEventLog,
+  type CoreCommandExecutor,
 } from 'core';
 import type { Action } from 'core';
 import {
@@ -37,10 +40,57 @@ function write(path: string, contentRef: string): Action {
 }
 
 test('CandidateEvidenceRunner produces a core GateReport per candidate in an isolated worktree; live repo untouched (REQ-9.2)', async () => {
-  const fx = makeFixtureRepo();
+  const fx = makeSyntheticFixtureRepoForTests();
   const log = openEventLog(join(fx.root, 'events.db'), clock);
   const evidence = createEvidenceStore(join(fx.root, 'evidence'));
+  const reportIntegrity = createReportIntegrity({
+    evidence,
+    authenticator: openEvidenceAuthenticator({
+      runStateDir: fx.root,
+      runId: 'RUN',
+      recovering: false,
+      worktreeDirs: [fx.wt],
+    }),
+  });
   try {
+    const commandExecutor: CoreCommandExecutor = {
+      environmentHash: 'test-only-passthrough',
+      async execute(action, context) {
+        let exitCode = 0;
+        let output = '';
+        try {
+          output = execFileSync('/bin/sh', ['-c', action.cmd], {
+            cwd: context.worktreeDir,
+            encoding: 'utf8',
+          });
+        } catch (error) {
+          const failure = error as {
+            status?: number;
+            stdout?: string | Buffer;
+            stderr?: string | Buffer;
+          };
+          exitCode = failure.status ?? 1;
+          output = `${String(failure.stdout ?? '')}${String(failure.stderr ?? '')}`;
+        }
+        return {
+          status: 'completed',
+          exitCode,
+          signal: null,
+          evidence: {
+            outputRef: evidence.put(output),
+            networkPolicyHash: 'test-only',
+            environmentHash: 'test-only-passthrough',
+            backend: {
+              inheritedFilesystemAndNetworkPolicy: true,
+              denialObservation: 'direct_only',
+              revocableDescendantContainment: false,
+              descendantTermination: 'unproven_new_session',
+            },
+            observedViolation: null,
+          },
+        };
+      },
+    };
     const runner = createCandidateEvidenceRunner({
       repoDir: fx.wt,
       configRelPath: 'gate-ladder.json',
@@ -48,7 +98,9 @@ test('CandidateEvidenceRunner produces a core GateReport per candidate in an iso
       taskId: 'T-1',
       log,
       evidence,
+      reportIntegrity,
       clock,
+      commandExecutor,
     });
     const correctRef = evidence.put('correct\n');
     const wrongRef = evidence.put('wrong\n');
@@ -73,7 +125,7 @@ function stubOutcome(): FusionOutcome {
 }
 
 test('fusion.deliberate: first activation applies, a second for the same task is rejected depth_exceeded (REQ-10.9)', async () => {
-  const fx = makeFixtureRepo();
+  const fx = makeSyntheticFixtureRepoForTests();
   const log = openEventLog(join(fx.root, 'events.db'), clock);
   const evidence = createEvidenceStore(join(fx.root, 'evidence'));
   try {
@@ -102,7 +154,7 @@ test('fusion.deliberate: first activation applies, a second for the same task is
 });
 
 test('the executor routes REQUEST_TOOL fusion.deliberate to the composition handler; unknown tools still reject (REQ-10.9)', async () => {
-  const fx = makeFixtureRepo();
+  const fx = makeSyntheticFixtureRepoForTests();
   const log = openEventLog(join(fx.root, 'events.db'), clock);
   const evidence = createEvidenceStore(join(fx.root, 'evidence'));
   try {
@@ -114,7 +166,6 @@ test('the executor routes REQUEST_TOOL fusion.deliberate to the composition hand
       log,
       evidence,
       policy: createDefaultPathPolicy(),
-      sandbox: denyNetworkSandbox(process.platform),
       clock,
       toolHandlers: { 'fusion.deliberate': handler },
     });
@@ -179,7 +230,7 @@ function planProfile(): FusionProfile {
 }
 
 function plannerHarness(adapters: FakeAdapter[]) {
-  const fx = makeFixtureRepo();
+  const fx = makeSyntheticFixtureRepoForTests();
   const log = openEventLog(join(fx.root, 'events.db'), clock);
   const evidence = createEvidenceStore(join(fx.root, 'evidence'));
   const reg = createRegistry({});
@@ -220,6 +271,30 @@ test('REQ-16.2/16.5: dispatches role planner through the given router, resolves 
     assert.equal(resolved[0]?.payload['panelSize'], 2);
     assert.equal(typeof resolved[0]?.payload['costUnits'], 'number');
     assert.equal(h.log.all({ type: 'FUSION_PANEL' })[0]?.payload['artifact'], 'plan');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('REQ-6.1 audit: planner fusion with taskId=null is an explicit pre-task, run-scoped dispatch (no task proposal)', async () => {
+  const h = plannerHarness([
+    new FakeAdapter({ id: 'a-anthropic', lineage: 'anthropic' }),
+    new FakeAdapter({ id: 'a-openai', lineage: 'openai' }),
+  ]);
+  try {
+    // Graph planning runs before a graph task is selected. Its run-scoped events
+    // deliberately carry null taskId; the first task loop claims its own lease
+    // before requesting any task proposal (the lease invariant starts at that
+    // task-loop boundary, not at this pre-task planner dispatch).
+    await runPlannerFusion({
+      runId: 'RUN', taskId: null, router: h.router, dispatcher: h.dispatcher,
+      profile: planProfile(), evidence: h.evidence, log: h.log, ids: h.ids,
+      taskContract: TASK_CONTRACT,
+    });
+    const plannerEvents = h.log.all().filter((e) => ['FUSION_PANEL', 'FUSION_CANDIDATE', 'FUSION_RESOLVED', 'PLAN_RESOLVED'].includes(e.type));
+    assert.ok(plannerEvents.length > 0);
+    assert.ok(plannerEvents.every((e) => e.taskId === null), 'pre-task planner events remain run-scoped');
+    assert.equal(h.log.all({ type: 'LEASE_CLAIMED' }).length, 0, 'task lease is claimed by the task loop after planning');
   } finally {
     h.cleanup();
   }

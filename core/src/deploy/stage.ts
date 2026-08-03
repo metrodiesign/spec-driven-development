@@ -22,6 +22,7 @@ export type DeployState =
 
 export type DeployTrigger =
   | 'start'
+  | 'evidence_invalid'
   | 'canary_ok'
   | 'canary_failed'
   | 'observe_ok'
@@ -71,6 +72,10 @@ export interface DeployStageDeps {
   log: EventLog;
   evidence: EvidenceStore;
   clock: DeployClock;
+  /** Re-authenticate the approved package immediately before the first deploy command. */
+  verifyApprovalEvidence(): void;
+  /** Fenced ownership check immediately before every deploy/rollback command. */
+  assertOwnership?: (boundary: string) => void;
 }
 
 function record(
@@ -79,6 +84,7 @@ function record(
   trigger: DeployTrigger,
   extra?: Record<string, unknown>,
 ): void {
+  deps.assertOwnership?.(`deploy_state:${state}:${trigger}`);
   deps.log.append({
     runId: deps.runId,
     taskId: deps.taskId,
@@ -96,6 +102,7 @@ interface CommandRun {
 }
 
 async function runDeployCommand(deps: DeployStageDeps, actionId: string, cmd: string): Promise<CommandRun> {
+  deps.assertOwnership?.(actionId);
   const outcome = await deps.executor.execute(
     { type: 'RUN_COMMAND', actionId, cmd, network: 'none' },
     'diagnostician',
@@ -121,6 +128,7 @@ async function runRollback(
   failedProbes: number,
   refs: string[],
 ): Promise<RollbackResult> {
+  deps.assertOwnership?.('deploy-rollback');
   record(deps, 'ROLLING_BACK', trigger, { failedProbes, refs });
   const rollback = await runDeployCommand(deps, 'deploy-rollback', deps.config.rollbackCmd);
   const allRefs = [...refs, rollback.ref];
@@ -138,6 +146,30 @@ async function runRollback(
 export async function runDeployStage(deps: DeployStageDeps): Promise<DeployOutcome> {
   const { config } = deps;
 
+  try {
+    deps.verifyApprovalEvidence();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String(error.code)
+        : 'evidence_auth_failed';
+    const why =
+      typeof error === 'object' && error !== null && 'reason' in error &&
+      (error.reason === 'evidence_auth_unavailable' || error.reason === 'evidence_auth_mismatch')
+        ? error.reason
+        : 'evidence_auth_mismatch';
+    record(deps, 'ESCALATED', 'evidence_invalid', { why, boundary: 'deploy_stage', code, detail });
+    deps.assertOwnership?.('deploy_error');
+    deps.log.append({
+      runId: deps.runId,
+      taskId: deps.taskId,
+      type: 'ESCALATED',
+      payload: { why, boundary: 'deploy_stage', code, detail },
+    });
+    return { finalState: 'ESCALATED', probeResults: [] };
+  }
+
   record(deps, 'CANARY', 'start');
   const canary = await runDeployCommand(deps, 'deploy-canary', config.canaryCmd);
   if (!canary.ok) {
@@ -152,6 +184,7 @@ export async function runDeployStage(deps: DeployStageDeps): Promise<DeployOutco
     if (i > 0) await deps.clock.wait(config.observe.intervalMs);
     const probe = await runDeployCommand(deps, `deploy-observe-${i + 1}`, config.observeCmd);
     probeResults.push({ pass: probe.ok, evidenceRef: probe.ref });
+    deps.assertOwnership?.(`deploy_probe:${i + 1}`);
     // Reuses the existing PROBE_RUN event type (hypothesis engine's probe loop,
     // repair/hypothesis.ts) — same payload shape, same audit-trail idiom.
     deps.log.append({

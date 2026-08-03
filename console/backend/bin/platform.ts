@@ -21,6 +21,7 @@ import {
   latestConformanceRecordPath,
   LIVE_CONFIRM_PHRASE,
   loadGoalContract,
+  loadOfflineDependencyPolicy,
   loadTaskGraphOption,
   mungeProjectDir,
   readConformanceRecord,
@@ -33,7 +34,7 @@ import { createSchedRuntime, type ChildLike, type SpawnChild } from '../src/sche
 
 const HELP = `usage:
   platform console [--port <n>] [--host <h>] [--no-open] [--insecure] [--behind-proxy <url>]
-  platform loop run --goal <path> [--live] [--task <id>]
+  platform loop run --goal <path> --operator-golden-fixture <path> [--live] [--task <id>]
   platform conformance --live
   platform governance list | platform governance approve <id>
   platform auditor run --db <path> --repo <dir> [--rate <pct>]
@@ -49,6 +50,7 @@ const HELP = `usage:
                 request as remote — F-Term/WS tickets refused, MCP Authenticate disabled (REQ-20)
   loop run:
     --goal      path to goal.yaml (frozen by raw-byte hash in core)
+    --operator-golden-fixture  operator-supplied test/golden directory (required; copied byte-for-byte)
     --live      use the REAL model adapter — refused in CI / non-TTY, requires typed confirmation
     --task      run a single task id
     --model     override the autonomous model (default: automation.json autonomousModel = Sonnet; logged)
@@ -168,8 +170,8 @@ async function runAuditor(rest: string[]): Promise<void> {
     dbPath: values.db,
     repoDir: values.repo,
     gateConfigRelPath: 'gate-ladder.json',
+    conventionPolicyRelPath: '.ai/policies/convention.json',
     defaultRate: cfg.auditSampleRate,
-    evidenceDir: join(homedir(), '.platform', 'oob-evidence'),
     now: () => Date.now(),
   });
   if (result.out !== '') process.stdout.write(result.out);
@@ -243,6 +245,10 @@ function depManifestPatterns(): string[] {
   } catch {
     return [];
   }
+}
+
+function phase0OfflineDependencyPolicy() {
+  return loadOfflineDependencyPolicy(join(aiDir(), 'policies', 'security-plane.json'));
 }
 
 /** Where Claude Code writes session JSONL for that cwd (REQ-4.5 transcript capture). */
@@ -353,6 +359,7 @@ async function runLoop(rest: string[]): Promise<void> {
       goal: { type: 'string' },
       live: { type: 'boolean', default: false },
       task: { type: 'string' },
+      'operator-golden-fixture': { type: 'string' },
       'force-quota-override': { type: 'boolean', default: false },
       model: { type: 'string' }, // per-run model override (logged); default = policy autonomousModel (REQ-16.3)
     },
@@ -371,6 +378,11 @@ async function runLoop(rest: string[]): Promise<void> {
     process.stderr.write(`platform loop run: ${decision.reason}\n`);
     process.exit(2);
   }
+  const operatorGoldenFixtureDir = values['operator-golden-fixture'] as string | undefined;
+  if (operatorGoldenFixtureDir === undefined) {
+    process.stderr.write('platform loop run: operator_golden_fixture_missing (pass --operator-golden-fixture <path>)\n');
+    process.exit(2);
+  }
   const contract = loadGoalContract(values.goal as string);
   // phase5-stage4 REQ-4.10: a promoted task-graph.json beside goal.yaml turns the run
   // multi-task. Absent -> undefined -> the single-task path, unchanged (REQ-4.3).
@@ -378,6 +390,9 @@ async function runLoop(rest: string[]): Promise<void> {
   // Preflight order (REQ-18.2): governance gate first, for EVERY run (stub or live)
   // — an unapproved policy never runs. The automation guard is live-only (below).
   governancePreflight();
+  // Production composition owns this validation and binding. A missing/tampered
+  // policy throws before either the fake or live adapter is constructed.
+  const offlineDependencyPolicy = phase0OfflineDependencyPolicy();
   const forceOverride = values['force-quota-override'] as boolean;
   if (decision.action === 'confirm') {
     // Automation guard (REQ-16): live-only, AFTER governance, BEFORE adapter construction.
@@ -418,12 +433,15 @@ async function runLoop(rest: string[]): Promise<void> {
       contract,
       clock: { now: () => Date.now() },
       conformanceRecord,
+      operatorGoldenFixtureDir,
+      requireOperatorGoldenFixture: true,
       persistDir: runDir, // live evidence (events.db, transcripts) survives — the fixture root does not
       // Task-12 LIVE pass wiring (REQ-25.5/25.6): tasks 5/6 built these composition
       // options but no CLI entry point ever threaded them through until now.
       governanceLogPath: join(aiDir(), 'governance', 'events.jsonl'),
       lessons: { dir: join(aiDir(), 'lessons') },
       autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
+      offlineDependencyPolicy,
       // Opt IN to the human approval/deploy gate: a LIVE run holds the loop (and its
       // Human Plane server) open so an operator can decide via the console. Passing
       // timeoutMs is what enables the blocking wait — the stub path below omits it so
@@ -443,6 +461,7 @@ async function runLoop(rest: string[]): Promise<void> {
         }),
     });
     process.stdout.write(`run evidence: ${runDir}\n`);
+    printGoldenFixture(result.goldenFixture);
     process.stdout.write(
       `LIVE run complete: ${result.finalState} (${result.iterations} iterations); ` +
         `held-out pass-rate range [${result.calibration.range.map((x) => x.toFixed(2)).join(', ')}], ` +
@@ -465,7 +484,10 @@ async function runLoop(rest: string[]): Promise<void> {
   const result = await runSupervisedLoop({
     contract,
     clock: { now: () => Date.now() },
+    operatorGoldenFixtureDir,
+    requireOperatorGoldenFixture: true,
     autoMerge: { auditSampleRate: cfg.auditSampleRate, depManifestPatterns: depManifestPatterns() },
+    offlineDependencyPolicy,
     ...(taskGraph !== undefined ? { taskGraph } : {}),
     auditSink: auditAppend,
     adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
@@ -474,7 +496,19 @@ async function runLoop(rest: string[]): Promise<void> {
     `platform loop run (stub adapter, no quota): goal ${contract.goal.id} -> ${result.finalState} ` +
       `(${result.iterations} iterations); calibration is HARNESS MATH only, not a §12 metric.\n`,
   );
+  printGoldenFixture(result.goldenFixture);
   printTaskSummary(result.tasks);
+}
+
+function printGoldenFixture(
+  provenance?: { source: string; sourceHash: string; manifestHash: string; evidenceRef: string; attribution: string },
+): void {
+  if (provenance === undefined) return;
+  process.stdout.write(
+    `golden fixture: source=${provenance.source} sourceHash=${provenance.sourceHash} ` +
+      `manifestHash=${provenance.manifestHash} attribution=${provenance.attribution} ` +
+      `evidence=${provenance.evidenceRef}\n`,
+  );
 }
 
 /** Per-task lines under the run summary — multi-task runs only (phase5-stage4 REQ-4.10). */

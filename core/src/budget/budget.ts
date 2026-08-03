@@ -16,6 +16,48 @@ export interface BudgetTracker {
   remaining(): number;
 }
 
+export type CostValidationReason = 'non_finite' | 'negative' | 'overflow';
+
+export type CostValidation =
+  | { ok: true; value: number }
+  | { ok: false; reason: CostValidationReason; detail: string };
+
+/**
+ * Validate one untrusted usage value before it can enter a budget or aggregate.
+ * `unknown` is deliberate: this is a runtime boundary, not a type assertion.
+ */
+export function validateCostUnits(value: unknown): CostValidation {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return { ok: false, reason: 'non_finite', detail: 'costUnits must be a finite number' };
+  }
+  if (value < 0) {
+    return { ok: false, reason: 'negative', detail: 'costUnits must be non-negative' };
+  }
+  return { ok: true, value };
+}
+
+/** Add untrusted usage without allowing an IEEE-754 overflow to become credit. */
+export function addCostUnits(total: unknown, increment: unknown): CostValidation {
+  const prior = validateCostUnits(total);
+  if (!prior.ok) return prior;
+  const next = validateCostUnits(increment);
+  if (!next.ok) return next;
+  const value = prior.value + next.value;
+  if (!Number.isFinite(value)) {
+    return { ok: false, reason: 'overflow', detail: 'costUnits aggregate overflowed the finite range' };
+  }
+  return { ok: true, value };
+}
+
+export class BudgetUsageError extends Error {
+  readonly reason: CostValidationReason;
+  constructor(result: Extract<CostValidation, { ok: false }>) {
+    super(result.detail);
+    this.name = 'BudgetUsageError';
+    this.reason = result.reason;
+  }
+}
+
 export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker {
   const startedAt = clock.now();
   let iterations = 0;
@@ -24,8 +66,12 @@ export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker 
 
   return {
     noteIteration(cost) {
+      const next = addCostUnits(costUnits, cost);
+      if (!next.ok) throw new BudgetUsageError(next);
+      // Validate first so invalid input and aggregate overflow cannot consume an
+      // iteration or alter the accumulated cost.
       iterations += 1;
-      costUnits += cost;
+      costUnits = next.value;
     },
     noteExcludedMs(ms) {
       if (ms > 0) excludedMs += ms;

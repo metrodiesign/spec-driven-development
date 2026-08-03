@@ -35,7 +35,7 @@ test('log API is INSERT-only — no update/delete surface (REQ-3.1)', () => {
   try {
     const log = openEventLog(t.dbPath, fixedClock);
     const surface = Object.keys(log).sort();
-    assert.deepEqual(surface, ['all', 'append', 'close', 'exportJsonl', 'projection']);
+    assert.deepEqual(surface, ['all', 'append', 'appendFenced', 'close', 'exportJsonl', 'projection']);
     log.close();
   } finally {
     t.cleanup();

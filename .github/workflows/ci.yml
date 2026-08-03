@@ -26,7 +26,8 @@ permissions:
 # current base — intentionally kept (not overridden to head.sha), see design ARC-F5.
 jobs:
   platform:
-    # Platform (unified-platform-spec.md) — Phase 0. Pinned to macOS per
+    # Platform — Phase 0 (authority: loop-engineering-implementation-spec.md §11
+    # DoD; platform-wide architecture: unified-platform-spec.md). Pinned to macOS per
     # docs/DEVIATIONS.md D-003: the fault-injection DoD#3 (egress default-deny)
     # asserts real blocked-at-connect behavior, which the Phase 0 sandbox
     # implements via darwin sandbox-exec. Linux impl (unshare -n) is future work.
@@ -38,6 +39,11 @@ jobs:
           fetch-depth: 0
       - name: Vendor-name check on core/ (INV-7)
         run: scripts/check-core-vendor-free.sh
+      - name: Golden manifest verifier (operator-supplied truth)
+        # Direct invocation is deliberately unconditional. Until the operator
+        # supplies a fixture, this reports operator_golden_fixture_missing and
+        # keeps P0-08/closure blocked instead of silently accepting an empty set.
+        run: scripts/check-golden-manifests.sh
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -55,6 +61,11 @@ jobs:
       - name: Tests (incl. core fault-injection suite)
         # Scoped on pull_request (changed package + every dependent), full on push to
         # develop/main (REQ-3.1, 3.2) — thin call into the testable script (REQ-5.3).
+        # PHASE0_REAL_MACOS_TESTS=1 un-skips the probes that need a REAL, non-nested
+        # sandbox-exec (egress DoD#3, DoD#2c/2d denial attribution, offline install).
+        # This runner is unnested macOS, so they must run here or they run nowhere.
+        env:
+          PHASE0_REAL_MACOS_TESTS: '1'
         run: scripts/ci-test-scope.sh "$GITHUB_EVENT_NAME" "$GITHUB_BASE_REF"
 
   verify:

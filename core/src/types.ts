@@ -31,6 +31,23 @@ export interface ActionRejection {
     | 'golden_write_denied'
     | 'schema_violation'
     | 'sandbox_unavailable'
+    | 'sandbox_violation'
+    | 'network_grant_unavailable'
+    | 'offline_dependency_unavailable'
+    | 'package_install_denied'
+    | 'command_artifact_unavailable'
+    | 'command_diff_rejected'
+    | 'red_artifact_frozen'
+    | 'command_failed'
+    | 'evidence_invalid'
+    | 'patch_malformed'
+    | 'patch_unsupported'
+    | 'patch_conflict'
+    | 'patch_noop'
+    | 'invalid_request'
+    | 'timed_out'
+    | 'cancelled'
+    | 'output_limit'
     | 'unsupported_action_phase0'
     // A governed network grant (package_install) that failed the security-plane
     // policy: pattern near-miss or missing lockfile (REQ-11.2, append-only).
@@ -125,6 +142,7 @@ export type EventType =
   | 'ACTION_APPLIED'
   | 'ACTION_REJECTED'
   | 'GATE_RESULT'
+  | 'EVIDENCE_AUTHORIZED'
   | 'LEASE_CLAIMED'
   | 'LEASE_RENEWED'
   | 'LEASE_RELEASED'
@@ -132,6 +150,8 @@ export type EventType =
   | 'ESCALATED'
   | 'GOVERNANCE_CHANGE'
   | 'ERROR'
+  // P0-09 core-observed RED provenance (append-only; REQ-9.6-9.9).
+  | 'RED_ARTIFACT_FROZEN'
   // Phase 1 additions (append-only; no existing type changes meaning — INV-10).
   | 'PROPOSAL_INTENT'
   | 'APPROVAL_RECORDED'
@@ -192,7 +212,9 @@ export type EventType =
   // outcomes live on the production path: the run appends exactly one of them
   // right after the event log opens and before any adapter is built.
   | 'TASK_GRAPH_FROZEN'
-  | 'TASK_GRAPH_REJECTED';
+  | 'TASK_GRAPH_REJECTED'
+  // P0-08 operator golden provenance (append-only; REQ-8.11).
+  | 'GOLDEN_FIXTURE_PROVISIONED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context
@@ -274,10 +296,35 @@ export interface GateReport {
    * commitHash (HEAD) alone would name a tree that cannot reproduce the pass.
    */
   worktreeHash: string;
+  /** Immutable task commit whose Git tree is exactly `worktreeHash`. */
+  artifactCommitHash?: string;
+  /** Immutable target-base commit used to derive the reviewed task diff. */
+  baseCommitHash?: string;
+  /** Immutable merge commit produced from `artifactCommitHash`. */
+  mergedCommitHash?: string;
   envHash: string;
   checks: GateCheck[];
   /** DoD#4 scope: golden check detects tampering only (REQ-9.3). */
   scopeNote: string;
+}
+
+export interface GateReportEvidenceHash {
+  evidenceRef: string;
+  sha256: string;
+}
+
+export interface GateReportAuth {
+  version: 'gate-report-v1';
+  algorithm: 'Ed25519';
+  keyFingerprint: string;
+  evidence: GateReportEvidenceHash[];
+  signatureBase64: string;
+}
+
+export interface AuthenticatedGateReport extends GateReport {
+  runId: string;
+  taskId: string;
+  auth: GateReportAuth;
 }
 
 /** Injectable time source — core logic never reads the wall clock directly. */

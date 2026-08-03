@@ -3,7 +3,7 @@
 // darwin-only sandbox involved — gate re-runs use /bin/sh, same as auto-merge).
 
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
@@ -13,7 +13,14 @@ import { auditSampleValue } from '../merge/auto-merge.ts';
 import { openEventLog } from '../state/event-log.ts';
 import { runOobAudit, selectAuditTargets } from './oob.ts';
 import type { EventType, GateReport, PlatformEvent } from '../types.ts';
-import { git, installFlakyTests, makeClock, makeFixture } from '../../test/helpers/fixture.ts';
+import {
+  git,
+  installFlakyTests,
+  makeClock,
+  makeFixture,
+  makeReportIntegrity,
+  PASSTHROUGH_TEST_SANDBOX,
+} from '../../test/helpers/fixture.ts';
 
 const RUN_ID = 'RUN-1';
 const TASK_ID = 'T-1';
@@ -77,6 +84,27 @@ test('selectAuditTargets: skips a COMPLETED task with no recorded mergeCommit (n
   assert.deepEqual(selectAuditTargets(events, 100, new Set()), []);
 });
 
+test('mixed hard and flaky checks classify as a hard failure before flake handling', async () => {
+  const module = (await import('./oob.ts')) as typeof import('./oob.ts') & {
+    classifyOobChecks?: (report: GateReport) => 'hard_failure' | 'flaky_suspect' | 'clean';
+  };
+  assert.equal(typeof module.classifyOobChecks, 'function');
+  const classification = module.classifyOobChecks?.({
+    tier: 'T1',
+    pass: false,
+    gateConfigHash: 'g',
+    commitHash: 'c',
+    worktreeHash: 'w',
+    envHash: 'e',
+    scopeNote: 's',
+    checks: [
+      { name: 'flaky', pass: false, flakySuspect: true, evidenceRef: 'blob://flaky' },
+      { name: 'hard', pass: false, evidenceRef: 'blob://hard' },
+    ],
+  });
+  assert.equal(classification, 'hard_failure');
+});
+
 // ---------------------------------------------------------------------------
 // Orchestration: real clone, real re-run (REQ-14.3/14.4/14.5/14.6/14.9).
 // ---------------------------------------------------------------------------
@@ -101,7 +129,9 @@ test('an honest COMPLETED task reproduces cleanly from a clean clone -> verdict 
       taskId: TASK_ID,
       log,
       evidence,
+      reportIntegrity: makeReportIntegrity(fix, evidence),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
     const original = await gates.run('T1');
     assert.equal(original.pass, true, 'genuinely green on the merged tree');
@@ -114,8 +144,8 @@ test('an honest COMPLETED task reproduces cleanly from a clean clone -> verdict 
       repoDir: fix.worktree,
       gateConfigRelPath: 'gate-ladder.json',
       sampleRate: 100,
-      evidenceDir: join(fix.root, 'oob-evidence'),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
     assert.equal(verdicts.length, 1);
@@ -134,8 +164,8 @@ test('an honest COMPLETED task reproduces cleanly from a clean clone -> verdict 
       repoDir: fix.worktree,
       gateConfigRelPath: 'gate-ladder.json',
       sampleRate: 100,
-      evidenceDir: join(fix.root, 'oob-evidence'),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
     assert.deepEqual(secondPass, [], 'already OOB-audited — not reselected on the next cycle');
   } finally {
@@ -143,7 +173,7 @@ test('an honest COMPLETED task reproduces cleanly from a clean clone -> verdict 
   }
 });
 
-test('fault injection (REQ-14.9): a COMPLETED task whose original T1 was fabricated green -> non_repro + ESCALATED, never reverted (REQ-14.6)', async () => {
+test('REQ-4.9-4.13: an unsigned fabricated T1 is rejected before OOB comparison and never reverted', async () => {
   const fix = makeFixture();
   try {
     const clock = makeClock();
@@ -182,21 +212,68 @@ test('fault injection (REQ-14.9): a COMPLETED task whose original T1 was fabrica
       repoDir: fix.worktree,
       gateConfigRelPath: 'gate-ladder.json',
       sampleRate: 100,
-      evidenceDir: join(fix.root, 'oob-evidence'),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
-    assert.equal(verdicts.length, 1);
-    assert.equal(verdicts[0]?.verdict, 'non_repro');
+    assert.equal(verdicts.length, 0, 'unauthenticated evidence cannot enter audit comparison');
 
     const reopened = openEventLog(fix.dbPath, clock);
-    assert.equal(reopened.all({ type: 'OOB_AUDIT_RESULT' }).at(-1)?.payload['reproduced'], false);
+    assert.equal(reopened.all({ type: 'OOB_AUDIT_RESULT' }).length, 0);
     const esc = reopened.all({ type: 'ESCALATED' }).at(-1);
-    assert.equal(esc?.payload['why'], 'oob_audit_mismatch');
+    assert.equal(esc?.payload['why'], 'evidence_auth_unavailable');
+    assert.equal(esc?.payload['boundary'], 'oob_audit');
     reopened.close();
 
     // Detection only — the auditor never touches the live repo's main branch.
     assert.equal(git(fix.worktree, 'rev-parse', 'main').trim(), mergeCommit, 'never reverted or mutated (REQ-14.6)');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('a legacy signed gate captured from a different tree is rejected before OOB comparison', async () => {
+  const fix = makeFixture();
+  try {
+    const clock = makeClock();
+    git(fix.worktree, 'checkout', '-q', '-b', 'task/T-1');
+    writeFileSync(join(fix.worktree, 'src/impl.txt'), 'correct\n');
+    git(fix.worktree, 'add', '-A');
+    git(fix.worktree, 'commit', '-q', '-m', 'task work');
+    const unrelatedTree = git(fix.worktree, 'rev-parse', 'main^{tree}').trim();
+    git(fix.worktree, 'checkout', '-q', 'main');
+    git(fix.worktree, 'merge', '--no-ff', '--no-edit', 'task/T-1');
+    const mergeCommit = git(fix.worktree, 'rev-parse', 'main').trim();
+
+    const log = openEventLog(fix.dbPath, clock);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    const reportIntegrity = makeReportIntegrity(fix, evidence);
+    const legacyReport = reportIntegrity.signGateReport({
+      tier: 'T1',
+      pass: true,
+      gateConfigHash: 'gate',
+      commitHash: mergeCommit,
+      worktreeHash: unrelatedTree,
+      envHash: 'env',
+      checks: [{ name: 'fullTests', pass: true, evidenceRef: evidence.put('green') }],
+      scopeNote: 'legacy fixture',
+    }, { runId: RUN_ID, taskId: TASK_ID });
+    log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'GATE_RESULT', payload: { ...legacyReport } });
+    log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'AUDIT_RESULT', payload: { sampled: false, mergeCommit } });
+    log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: 'COMPLETED' } });
+    log.close();
+
+    const verdicts = await runOobAudit({
+      dbPath: fix.dbPath,
+      repoDir: fix.worktree,
+      gateConfigRelPath: 'gate-ladder.json',
+      sampleRate: 100,
+      clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
+    });
+
+    assert.equal(verdicts.length, 0);
+    assert.equal(verdicts.failures[0]?.code, 'artifact_identity_mismatch');
   } finally {
     fix.cleanup();
   }
@@ -207,17 +284,26 @@ test('a one-time flake in the clean clone -> OOB retries once and recovers as fl
   try {
     const clock = makeClock();
     git(fix.worktree, 'checkout', '-q', '-b', 'task/T-1');
-    installFlakyTests(fix); // fails on the very first invocation anywhere, passes forever after
+    const externalMarker = join(fix.root, 'oob-flake-marker');
+    writeFileSync(
+      join(fix.worktree, 'run-tests.sh'),
+      `#!/bin/sh\nif [ -f ${JSON.stringify(externalMarker)} ]; then exit 0; else touch ${JSON.stringify(externalMarker)}; exit 1; fi\n`,
+    );
+    git(fix.worktree, 'add', '-A');
+    git(fix.worktree, 'commit', '-q', '-m', 'fixture: externally observable one-time flake');
+    const artifactCommit = git(fix.worktree, 'rev-parse', 'HEAD').trim();
+    const artifactTree = git(fix.worktree, 'rev-parse', 'HEAD^{tree}').trim();
+    const baseCommit = git(fix.worktree, 'rev-parse', 'main').trim();
     git(fix.worktree, 'checkout', '-q', 'main');
     git(fix.worktree, 'merge', '--no-ff', '--no-edit', 'task/T-1');
     const mergeCommit = git(fix.worktree, 'rev-parse', 'main').trim();
 
-    // Original capture: pre-seed the flaky marker in THIS checkout so its own
-    // T1 run is a clean, deterministic, single-attempt pass — the honest
-    // original for this merge commit (untracked, so the clone below won't see it).
-    writeFileSync(join(fix.worktree, '.flaky-ran'), '');
+    // Original capture: pre-seed state OUTSIDE the immutable artifact so its own
+    // T1 run is a clean pass while worktreeHash remains the signed commit tree.
+    writeFileSync(externalMarker, '');
     const log = openEventLog(fix.dbPath, clock);
     const evidence = createEvidenceStore(fix.evidenceDir);
+    const reportIntegrity = makeReportIntegrity(fix, evidence);
     const gates = createGateRunner({
       worktreeDir: fix.worktree,
       configPath: fix.gateConfigPath,
@@ -225,23 +311,34 @@ test('a one-time flake in the clean clone -> OOB retries once and recovers as fl
       taskId: TASK_ID,
       log,
       evidence,
+      reportIntegrity,
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
     const original = await gates.run('T1');
     assert.equal(original.pass, true, 'marker pre-seeded — a clean single-attempt pass');
+    const authorized = reportIntegrity.signGateReport({
+      ...original,
+      worktreeHash: artifactTree,
+      artifactCommitHash: artifactCommit,
+      baseCommitHash: baseCommit,
+      mergedCommitHash: mergeCommit,
+    }, { runId: RUN_ID, taskId: TASK_ID });
+    log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'EVIDENCE_AUTHORIZED', payload: { ...authorized } });
     log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'AUDIT_RESULT', payload: { sampled: false, mergeCommit } });
     log.append({ runId: RUN_ID, taskId: TASK_ID, type: 'TASK_STATE', payload: { state: 'COMPLETED' } });
     log.close();
+    unlinkSync(externalMarker);
 
-    // The clone starts fresh (no marker) — its first re-run hits the same
+    // The clone sees the same signed tree but no external marker — its first re-run hits the same
     // one-time flake the original never had to face, then recovers on retry.
     const verdicts = await runOobAudit({
       dbPath: fix.dbPath,
       repoDir: fix.worktree,
       gateConfigRelPath: 'gate-ladder.json',
       sampleRate: 100,
-      evidenceDir: join(fix.root, 'oob-evidence'),
       clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
     });
 
     assert.equal(verdicts.length, 1);
@@ -250,6 +347,71 @@ test('a one-time flake in the clean clone -> OOB retries once and recovers as fl
     const reopened = openEventLog(fix.dbPath, clock);
     assert.equal(reopened.all({ type: 'ESCALATED' }).length, 0, 'flaky_suspect is flagged, never escalated nor quarantined');
     reopened.close();
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('a mixed flake plus deterministic hard failure never receives a flake-only verdict', async () => {
+  const fix = makeFixture();
+  try {
+    const clock = makeClock();
+    git(fix.worktree, 'checkout', '-q', '-b', 'task/T-1');
+    installFlakyTests(fix);
+    writeFileSync(
+      join(fix.worktree, 'test', 'hard-failure.test.ts'),
+      'test.only("deterministic convention failure", () => {});\n',
+    );
+    git(fix.worktree, 'add', '-A');
+    git(fix.worktree, 'commit', '-q', '-m', 'fixture: mixed hard and flaky failures');
+    git(fix.worktree, 'checkout', '-q', 'main');
+    git(fix.worktree, 'merge', '--no-ff', '--no-edit', 'task/T-1');
+    const mergeCommit = git(fix.worktree, 'rev-parse', 'main').trim();
+
+    const log = openEventLog(fix.dbPath, clock);
+    const evidence = createEvidenceStore(fix.evidenceDir);
+    const reportIntegrity = makeReportIntegrity(fix, evidence);
+    const fabricatedGreen = reportIntegrity.signGateReport({
+      tier: 'T1',
+      pass: true,
+      gateConfigHash: 'x',
+      commitHash: mergeCommit,
+      worktreeHash: git(fix.worktree, 'rev-parse', `${mergeCommit}^{tree}`).trim(),
+      envHash: 'x',
+      checks: [{ name: 'fullTests', pass: true, evidenceRef: evidence.put('fabricated green') }],
+      scopeNote: 'x',
+    }, { runId: RUN_ID, taskId: TASK_ID });
+    log.append({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      type: 'GATE_RESULT',
+      payload: { ...fabricatedGreen } as unknown as Record<string, unknown>,
+    });
+    log.append({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      type: 'AUDIT_RESULT',
+      payload: { sampled: false, mergeCommit },
+    });
+    log.append({
+      runId: RUN_ID,
+      taskId: TASK_ID,
+      type: 'TASK_STATE',
+      payload: { state: 'COMPLETED' },
+    });
+    log.close();
+
+    const verdicts = await runOobAudit({
+      dbPath: fix.dbPath,
+      repoDir: fix.worktree,
+      gateConfigRelPath: 'gate-ladder.json',
+      sampleRate: 100,
+      clock,
+      sandbox: PASSTHROUGH_TEST_SANDBOX,
+    });
+
+    assert.equal(verdicts.length, 1);
+    assert.equal(verdicts[0]?.verdict, 'non_repro');
   } finally {
     fix.cleanup();
   }

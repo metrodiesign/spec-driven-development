@@ -14,16 +14,23 @@ import { createDefaultPathPolicy } from '../src/executor/path-policy.ts';
 import { createEvidenceStore } from '../src/evidence/store.ts';
 import { createExecutor } from '../src/executor/executor.ts';
 import { createGateRunner } from '../src/gates/runner.ts';
-import { denyNetworkSandbox } from '../src/security/sandbox.ts';
 import { openEventLog } from '../src/state/event-log.ts';
 import { runTaskLoop } from '../src/orchestrator/loop.ts';
 import type { Proposal, ProposalInput, ProposalSource } from '../src/ports.ts';
 import type { BudgetLimits } from '../src/types.ts';
-import { makeClock, makeFixture, makeIds, type Fixture } from './helpers/fixture.ts';
+import {
+  makeClock,
+  makeFixture,
+  makeIds,
+  makeReportIntegrity,
+  PASSTHROUGH_TEST_SANDBOX,
+  makeTestLeaseSession,
+  type Fixture,
+} from './helpers/fixture.ts';
 
 const RUN_ID = 'RUN-1';
 const TASK_ID = 'T-1';
-const darwinOnly = { skip: process.platform !== 'darwin' ? 'probes require the darwin sandbox (D-003)' : false };
+const logicOnly = { skip: false };
 
 function build(fix: Fixture, limits: BudgetLimits) {
   const clock = makeClock();
@@ -36,7 +43,7 @@ function build(fix: Fixture, limits: BudgetLimits) {
     log,
     evidence,
     policy: createDefaultPathPolicy(),
-    sandbox: denyNetworkSandbox(process.platform),
+    sandbox: PASSTHROUGH_TEST_SANDBOX,
     clock,
   });
   const gates = createGateRunner({
@@ -46,7 +53,9 @@ function build(fix: Fixture, limits: BudgetLimits) {
     taskId: TASK_ID,
     log,
     evidence,
+    reportIntegrity: makeReportIntegrity(fix, evidence),
     clock,
+    sandbox: PASSTHROUGH_TEST_SANDBOX,
   });
   const run = (source: ProposalSource, budget = createBudget(limits, clock)) =>
     runTaskLoop({
@@ -61,13 +70,14 @@ function build(fix: Fixture, limits: BudgetLimits) {
       clock,
       evidence,
       ids: makeIds(),
+      lease: makeTestLeaseSession(TASK_ID),
     });
   return { log, evidence, run };
 }
 
 const LIMITS: BudgetLimits = { maxIterations: 8, maxCostUnits: 500, maxWallclockMs: 60_000 };
 
-test('confirmed hypothesis -> REPAIRING, patch plan folded as marked feedback, reaches REVIEWING (REQ-5.4)', darwinOnly, async () => {
+test('confirmed hypothesis -> REPAIRING, patch plan folded as marked feedback, reaches REVIEWING (REQ-5.4)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     const c = build(fix, LIMITS);
@@ -117,7 +127,7 @@ test('confirmed hypothesis -> REPAIRING, patch plan folded as marked feedback, r
   }
 });
 
-test('all hypotheses refuted -> ESCALATED hypotheses_exhausted with an ordered, dump-free log (REQ-5.6)', darwinOnly, async () => {
+test('all hypotheses refuted -> ESCALATED hypotheses_exhausted with an ordered, dump-free log (REQ-5.6)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     const c = build(fix, LIMITS);
@@ -173,6 +183,7 @@ test('REQ-6.7: charging a round to exactly zero escalates budget_exhausted befor
     assert.equal(proposeCalls, 1, 'no further AgentRequest built once the budget is spent (REQ-6.7)');
     const esc = c.log.all({ type: 'ESCALATED' }).at(-1);
     assert.equal(esc?.payload['why'], 'budget_exhausted');
+    assert.equal(c.log.all({ type: 'BUDGET_EXCEEDED' }).at(-1)?.payload['limit'], 'costUnits');
   } finally {
     fix.cleanup();
   }

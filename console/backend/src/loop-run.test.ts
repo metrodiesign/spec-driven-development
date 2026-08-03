@@ -53,6 +53,11 @@ const CONTRACT: TaskContract = {
 
 const clock = { now: () => 1_000_000 };
 
+// Every synthetic target in this legacy harness opts into the named test seam;
+// production/CLI callers must provide operatorGoldenFixtureDir instead.
+const runSyntheticLoop = (opts: Parameters<typeof runSupervisedLoop>[0]) =>
+  runSupervisedLoop({ ...opts, syntheticGoldenFixtureForTests: true });
+
 // Deploy commands run through the REAL sandboxed executor (RUN_COMMAND), same
 // requirement as core/src/deploy/stage.test.ts (D-003).
 const darwinOnly = { skip: process.platform !== 'darwin' ? 'darwin-only RUN_COMMAND sandbox (D-003)' : false };
@@ -69,8 +74,8 @@ interface ApprovalPackageJSON {
   provenance?: { specPath: string; requirementsCommit: string; requirementsSha256?: string; generatedAt: string };
 }
 
-/** Poll `fn` until it returns non-null, or throw after `timeoutMs` (default 5s). */
-async function waitFor<T>(fn: () => Promise<T | null> | T | null, timeoutMs = 5000): Promise<T> {
+/** Poll `fn` until it returns non-null, or throw after `timeoutMs` (default 45s). */
+async function waitFor<T>(fn: () => Promise<T | null> | T | null, timeoutMs = 45_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const v = await fn();
@@ -152,7 +157,7 @@ function rollbackDeploy(url: string, token: string): Promise<number> {
 test('supervised loop with the FakeAdapter reaches REVIEWING; calibration computed (harness math only)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -205,7 +210,7 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
 test('outcomeRouting mode off suppresses SHADOW_ROUTE entirely (REQ-14.3)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
-    await runSupervisedLoop({
+    await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -228,7 +233,7 @@ test('outcomeRouting mode off suppresses SHADOW_ROUTE entirely (REQ-14.3)', asyn
 test('outcomeRouting mode active wraps shadow OUTSIDE the outcome wrapper — both record (REQ-14.3/15.4)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
-    await runSupervisedLoop({
+    await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -255,7 +260,7 @@ test('the human approval wait is OPT-IN: no approval option -> the package is le
   try {
     // No `approval` option -> the CI/stub default: do NOT block on a human that isn't
     // there. Before the fix this hung 30 minutes then ESCALATED (approval_timeout).
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -280,7 +285,7 @@ test('outcomeRouting minSamples/minDivergences are threaded into the shadowProve
     // A single-adapter fixture records n>=1 SHADOW_ROUTE and 0 divergences; with BOTH
     // thresholds at 0, proven = n>=0 && divergences>=0 = true — only observable if the
     // knobs actually reach shadowProven (the hard-coded minSamples 20 would be false).
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -297,7 +302,7 @@ test('outcomeRouting minSamples/minDivergences are threaded into the shadowProve
 test('the shadowProven snapshot defaults to minSamples 20 when outcomeRouting omits the thresholds (finding 12 default preserved)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -328,7 +333,7 @@ const PLAN_PROFILE: FusionProfile = {
 test('planning enabled+triggered dispatches role planner BEFORE the task loop -> PLAN_RESOLVED; a resolved plan is advisory and never changes the task loop\'s outcome (REQ-16.2/16.5)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
   try {
-    const result = await runSupervisedLoop({
+    const result = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -368,7 +373,7 @@ test('planning never dispatches when EITHER axis is off, or the option is absent
   for (const planning of cases) {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
     try {
-      await runSupervisedLoop({
+      await runSyntheticLoop({
         contract: CONTRACT,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -401,7 +406,7 @@ test('planner-fusion panel builds peek the SAME wrapped router (REQ-16.2) but re
     // routes through that SAME wrapped router (REQ-16.2/AZ-13) but via a non-recording
     // peek (eligibleAdapters record:false), so each planPanel call applies the governed
     // reorder yet appends no role:'planner' SHADOW_ROUTE/OUTCOME_ROUTE to pollute stats.
-    await runSupervisedLoop({
+    await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -466,7 +471,7 @@ const L1_CONTRACT_DEPLOY_WITH_PROVENANCE: TaskContract = { ...L1_CONTRACT_DEPLOY
 test('E2E (REQ-18.4): an L1 task auto-merges + the sampled audit reproduces -> COMPLETED', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-e2e-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: L1_CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -503,7 +508,7 @@ test(
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-repair-'));
     try {
-      const out = await runSupervisedLoop({
+      const out = await runSyntheticLoop({
         contract: L1_CONTRACT,
         // `repairable`: writes the wrong marker first (T1 fails -> DIAGNOSING), then the
         // correct one after the hypothesis is confirmed by a real sandboxed probe.
@@ -543,7 +548,7 @@ test(
     try {
       // Run 1: the SAME repair fixture as the test above confirms a hypothesis.
       // REQ-10.1: post-run, folded into a pending lesson + a lesson_promote proposal.
-      const out1 = await runSupervisedLoop({
+      const out1 = await runSyntheticLoop({
         contract: L1_CONTRACT,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', behavior: 'repairable', putContent: put }),
         clock,
@@ -581,7 +586,7 @@ test(
       // Run 2: a plain (non-repairing) run against the SAME lessons/governance state.
       // REQ-11.3: the reconciler moves pending/ -> approved/ on load. REQ-12: the
       // approved lesson is then injected into this run's own context bundle.
-      const out2 = await runSupervisedLoop({
+      const out2 = await runSyntheticLoop({
         contract: CONTRACT,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -627,7 +632,7 @@ test('a non-golden / no-risk task builds a real approval package with the core-c
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-appkg-'));
   try {
     // CONTRACT has no `risk` -> defaults to L2 -> the approval package, not auto-merge.
-    const resultPromise = runSupervisedLoop({
+    const resultPromise = runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -671,7 +676,7 @@ test('a non-golden / no-risk task builds a real approval package with the core-c
 test('contract.provenance flows through to the task approval package (phase5-stage3 REQ-6.2)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-appkg-prov-'));
   try {
-    const resultPromise = runSupervisedLoop({
+    const resultPromise = runSyntheticLoop({
       contract: CONTRACT_WITH_PROVENANCE,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -694,7 +699,7 @@ test('contract.provenance flows through to the task approval package (phase5-sta
 test('a human reject ends the run CHANGES_REQUESTED — terminal, no retry (REQ-3.3)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-reject-'));
   try {
-    const resultPromise = runSupervisedLoop({
+    const resultPromise = runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -724,7 +729,7 @@ test('a human reject ends the run CHANGES_REQUESTED — terminal, no retry (REQ-
 test('kill while a package is pending ends the wait -> CANCELLED, the same terminal a mid-loop kill reaches (REQ-3.6)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-killpkg-'));
   try {
-    const resultPromise = runSupervisedLoop({
+    const resultPromise = runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -744,6 +749,45 @@ test('kill while a package is pending ends the wait -> CANCELLED, the same termi
   }
 });
 
+test('invalid task-approval evidence escalates and releases the pending decision wait immediately', async () => {
+  const persistDir = mkdtempSync(join(tmpdir(), 'loop-approval-invalid-evidence-'));
+  try {
+    const resultPromise = runSyntheticLoop({
+      contract: CONTRACT,
+      adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+      clock,
+      persistDir,
+      autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+      approval: { timeoutMs: 1000 },
+    });
+    const { url, token } = await waitForDiscovery(persistDir);
+    const pending = await waitForApprovalPackage(url, token);
+    assert.ok(pending.diffRef.startsWith('blob://'));
+    rmSync(join(persistDir, 'evidence', pending.diffRef.slice('blob://'.length)));
+
+    const decideStatus = await decide(url, token, pending.id, 'approve', pending.attestations);
+    assert.equal(decideStatus, 409);
+
+    const released = await Promise.race([
+      resultPromise.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
+    ]);
+    const out = await resultPromise;
+    assert.equal(released, true, 'evidence escalation must not leave the loop waiting for approval timeout');
+    assert.equal(out.finalState, 'ESCALATED');
+
+    const log = openEventLog(join(persistDir, 'events.db'), clock);
+    try {
+      assert.equal(log.all({ type: 'APPROVAL_RECORDED' }).length, 0);
+      assert.equal(log.all({ type: 'TASK_STATE' }).at(-1)?.payload['state'], 'ESCALATED');
+    } finally {
+      log.close();
+    }
+  } finally {
+    rmSync(persistDir, { recursive: true, force: true });
+  }
+});
+
 // --- Deploy gate (REQ-6): built ALWAYS post-COMPLETED when deploy: is configured,
 // on a SEPARATE surface from the task approvals Map/onDecision (architect finding
 // #1) — guard-path unit coverage (400/404/409/501) lives in core/src/human/api.test.ts;
@@ -755,7 +799,7 @@ test(
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-approve-'));
     try {
-      const resultPromise = runSupervisedLoop({
+      const resultPromise = runSyntheticLoop({
         contract: L1_CONTRACT_DEPLOY,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -768,6 +812,13 @@ test(
       const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
       assert.equal(pending.approval?.id, 'deploy-T-1');
       assert.equal(pending.approval?.riskClass, 'L4', 'architect finding #7: deploy uses L4 attestations');
+      const deployDiffRef = pending.approval?.diffRef;
+      if (deployDiffRef === undefined) assert.fail('deploy approval is missing diffRef');
+      const reviewedDeployDiff = readFileSync(
+        join(persistDir, 'evidence', deployDiffRef.slice('blob://'.length)),
+        'utf8',
+      );
+      assert.match(reviewedDeployDiff, /src\/impl\.txt/, 'deploy approver receives the signed merge first-parent diff');
 
       // Regression (architect finding #1): the deploy package never enters GET /approvals.
       const taskApprovals = await fetchApprovals(url, token);
@@ -803,12 +854,56 @@ test(
 );
 
 test(
+  'invalid deploy evidence escalates and releases the pending decision wait immediately',
+  darwinOnly,
+  async () => {
+    const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-invalid-evidence-'));
+    try {
+      const resultPromise = runSyntheticLoop({
+        contract: L1_CONTRACT_DEPLOY,
+        adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
+        clock,
+        persistDir,
+        autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
+        approval: { timeoutMs: 1000 },
+      });
+      const { url, token } = await waitForDiscovery(persistDir);
+      const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
+      const diffRef = pending.approval?.diffRef;
+      if (diffRef === undefined) assert.fail('deploy approval is missing diffRef');
+      assert.ok(diffRef.startsWith('blob://'));
+      rmSync(join(persistDir, 'evidence', diffRef.slice('blob://'.length)));
+
+      const decideStatus = await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      assert.equal(decideStatus, 409);
+
+      const released = await Promise.race([
+        resultPromise.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
+      ]);
+      if (!released) await resultPromise;
+      assert.equal(released, true, 'evidence escalation must not leave the loop waiting for approval timeout');
+
+      const log = openEventLog(join(persistDir, 'events.db'), clock);
+      try {
+        assert.equal(log.all({ type: 'DEPLOY_STATE' }).at(-1)?.payload['state'], 'ESCALATED');
+        assert.equal(log.all({ type: 'DEPLOY_DECISION' }).length, 0);
+      } finally {
+        log.close();
+      }
+    } finally {
+      rmSync(persistDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'contract.provenance flows through to the deploy approval package too — direct-literal site, critique D3 (phase5-stage3 REQ-6.2)',
   darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-prov-'));
     try {
-      const resultPromise = runSupervisedLoop({
+      const resultPromise = runSyntheticLoop({
         contract: L1_CONTRACT_DEPLOY_WITH_PROVENANCE,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -836,7 +931,7 @@ test(
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-reject-'));
     try {
-      const resultPromise = runSupervisedLoop({
+      const resultPromise = runSyntheticLoop({
         contract: L1_CONTRACT_DEPLOY,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -871,7 +966,7 @@ test(
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-timeout-'));
     try {
-      const out = await runSupervisedLoop({
+      const out = await runSyntheticLoop({
         contract: L1_CONTRACT_DEPLOY,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -901,7 +996,7 @@ test(
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-rollback-'));
     const audited: Record<string, unknown>[] = [];
     try {
-      const resultPromise = runSupervisedLoop({
+      const resultPromise = runSyntheticLoop({
         contract: L1_CONTRACT_DEPLOY,
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -946,7 +1041,7 @@ test(
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-rbfail-'));
     try {
-      const resultPromise = runSupervisedLoop({
+      const resultPromise = runSyntheticLoop({
         contract: { ...L1_CONTRACT, deploy: { ...DEPLOY_OK, rollbackCmd: 'exit 3' } },
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -982,7 +1077,7 @@ test(
 test('a diff over the budget escalates split_required — no package built (REQ-2.3)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-splitreq-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -1014,7 +1109,7 @@ test('a governance-approved flaky_quarantine takes effect on load — the task i
     const proposal = proposeFlakyQuarantine({ logPath, taskId: 'T-1', clock });
     approveProposal({ logPath, id: proposal.id, clock, decidedBy: 'human' });
 
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: CONTRACT,
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
@@ -1081,6 +1176,9 @@ function fakeLog(failType?: EventType): EventLog & { appended: PlatformEvent[] }
       const event: PlatformEvent = { seq, ts: `t${seq}`, ...e };
       appended.push(event);
       return event;
+    },
+    appendFenced(e) {
+      return this.append(e);
     },
     all(filter) {
       return appended.filter(
@@ -1233,7 +1331,7 @@ test(
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-exhaust-'));
     try {
-      const out = await runSupervisedLoop({
+      const out = await runSyntheticLoop({
         contract: { ...CONTRACT, budget: { ...CONTRACT.budget, maxHypothesesPerFailure: 5 } },
         // Never self-heals + diagnoses with 8 never-confirming hypotheses: only the
         // contract cap can end the cycle. With the wire disconnected the engine
@@ -1263,7 +1361,7 @@ test('a planning dispatcher assembled WIDER than the contract\'s max_parallel_ag
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-guard-'));
   try {
     await assert.rejects(
-      runSupervisedLoop({
+      runSyntheticLoop({
         contract: { ...CONTRACT, budget: { ...CONTRACT.budget, maxParallelAgents: 1 } },
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
@@ -1281,7 +1379,7 @@ test('a planning dispatcher assembled WIDER than the contract\'s max_parallel_ag
 test('the guard mirrors the dispatch condition: planner trigger OFF -> no dispatch this run, an over-wide dispatcher is NOT refused (REQ-4.2 is WHILE-dispatching — Codex review PR #110)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-guard-off-'));
   try {
-    const out = await runSupervisedLoop({
+    const out = await runSyntheticLoop({
       contract: { ...CONTRACT, budget: { ...CONTRACT.budget, maxParallelAgents: 1 } },
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,

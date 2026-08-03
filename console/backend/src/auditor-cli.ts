@@ -11,8 +11,8 @@ export interface AuditorCommandInput {
   dbPath: string;
   repoDir: string;
   gateConfigRelPath: string;
+  conventionPolicyRelPath?: string;
   defaultRate: number;
-  evidenceDir: string;
   now(): number;
 }
 
@@ -48,12 +48,14 @@ export async function runAuditorCommand(input: AuditorCommandInput): Promise<Aud
     dbPath: values.db ?? input.dbPath,
     repoDir: values.repo ?? input.repoDir,
     gateConfigRelPath: input.gateConfigRelPath,
+    ...(input.conventionPolicyRelPath === undefined
+      ? {}
+      : { conventionPolicyRelPath: input.conventionPolicyRelPath }),
     sampleRate: rate,
-    evidenceDir: input.evidenceDir,
     clock: { now: input.now },
   });
 
-  if (verdicts.length === 0) {
+  if (verdicts.length === 0 && verdicts.failures.length === 0) {
     return { code: 0, out: 'oob auditor: no eligible targets this cycle\n', err: '' };
   }
   const lines = verdicts.map(
@@ -61,9 +63,12 @@ export async function runAuditorCommand(input: AuditorCommandInput): Promise<Aud
       `${v.taskId}  ${v.verdict}  mergeCommit=${v.mergeCommit.slice(0, 12)}  original=${v.originalRef}  rerun=${v.rerunRef}`,
   );
   const nonRepro = verdicts.filter((v) => v.verdict === 'non_repro').length;
+  const failures = verdicts.failures.map(
+    (failure) => `${failure.taskId}  ${failure.code}  ${failure.detail}`,
+  );
   return {
-    code: nonRepro > 0 ? 2 : 0,
-    out: `${lines.join('\n')}\n`,
-    err: '',
+    code: nonRepro > 0 || failures.length > 0 ? 2 : 0,
+    out: lines.length > 0 ? `${lines.join('\n')}\n` : '',
+    err: failures.length > 0 ? `${failures.join('\n')}\n` : '',
   };
 }

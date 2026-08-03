@@ -53,6 +53,9 @@ function memLog(): EventLog & { events: PlatformEvent[] } {
       events.push(ev);
       return ev;
     },
+    appendFenced(e) {
+      return this.append(e);
+    },
     all(filter) {
       return events.filter((e) => (filter?.type === undefined || e.type === filter.type) && (filter?.taskId === undefined || e.taskId === filter.taskId));
     },
@@ -107,17 +110,18 @@ interface Setup {
   evidence: EvidenceStore;
 }
 
-function fakesWithStore(evidence: EvidenceStore, specs: { id: string; lineage: string; content?: string; fault?: 'throw_transport' }[]): FakeAdapter[] {
+function fakesWithStore(evidence: EvidenceStore, specs: { id: string; lineage: string; content?: string; fault?: 'throw_transport'; usageCostUnits?: number }[]): FakeAdapter[] {
   return specs.map((s) => new FakeAdapter({
     id: s.id,
     lineage: s.lineage,
     ...(s.fault !== undefined ? { fault: s.fault } : {}),
     writeContent: s.content ?? 'correct\n',
+    ...(s.usageCostUnits !== undefined ? { usageCostUnits: s.usageCostUnits } : {}),
     putContent: (str) => evidence.put(str),
   }));
 }
 
-function setupWith(specs: { id: string; lineage: string; content?: string; fault?: 'throw_transport' }[], baseCost = 500): Setup & { base: AgentRequest } {
+function setupWith(specs: { id: string; lineage: string; content?: string; fault?: 'throw_transport'; usageCostUnits?: number }[], baseCost = 500): Setup & { base: AgentRequest } {
   const evidence = memEvidence();
   const log = memLog();
   const reg = createRegistry();
@@ -143,6 +147,29 @@ test('panel fans out N candidates with distinct requestIds derived from the base
   const ids = panel.payload['requestIds'] as string[];
   assert.deepEqual(ids, ['REQ-base#fp0', 'REQ-base#fp1']);
   assert.equal(new Set(ids).size, 2, 'requestIds are distinct');
+});
+
+test('fusion rejects invalid candidate usage before aggregation and emits invalid_response (REQ-7.3/7.4/7.5)', async () => {
+  const s = setupWith([
+    { id: 'A', lineage: 'familyA', usageCostUnits: -1 },
+    { id: 'B', lineage: 'familyB', usageCostUnits: 2 },
+  ]);
+  const out = await runFusion(s.deps, profile(), s.base);
+  assert.equal(out.winner, null);
+  assert.equal(out.escalateReason, 'invalid_response');
+  assert.equal(out.usage.costUnits, 0, 'invalid usage is not credited');
+  assert.equal(s.log.events.find((e) => e.type === 'ESCALATED')?.payload['why'], 'invalid_response');
+});
+
+test('fusion rejects aggregate usage overflow without losing prior finite usage (REQ-7.3/7.5)', async () => {
+  const s = setupWith([
+    { id: 'A', lineage: 'familyA', usageCostUnits: Number.MAX_VALUE },
+    { id: 'B', lineage: 'familyB', usageCostUnits: Number.MAX_VALUE },
+  ]);
+  const out = await runFusion(s.deps, profile(), s.base);
+  assert.equal(out.winner, null);
+  assert.equal(out.escalateReason, 'invalid_response');
+  assert.equal(out.usage.costUnits, Number.MAX_VALUE, 'prior finite candidate usage remains the aggregate');
 });
 
 test('code_diff resolves to the gate-green candidate and emits the FUSION_* trail (REQ-9.6/10.1)', async () => {

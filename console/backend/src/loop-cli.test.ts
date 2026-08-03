@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -8,9 +9,111 @@ import {
   decideLiveRun,
   latestConformanceRecordPath,
   loadGoalContract,
+  loadOfflineDependencyPolicy,
   mungeProjectDir,
   readConformanceRecord,
 } from './loop-cli.ts';
+import { makeSyntheticFixtureRepoForTests } from './loop-run.ts';
+
+test('REQ-2.31-2.36: production binds an exact offline-only dependency policy to its target', () => {
+  const policy = loadOfflineDependencyPolicy(
+    join(import.meta.dirname, '..', '..', '..', '.ai', 'policies', 'security-plane.json'),
+  );
+  const fixture = makeSyntheticFixtureRepoForTests();
+  try {
+    const manifest = readFileSync(join(fixture.wt, policy.manifestPath));
+    const lockfile = readFileSync(join(fixture.wt, policy.lockfilePath));
+    assert.equal(createHash('sha256').update(manifest).digest('hex'), policy.manifestHash);
+    assert.equal(createHash('sha256').update(lockfile).digest('hex'), policy.lockfileHash);
+    assert.deepEqual(policy.allowedRoles, ['implementer']);
+    assert.deepEqual(policy.commands, [
+      'pnpm install --offline --frozen-lockfile --ignore-scripts --config.node-linker=hoisted',
+    ]);
+    assert.equal(policy.approvedSources.length, 1);
+    const source = policy.approvedSources[0];
+    assert.ok(source);
+    const sourceHash = createHash('sha256')
+      .update(
+        JSON.stringify(
+          ['index.js', 'package.json'].map((path) => ({
+            path,
+            sha256: createHash('sha256')
+              .update(readFileSync(join(source.sourcePath, path)))
+              .digest('hex'),
+          })),
+        ),
+      )
+      .digest('hex');
+    assert.equal(sourceHash, source.contentHash);
+    assert.deepEqual(policy.approvedSourceHashes, [sourceHash]);
+    assert.deepEqual(policy.approvedOutputMetadata, [
+      {
+        path: 'node_modules/.modules.yaml',
+        validator: 'pnpm_modules_json_v1',
+        packageManager: 'pnpm@11.9.0',
+      },
+      {
+        path: 'node_modules/.package-map.json',
+        validator: 'pnpm_package_map_json_v1',
+      },
+      {
+        path: 'node_modules/.pnpm-workspace-state-v1.json',
+        validator: 'pnpm_workspace_state_json_v1',
+      },
+      {
+        path: 'node_modules/.pnpm/lock.yaml',
+        validator: 'exact_lockfile_v1',
+      },
+    ]);
+    assert.deepEqual(policy.persistentOutputRoots, ['node_modules']);
+    assert.equal(policy.lifecycleScripts, 'disabled');
+    assert.equal(policy.network, 'none');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('REQ-2.31-2.36: malformed or network-widening production policy fails closed', () => {
+  const root = mkdtempSync(join(tmpdir(), 'offline-policy-'));
+  const path = join(root, 'security-plane.json');
+  try {
+    writeFileSync(path, JSON.stringify({ depManifestPatterns: [] }));
+    assert.throws(() => loadOfflineDependencyPolicy(path), /missing/);
+    writeFileSync(
+      path,
+      JSON.stringify({
+        offlineDependency: {
+          version: 1,
+          allowedRoles: ['implementer'],
+          commands: ['pnpm install --offline --frozen-lockfile --ignore-scripts'],
+          lockfilePath: 'pnpm-lock.yaml',
+          lockfileHash: 'a'.repeat(64),
+          approvedSourceHashes: [],
+          lifecycleScripts: 'disabled',
+          network: 'allow',
+        },
+      }),
+    );
+    assert.throws(() => loadOfflineDependencyPolicy(path), /invalid/);
+
+    const productionPolicy = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, '..', '..', '..', '.ai', 'policies', 'security-plane.json'),
+        'utf8',
+      ),
+    ) as { offlineDependency: { approvedOutputMetadata: unknown } };
+    productionPolicy.offlineDependency.approvedOutputMetadata = [
+      {
+        path: 'node_modules/.manager-state',
+        validator: 'trust_manager_output_v1',
+      },
+    ];
+    writeFileSync(path, JSON.stringify(productionPolicy));
+    assert.throws(() => loadOfflineDependencyPolicy(path), /invalid/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('live guard: default is the CI-safe stub adapter', () => {
   assert.deepEqual(decideLiveRun({ live: false, ciEnv: true, isTTY: false }), { action: 'stub' });

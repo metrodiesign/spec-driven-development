@@ -11,6 +11,22 @@ export interface ProjectionState {
   eventCount: number;
 }
 
+/** The immutable owner generation used to fence a side-effect event. */
+export interface FencedEventClaim {
+  taskId: string;
+  ownerId: string;
+  fencingToken: number;
+}
+
+export class LeaseFenceError extends Error {
+  readonly code = 'lease_lost';
+
+  constructor(detail = 'task lease was lost before the event could be committed') {
+    super(detail);
+    this.name = 'LeaseFenceError';
+  }
+}
+
 export interface EventLog {
   append(e: {
     runId: string;
@@ -18,6 +34,22 @@ export interface EventLog {
     type: EventType;
     payload: Record<string, unknown>;
   }): PlatformEvent;
+  /**
+   * Atomically verify the current task lease and append the event while the
+   * SQLite write lock is held. A replacement owner therefore either wins the
+   * lock first (returning null here) or observes this event before reclaiming;
+   * there is no verify→append race window.
+   */
+  appendFenced(
+    e: {
+      runId: string;
+      taskId: string | null;
+      type: EventType;
+      payload: Record<string, unknown>;
+    },
+    claim: FencedEventClaim,
+    now?: number,
+  ): PlatformEvent | null;
   all(filter?: { taskId?: string; type?: EventType }): PlatformEvent[];
   exportJsonl(): string;
   /** Rebuild purely from stored events (REQ-3.2). */
@@ -52,6 +84,37 @@ export function openEventLog(dbPath: string, clock: Clock): EventLog {
     append(e) {
       const { seq, ts } = insertEvent(db, clock, e);
       return { seq, ts, runId: e.runId, taskId: e.taskId, type: e.type, payload: e.payload };
+    },
+
+    appendFenced(e, claim, now) {
+      const currentNow = now ?? clock.now();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const lease = db
+          .prepare('SELECT owner_id, fencing_token, lease_until FROM leases WHERE task_id = ?')
+          .get(claim.taskId) as
+          | { owner_id: string; fencing_token: number; lease_until: number }
+          | undefined;
+        if (
+          lease === undefined ||
+          lease.owner_id !== claim.ownerId ||
+          lease.fencing_token !== claim.fencingToken ||
+          lease.lease_until < currentNow
+        ) {
+          db.exec('ROLLBACK');
+          return null;
+        }
+        const { seq, ts } = insertEvent(db, clock, e);
+        db.exec('COMMIT');
+        return { seq, ts, runId: e.runId, taskId: e.taskId, type: e.type, payload: e.payload };
+      } catch (error) {
+        try {
+          db.exec('ROLLBACK');
+        } catch {
+          // Preserve the original database error.
+        }
+        throw error;
+      }
     },
 
     all(filter) {

@@ -51,6 +51,8 @@ export interface FakeAdapterOptions {
   putContent?: (content: string) => string;
   /** The file body the compliant fake proposes to write (default satisfies the fixture gate). */
   writeContent?: string;
+  /** Test-only usage override for normalized-budget fault injection. */
+  usageCostUnits?: number;
 }
 
 interface Directive {
@@ -90,6 +92,7 @@ export class FakeAdapter implements AdapterInterface {
   private readonly contextWindowTokens: number;
   private readonly putContent: ((content: string) => string) | undefined;
   private readonly writeContent: string;
+  private readonly usageCostUnits: number | undefined;
   private readonly lineage: string | undefined;
   /** requestId -> response (durable-within-instance replay; P8). */
   private readonly replay = new Map<string, AgentResponse>();
@@ -108,6 +111,7 @@ export class FakeAdapter implements AdapterInterface {
     this.contextWindowTokens = opts.contextWindowTokens ?? 200_000;
     this.putContent = opts.putContent;
     this.writeContent = opts.writeContent ?? 'correct\n';
+    this.usageCostUnits = opts.usageCostUnits;
     this.lineage = opts.lineage;
     this.healthProbe =
       opts.fault === 'health_unhealthy'
@@ -242,7 +246,7 @@ export class FakeAdapter implements AdapterInterface {
     return {
       structuredResult,
       actionRequests,
-      usage: { costUnits: budgetLow ? 1 : 2, raw: { attempt } },
+      usage: { costUnits: this.usageCostUnits ?? (budgetLow ? 1 : 2), raw: { attempt } },
       rawTranscriptRef: null,
       adapterMeta: {
         adapterId: this.id,

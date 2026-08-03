@@ -8,12 +8,19 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { createEvidenceStore } from '../evidence/store.ts';
-import { createGateRunner } from '../gates/runner.ts';
+import { createGateRunner, type GateRunner } from '../gates/runner.ts';
 import { createLeaseManager, type LeaseManager } from '../state/lease.ts';
 import { openEventLog, type EventLog } from '../state/event-log.ts';
 import { createMergeQueue, type MergeCandidate } from './queue.ts';
 import type { GateReport } from '../types.ts';
-import { git, makeClock, makeFixture, type Fixture } from '../../test/helpers/fixture.ts';
+import {
+  git,
+  makeClock,
+  makeFixture,
+  makeReportIntegrity,
+  PASSTHROUGH_TEST_SANDBOX,
+  type Fixture,
+} from '../../test/helpers/fixture.ts';
 
 const RUN_ID = 'RUN-1';
 const MAIN = 'main';
@@ -29,8 +36,20 @@ const FAKE_ORIGINAL_REPORT: GateReport = {
   scopeNote: 'x',
 };
 
-function candidate(taskId: string, taskBranch: string): MergeCandidate {
-  return { taskId, taskBranch, approvalBasis: 'auto_approved', originalReport: FAKE_ORIGINAL_REPORT };
+function candidate(fix: Fixture, taskId: string, taskBranch: string): MergeCandidate {
+  const evidence = createEvidenceStore(fix.evidenceDir);
+  const reportIntegrity = makeReportIntegrity(fix, evidence);
+  return {
+    taskId,
+    taskBranch,
+    approvalBasis: 'auto_approved',
+    originalReport: reportIntegrity.signGateReport({
+      ...FAKE_ORIGINAL_REPORT,
+      worktreeHash: git(fix.worktree, 'rev-parse', `${taskBranch}^{tree}`).trim(),
+      artifactCommitHash: git(fix.worktree, 'rev-parse', taskBranch).trim(),
+      baseCommitHash: git(fix.worktree, 'rev-parse', MAIN).trim(),
+    }, { runId: RUN_ID, taskId }),
+  };
 }
 
 function setupTaskBranch(fix: Fixture, branch: string, files: Record<string, string>): void {
@@ -64,22 +83,38 @@ function queueFor(
   lease: LeaseManager,
   clock: ReturnType<typeof makeClock>,
   taskId: string,
+  afterGateRun?: () => void,
 ) {
+  const evidence = createEvidenceStore(fix.evidenceDir);
+  const reportIntegrity = makeReportIntegrity(fix, evidence);
   const gates = createGateRunner({
     worktreeDir: integrationDir,
     configPath: join(integrationDir, 'gate-ladder.json'),
     runId: RUN_ID,
     taskId,
     log,
-    evidence: createEvidenceStore(fix.evidenceDir),
+    evidence,
+    reportIntegrity,
     clock,
+    sandbox: PASSTHROUGH_TEST_SANDBOX,
   });
+  const queueGates: GateRunner = afterGateRun === undefined
+    ? gates
+    : {
+        async run(tier) {
+          const report = await gates.run(tier);
+          afterGateRun();
+          return report;
+        },
+        verify: (report) => gates.verify(report),
+      };
   return createMergeQueue({
     runId: RUN_ID,
     repoDir: fix.worktree,
     mainBranch: MAIN,
     worktreeDir: integrationDir,
-    gates,
+    gates: queueGates,
+    reportIntegrity,
     log,
     lease,
   });
@@ -93,16 +128,71 @@ test('T2 not_enabled ({status}) -> merges, advances main, labels MERGE_RESULT ti
     const lease = createLeaseManager(fix.dbPath, clock, RUN_ID);
     const integrationDir = setupIntegrationWorktree(fix);
     setupTaskBranch(fix, 'task/A', { 'src/feature.txt': 'ship\n' });
+    const signedCandidate = candidate(fix, 'A', 'task/A');
 
-    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate('A', 'task/A'));
+    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(signedCandidate);
 
     assert.equal(result.outcome, 'merged');
     assert.ok(result.mergeCommit);
     assert.equal(result.t2Report?.pass, 'not_enabled');
     assert.equal(git(fix.worktree, 'rev-parse', MAIN).trim(), result.mergeCommit, 'main advanced to the merge commit');
+    const parents = git(fix.worktree, 'rev-list', '--parents', '-1', result.mergeCommit as string).trim().split(/\s+/);
+    assert.equal(parents[1], signedCandidate.originalReport.baseCommitHash, 'queue merge uses the exact signed base first');
+    assert.equal(parents[2], signedCandidate.originalReport.artifactCommitHash, 'queue merge uses the exact signed artifact second');
     const mr = log.all({ type: 'MERGE_RESULT' }).at(-1);
     assert.equal(mr?.payload['outcome'], 'merged');
     assert.equal(mr?.payload['tier'], 't1_only');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('an external main advance during T2 cannot be overwritten by the queue update', async () => {
+  const fix = makeFixture();
+  try {
+    const clock = makeClock();
+    const log = openEventLog(fix.dbPath, clock);
+    const lease = createLeaseManager(fix.dbPath, clock, RUN_ID);
+    const integrationDir = setupIntegrationWorktree(fix);
+    setupTaskBranch(fix, 'task/A', { 'src/feature.txt': 'ship\n' });
+    const signedCandidate = candidate(fix, 'A', 'task/A');
+    let concurrentCommit = '';
+
+    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A', () => {
+      git(fix.worktree, 'checkout', '-q', MAIN);
+      writeFileSync(join(fix.worktree, 'src/concurrent.txt'), 'must survive\n');
+      git(fix.worktree, 'add', '-A');
+      git(fix.worktree, 'commit', '-q', '-m', 'concurrent main advance');
+      concurrentCommit = git(fix.worktree, 'rev-parse', MAIN).trim();
+    }).process(signedCandidate);
+
+    assert.equal(result.outcome, 'evidence_invalid');
+    assert.equal(git(fix.worktree, 'rev-parse', MAIN).trim(), concurrentCommit);
+    assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['code'], 'artifact_identity_mismatch');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('REQ-4.9-4.13: merge queue rejects a forged report before enqueue or merge', async () => {
+  const fix = makeFixture();
+  try {
+    const clock = makeClock();
+    const log = openEventLog(fix.dbPath, clock);
+    const lease = createLeaseManager(fix.dbPath, clock, RUN_ID);
+    const integrationDir = setupIntegrationWorktree(fix);
+    setupTaskBranch(fix, 'task/A', { 'src/feature.txt': 'ship\n' });
+    const mainBefore = git(fix.worktree, 'rev-parse', MAIN).trim();
+    const forged = candidate(fix, 'A', 'task/A');
+    forged.originalReport = { ...forged.originalReport, pass: false };
+
+    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(forged);
+
+    assert.equal(result.outcome, 'evidence_invalid');
+    assert.equal(git(fix.worktree, 'rev-parse', MAIN).trim(), mainBefore);
+    assert.equal(log.all({ type: 'MERGE_ENQUEUED' }).length, 0);
+    assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['boundary'], 'merge_queue');
+    assert.equal(log.all({ type: 'ESCALATED' }).at(-1)?.payload['code'], 'signature_mismatch');
   } finally {
     fix.cleanup();
   }
@@ -118,7 +208,7 @@ test('T2 real config that passes -> merges, labels MERGE_RESULT tier t2 (REQ-13.
     const integrationDir = setupIntegrationWorktree(fix);
     setupTaskBranch(fix, 'task/A', { 'src/feature.txt': 'ship\n' });
 
-    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate('A', 'task/A'));
+    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate(fix, 'A', 'task/A'));
 
     assert.equal(result.outcome, 'merged');
     assert.equal(result.t2Report?.pass, true);
@@ -140,7 +230,7 @@ test('T2 real config that fails -> rejected_t2, main untouched (REQ-13.4)', asyn
     setupTaskBranch(fix, 'task/A', { 'src/feature.txt': 'ship\n' });
     const mainTipBefore = git(fix.worktree, 'rev-parse', MAIN).trim();
 
-    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate('A', 'task/A'));
+    const result = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate(fix, 'A', 'task/A'));
 
     assert.equal(result.outcome, 'rejected_t2');
     assert.equal(result.mergeCommit, null);
@@ -169,7 +259,7 @@ test('merge conflict -> merge_conflict, main untouched; next candidate still get
     git(fix.worktree, 'commit', '-q', '-m', 'main diverges');
     const mainTipBefore = git(fix.worktree, 'rev-parse', MAIN).trim();
 
-    const resultA = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate('A', 'task/A'));
+    const resultA = await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate(fix, 'A', 'task/A'));
     assert.equal(resultA.outcome, 'merge_conflict');
     assert.equal(resultA.mergeCommit, null);
     assert.equal(git(fix.worktree, 'rev-parse', MAIN).trim(), mainTipBefore, 'main untouched by the aborted merge');
@@ -178,7 +268,7 @@ test('merge conflict -> merge_conflict, main untouched; next candidate still get
     // Independent change merges cleanly — proves the integration worktree was
     // reset+cleaned after the aborted conflict, not left half-merged (REQ-13.10).
     setupTaskBranch(fix, 'task/B', { 'src/other.txt': 'ok\n' });
-    const resultB = await queueFor(fix, integrationDir, log, lease, clock, 'B').process(candidate('B', 'task/B'));
+    const resultB = await queueFor(fix, integrationDir, log, lease, clock, 'B').process(candidate(fix, 'B', 'task/B'));
     assert.equal(resultB.outcome, 'merged');
     assert.ok(resultB.mergeCommit);
   } finally {
@@ -195,7 +285,7 @@ test('entering the queue appends MERGE_ENQUEUED (REQ-13.7)', async () => {
     const integrationDir = setupIntegrationWorktree(fix);
     setupTaskBranch(fix, 'task/A', { 'src/feature.txt': 'ship\n' });
 
-    await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate('A', 'task/A'));
+    await queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate(fix, 'A', 'task/A'));
 
     const enq = log.all({ type: 'MERGE_ENQUEUED' });
     assert.equal(enq.length, 1);
@@ -217,7 +307,7 @@ test('lease contention: a candidate is rejected while another holds the merge-qu
     assert.equal(lease.claim('merge-queue', 'OTHER', 60_000), true, 'another in-flight candidate holds the lease');
 
     await assert.rejects(
-      () => queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate('A', 'task/A')),
+      () => queueFor(fix, integrationDir, log, lease, clock, 'A').process(candidate(fix, 'A', 'task/A')),
       /lease contention/,
     );
   } finally {

@@ -67,6 +67,7 @@ function deps(over?: Partial<HandlerDeps>) {
       decisions.push(`${taskId}:${decision}`);
       return { ok: true, state: decision === 'approve' ? 'APPROVED' : 'CHANGES_REQUESTED' };
     },
+    verifyApprovalEvidence: () => {},
     onKill: () => { killed = true; },
     rateOk: () => true,
     ...over,
@@ -102,6 +103,63 @@ test('approve with complete attestations -> APPROVAL_RECORDED + transition (REQ-
     assert.equal(r.status, 200);
     assert.deepEqual(h.decisions, ['T-1:approve']);
     assert.equal(h.log.all({ type: 'APPROVAL_RECORDED' }).length, 1);
+  } finally { h.cleanup(); }
+});
+
+test('approval evidence verifier receives the endpoint boundary instead of inferring it from an id', () => {
+  const seen: string[] = [];
+  const h = deps({
+    verifyApprovalEvidence: (_package, boundary) => {
+      seen.push(String(boundary));
+    },
+  });
+  try {
+    const taskBody = JSON.stringify({
+      decision: 'approve',
+      attestations: ['I reviewed the diff', 'Tests cover the change'],
+    });
+    assert.equal(
+      handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/A-1', headers: auth(), body: taskBody }), h.d).status,
+      200,
+    );
+
+    const deploy = deployHarness({
+      verifyApprovalEvidence: (_package, boundary) => {
+        seen.push(String(boundary));
+      },
+    });
+    try {
+      deploy.setApproval(deployPkg());
+      const deployBody = JSON.stringify({ decision: 'approve', attestations: deployPkg().attestations });
+      assert.equal(
+        handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body: deployBody }), deploy.d).status,
+        200,
+      );
+    } finally {
+      deploy.cleanup();
+    }
+
+    assert.deepEqual(seen, ['human_approval', 'deploy_approval']);
+  } finally { h.cleanup(); }
+});
+
+test('REQ-4.9-4.13: approval re-verification failure escalates and records no decision', () => {
+  let invalidTask: string | null = null;
+  const mismatch = Object.assign(new Error('forged approval evidence'), {
+    reason: 'evidence_auth_mismatch' as const,
+    code: 'signature_mismatch',
+  });
+  const h = deps({
+    verifyApprovalEvidence: () => { throw mismatch; },
+    onEvidenceInvalid: (taskId) => { invalidTask = taskId; },
+  });
+  try {
+    const body = JSON.stringify({ decision: 'approve', attestations: ['I reviewed the diff', 'Tests cover the change'] });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/approvals/A-1', headers: auth(), body }), h.d);
+    assert.deepEqual(r, { status: 409, body: { error: 'evidence_auth_mismatch' } });
+    assert.equal(invalidTask, 'T-1');
+    assert.deepEqual(h.decisions, []);
+    assert.equal(h.log.all({ type: 'APPROVAL_RECORDED' }).length, 0);
   } finally { h.cleanup(); }
 });
 
@@ -432,6 +490,55 @@ test('POST /deploy/decision approve with complete attestations -> DEPLOY_DECISIO
   } finally { h.cleanup(); }
 });
 
+test('P0-04 H2: deploy approval authenticates evidence before recording or invoking deploy', () => {
+  let verifierCalls = 0;
+  let invalidBoundary: string | null = null;
+  const mismatch = Object.assign(new Error('stale deploy evidence'), {
+    reason: 'evidence_auth_mismatch' as const,
+    code: 'artifact_identity_mismatch',
+  });
+  const h = deployHarness({
+    verifyApprovalEvidence: () => {
+      verifierCalls += 1;
+      throw mismatch;
+    },
+    onEvidenceInvalid: (_taskId, _error, boundary) => {
+      invalidBoundary = boundary ?? null;
+    },
+  });
+  try {
+    h.setApproval(deployPkg());
+    const body = JSON.stringify({ decision: 'approve', attestations: deployPkg().attestations });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body }), h.d);
+
+    assert.deepEqual(r, { status: 409, body: { error: 'evidence_auth_mismatch' } });
+    assert.equal(verifierCalls, 1);
+    assert.equal(invalidBoundary, 'deploy_approval');
+    assert.deepEqual(h.calls, [], 'deploy callback never receives unauthenticated approval');
+    assert.equal(h.log.all({ type: 'DEPLOY_DECISION' }).length, 0);
+  } finally { h.cleanup(); }
+});
+
+test('missing deploy evidence verifier reports typed unavailability to the escalation boundary', () => {
+  let received: unknown;
+  const h = deployHarness({
+    onEvidenceInvalid: (_taskId, error) => {
+      received = error;
+    },
+  });
+  try {
+    delete h.d.verifyApprovalEvidence;
+    h.setApproval(deployPkg());
+    const body = JSON.stringify({ decision: 'approve', attestations: deployPkg().attestations });
+    const r = handleHumanRequest(httpReq({ method: 'POST', path: '/deploy/decision', headers: auth(), body }), h.d);
+
+    assert.deepEqual(r, { status: 409, body: { error: 'evidence_auth_unavailable' } });
+    assert.equal((received as { reason?: unknown })?.reason, 'evidence_auth_unavailable');
+    assert.equal((received as { code?: unknown })?.code, 'verifier_unavailable');
+    assert.deepEqual(h.calls, []);
+  } finally { h.cleanup(); }
+});
+
 test('POST /deploy/decision reject -> DEPLOY_DECISION{decision:reject} + onDeployDecision, no attestation check (REQ-6.7)', () => {
   const h = deployHarness();
   try {
@@ -474,7 +581,15 @@ test('POST /deploy/rollback at EXPANDED -> 200, runs the same rollback callback 
   } finally { h.cleanup(); }
 });
 
-test('server smoke: binds loopback, writes human-plane.json 0600, serves one request', async () => {
+test(
+  'server smoke: binds loopback, writes human-plane.json 0600, serves one request',
+  {
+    skip:
+      process.env['PHASE0_REAL_MACOS_TESTS'] === '1'
+        ? false
+        : 'requires an external macOS run with loopback socket access',
+  },
+  async () => {
   const h = deps();
   const root = mkdtempSync(join(tmpdir(), 'hp-srv-'));
   try {
@@ -492,4 +607,5 @@ test('server smoke: binds loopback, writes human-plane.json 0600, serves one req
     h.cleanup();
     rmSync(root, { recursive: true, force: true });
   }
-});
+  },
+);

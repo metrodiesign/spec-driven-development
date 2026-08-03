@@ -11,14 +11,17 @@ import { test } from 'node:test';
 import { createDefaultPathPolicy } from '../executor/path-policy.ts';
 import { createEvidenceStore } from '../evidence/store.ts';
 import { createExecutor } from '../executor/executor.ts';
-import { denyNetworkSandbox } from '../security/sandbox.ts';
 import { openEventLog } from '../state/event-log.ts';
+import { LeaseFenceError } from '../state/event-log.ts';
 import { runDeployStage, type DeployClock, type DeployStageDeps } from './stage.ts';
 import type { TaskContract } from '../contract/contract.ts';
-import { makeFixture, type Fixture } from '../../test/helpers/fixture.ts';
+import {
+  makeFixture,
+  PASSTHROUGH_TEST_SANDBOX,
+  type Fixture,
+} from '../../test/helpers/fixture.ts';
 
-const isDarwin = process.platform === 'darwin';
-const darwinOnly = { skip: !isDarwin ? 'RUN_COMMAND requires the darwin sandbox (D-003)' : false };
+const logicOnly = { skip: false };
 
 const RUN_ID = 'RUN-1';
 const TASK_ID = 'T-1';
@@ -53,7 +56,7 @@ function buildDeps(fix: Fixture, config: DeployConfig, clock = makeDeployClock()
   const log = openEventLog(fix.dbPath, clock);
   const evidence = createEvidenceStore(fix.evidenceDir);
   const policy = createDefaultPathPolicy();
-  const sandbox = denyNetworkSandbox(process.platform);
+  const sandbox = PASSTHROUGH_TEST_SANDBOX;
   const executor = createExecutor({
     worktreeDir: fix.worktree,
     runId: RUN_ID,
@@ -64,14 +67,23 @@ function buildDeps(fix: Fixture, config: DeployConfig, clock = makeDeployClock()
     sandbox,
     clock,
   });
-  return { runId: RUN_ID, taskId: TASK_ID, config, executor, log, evidence, clock };
+  return {
+    runId: RUN_ID,
+    taskId: TASK_ID,
+    config,
+    executor,
+    log,
+    evidence,
+    clock,
+    verifyApprovalEvidence: () => {},
+  };
 }
 
 function stateSequence(deps: DeployStageDeps): string[] {
   return deps.log.all({ type: 'DEPLOY_STATE' }).map((e) => String(e.payload['state']));
 }
 
-test('happy path: canary ok, all probes pass, expand ok -> EXPANDED (REQ-5.6)', darwinOnly, async () => {
+test('happy path: canary ok, all probes pass, expand ok -> EXPANDED (REQ-5.6)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     const deps = buildDeps(fix, baseConfig());
@@ -98,7 +110,52 @@ test('happy path: canary ok, all probes pass, expand ok -> EXPANDED (REQ-5.6)', 
   }
 });
 
-test('probes are spaced interval_ms apart via the injected clock (REQ-5.3)', darwinOnly, async () => {
+test('P0-04 H2: deploy stage re-authenticates approval before the first CANARY command', logicOnly, async () => {
+  const fix = makeFixture();
+  try {
+    const deps = buildDeps(fix, baseConfig());
+    let executorCalls = 0;
+    deps.executor = {
+      async execute() {
+        executorCalls += 1;
+        throw new Error('executor must remain unreachable');
+      },
+    };
+    deps.verifyApprovalEvidence = () => {
+      throw Object.assign(new Error('deploy report no longer matches main'), {
+        reason: 'evidence_auth_mismatch',
+        code: 'artifact_identity_mismatch',
+      });
+    };
+
+    const out = await runDeployStage(deps);
+
+    assert.equal(out.finalState, 'ESCALATED');
+    assert.equal(executorCalls, 0);
+    assert.deepEqual(stateSequence(deps), ['ESCALATED']);
+    const escalation = deps.log.all({ type: 'ESCALATED' }).at(-1);
+    assert.equal(escalation?.payload['boundary'], 'deploy_stage');
+    assert.equal(escalation?.payload['code'], 'artifact_identity_mismatch');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('P0-06: lease loss before a deploy state transition publishes no stale DEPLOY_STATE', logicOnly, async () => {
+  const fix = makeFixture();
+  try {
+    const deps = buildDeps(fix, baseConfig());
+    deps.assertOwnership = (boundary) => {
+      if (boundary === 'deploy_state:OBSERVING:canary_ok') throw new LeaseFenceError('lease lost');
+    };
+    await assert.rejects(runDeployStage(deps), LeaseFenceError);
+    assert.deepEqual(stateSequence(deps), ['CANARY'], 'the stale OBSERVING event was fenced');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('probes are spaced interval_ms apart via the injected clock (REQ-5.3)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     const clock = makeDeployClock();
@@ -111,7 +168,7 @@ test('probes are spaced interval_ms apart via the injected clock (REQ-5.3)', dar
   }
 });
 
-test('canary fails -> rollback WITHOUT running observe probes -> ROLLED_BACK (REQ-5.7)', darwinOnly, async () => {
+test('canary fails -> rollback WITHOUT running observe probes -> ROLLED_BACK (REQ-5.7)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     const deps = buildDeps(fix, { ...baseConfig(), canaryCmd: 'exit 1' });
@@ -128,7 +185,7 @@ test('canary fails -> rollback WITHOUT running observe probes -> ROLLED_BACK (RE
   }
 });
 
-test('observe failures exceed threshold -> rollback ok -> ROLLED_BACK with root cause (REQ-5.4)', darwinOnly, async () => {
+test('observe failures exceed threshold -> rollback ok -> ROLLED_BACK with root cause (REQ-5.4)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     // 3 probes, threshold 1: every probe fails -> 3 > 1 -> rollback.
@@ -148,7 +205,7 @@ test('observe failures exceed threshold -> rollback ok -> ROLLED_BACK with root 
   }
 });
 
-test('rollback itself fails -> ESCALATED(rollback_failed), no retry (REQ-5.5)', darwinOnly, async () => {
+test('rollback itself fails -> ESCALATED(rollback_failed), no retry (REQ-5.5)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     const deps = buildDeps(fix, { ...baseConfig(), observeCmd: 'exit 1', rollbackCmd: 'exit 1' });
@@ -166,7 +223,7 @@ test('rollback itself fails -> ESCALATED(rollback_failed), no retry (REQ-5.5)', 
   }
 });
 
-test('expand fails after a healthy canary+observe -> rollback path, root cause expand_failed (REQ-5.6)', darwinOnly, async () => {
+test('expand fails after a healthy canary+observe -> rollback path, root cause expand_failed (REQ-5.6)', logicOnly, async () => {
   const fix = makeFixture();
   try {
     const deps = buildDeps(fix, { ...baseConfig(), expandCmd: 'exit 1' });
@@ -183,14 +240,22 @@ test('expand fails after a healthy canary+observe -> rollback path, root cause e
   }
 });
 
-test('a failure count within threshold still expands (REQ-5.6 boundary, not >=)', darwinOnly, async () => {
+test('a failure count within threshold still expands (REQ-5.6 boundary, not >=)', logicOnly, async () => {
   const fix = makeFixture();
   try {
-    // 3 probes, threshold 1: fails once (marker file), then passes -> exactly 1 <= 1.
-    const deps = buildDeps(fix, {
-      ...baseConfig(),
-      observeCmd: 'test -f .probe-failed && exit 0 || { touch .probe-failed; exit 1; }',
-    });
+    const deps = buildDeps(fix, baseConfig());
+    deps.executor = {
+      async execute(action) {
+        const exitCode = action.actionId === 'deploy-observe-1' ? 1 : 0;
+        return {
+          status: 'applied',
+          actionId: action.actionId,
+          resultHash: 'stage-threshold-fixture',
+          exitCode,
+          outputRef: deps.evidence.put(`exit:${exitCode}`),
+        };
+      },
+    };
     const out = await runDeployStage(deps);
 
     assert.equal(out.finalState, 'EXPANDED', '1 failure <= threshold 1 -> still expands');

@@ -1,9 +1,54 @@
 {
-  "_comment": "Governance-pinned security-plane policy. Phase 2 Task 3 seeds depManifestPatterns — the single manifest/lockfile pattern list REQ-7.6 (auto-merge risk floor) and REQ-11.2 (package_install lockfile check) both consult (AZ-17). Task 6 adds packageInstall (the frozen-lockfile install grant). Patterns are matched by basename (a bare name matches that file in any directory); a pattern containing '/' matches by path suffix.",
-  "packageInstall": {
-    "_comment": "REQ-11.2: the ONLY command that may run with network:'allowlist:package_install'. commandPattern is an anchored RegExp source; the grant requires a lockfile from depManifestPatterns present in the worktree. --frozen-lockfile resolves every package from URLs already committed in the lockfile and --ignore-scripts blocks install-time code — that lockfile resolution IS the deterministic registry pin (the SBPL grant is transport only; residual = a maliciously committed lockfile, floored to >=L2 and never auto-merged; mitigated, not solved).",
-    "commandPattern": "^(pnpm install --frozen-lockfile --ignore-scripts|npm ci --ignore-scripts|yarn install --frozen-lockfile --ignore-scripts)$",
-    "requireLockfile": true
+  "_comment": "Governance-pinned security-plane policy. depManifestPatterns remains the single manifest/lockfile risk-floor list. Phase 0 dependency installation is offline-only: no network grant exists at the sandbox boundary.",
+  "offlineDependency": {
+    "_comment": "Versioned production policy for the synthetic Phase 0 target. Core freezes and validates the exact manifest/lockfile graph, materializes the content-hash-bound local source read-only, disables lifecycle scripts and network, and promotes only the declared persistent output root.",
+    "version": 1,
+    "allowedRoles": [
+      "implementer"
+    ],
+    "commands": [
+      "pnpm install --offline --frozen-lockfile --ignore-scripts --config.node-linker=hoisted"
+    ],
+    "manifestPath": "package.json",
+    "manifestHash": "0dd7803340af156b05ee20470ff07b5730682f96f91cf469658f84abae728b24",
+    "lockfilePath": "pnpm-lock.yaml",
+    "lockfileHash": "88975c06ba94873fd4435ccf8c9ca66ee27b8351394b95c28de6eb936f3c10b1",
+    "approvedSourceHashes": [
+      "4491463319ea7693f44b010ee19354206601b211b117ef22d7cdd7137b583e2f"
+    ],
+    "approvedSources": [
+      {
+        "packageName": "phase0-offline-dependency",
+        "specifier": "file:.phase0-offline-sources/phase0-offline-dependency",
+        "targetPath": ".phase0-offline-sources/phase0-offline-dependency",
+        "sourcePath": "offline-sources/phase0-offline-dependency",
+        "contentHash": "4491463319ea7693f44b010ee19354206601b211b117ef22d7cdd7137b583e2f"
+      }
+    ],
+    "approvedOutputMetadata": [
+      {
+        "path": "node_modules/.modules.yaml",
+        "validator": "pnpm_modules_json_v1",
+        "packageManager": "pnpm@11.9.0"
+      },
+      {
+        "path": "node_modules/.package-map.json",
+        "validator": "pnpm_package_map_json_v1"
+      },
+      {
+        "path": "node_modules/.pnpm-workspace-state-v1.json",
+        "validator": "pnpm_workspace_state_json_v1"
+      },
+      {
+        "path": "node_modules/.pnpm/lock.yaml",
+        "validator": "exact_lockfile_v1"
+      }
+    ],
+    "persistentOutputRoots": [
+      "node_modules"
+    ],
+    "lifecycleScripts": "disabled",
+    "network": "none"
   },
   "depManifestPatterns": [
     "package.json",
