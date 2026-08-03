@@ -131,7 +131,20 @@ fi
 if echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+(commit|push)([[:space:]]|$)"; then
   BR=$(git branch --show-current 2>/dev/null)
   if [ "$BR" = "main" ] || [ "$BR" = "develop" ]; then
-    block "git commit/push บน branch $BR — ต้อง branch แยกแล้วผ่าน PR (Workflow rules)"
+    # `git push origin --delete <other-branch>` (or `-d`) ขณะอยู่บน main/develop ลบ ref
+    # ของ branch อื่น ไม่ได้ push commit ใด ๆ เข้า main/develop เอง กฎ "ห้าม push ตรงเข้า
+    # main/develop" จึงไม่ครอบกรณีนี้ (ผู้ใช้ยืนยันหลัง false-positive จริง: gitops agent
+    # ต้องเลี่ยงไปใช้ gh api แทน git push --delete ทั้งที่ target เป็น feature branch)
+    # `--delete main`/`--delete develop`/`:main`/`:develop` ยังโดน block ต่อด้วย
+    # explicit-target regex ด้านล่างอยู่ดี ไม่เปิดช่องให้ลบ main/develop เอง.
+    IS_DELETE_PUSH=0
+    echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push[[:space:]][^;&|]*(--delete([[:space:]]|=|$)|[[:space:]]-d([[:space:]]|$))" &&
+      IS_DELETE_PUSH=1
+    if echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+commit([[:space:]]|$)"; then
+      block "git commit บน branch $BR — ต้อง branch แยกแล้วผ่าน PR (Workflow rules)"
+    elif echo "$N" | grep -qE "${POS}git${GO}[[:space:]]+push([[:space:]]|$)" && [ "$IS_DELETE_PUSH" -eq 0 ]; then
+      block "git push บน branch $BR — ต้อง branch แยกแล้วผ่าน PR (Workflow rules)"
+    fi
   fi
   # anchor ก่อน (main|develop) รับ whitespace / ':' / '+' / '/' :
   #   ':' หรือ whitespace -> 'origin main', 'HEAD:main'

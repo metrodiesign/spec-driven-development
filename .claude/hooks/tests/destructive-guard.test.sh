@@ -15,8 +15,10 @@ fail=0
 skip=0
 
 # branch ปัจจุบัน: ใช้ตัดสินว่าเคส "allow ของ git push" ทดสอบได้หรือไม่ —
-# บน main/develop guard บล็อก git push *ทุกตัว* แบบไม่มีเงื่อนไข (engine branch-protection)
-# จึงไม่สามารถ exercise allow-push ได้ ตรงกับ contract ใน header (env-dependent ไม่ทดสอบที่นี่)
+# บน main/develop guard บล็อก git push ทั่วไปแบบไม่มีเงื่อนไข (engine branch-protection)
+# ยกเว้น `--delete`/`-d` ของ branch อื่น (ไม่ push commit เข้า main/develop เอง — ทดสอบ
+# แบบ unconditional ด้านล่างแทน check_allow_push) จึงไม่สามารถ exercise push ปกติแบบ
+# allow ได้ที่นี่ ตรงกับ contract ใน header (env-dependent ไม่ทดสอบที่นี่)
 BR_NOW=$(git branch --show-current 2>/dev/null)
 
 check() { # $1=expect(block|allow) $2=desc $3=command-string
@@ -79,6 +81,10 @@ check block "push +HEAD:main"        'git push origin +HEAD:main'
 # branch-target protection (command-string based)
 check block "push to develop"        'git push origin develop'
 check block "push HEAD:main"         'git push origin HEAD:main'
+# --delete/-d of main/develop itself must still block regardless of current branch
+check block "push --delete develop" 'git push origin --delete develop'
+check block "push --delete main"    'git push origin --delete main'
+check block "push -d develop"       'git push origin -d develop'
 # global options between `git` and subcommand must NOT slip the guard (bypass regression)
 check block "git -C . push develop"     'git -C . push origin develop'
 check block "git -c kv push --force"    'git -c user.name=x push --force origin feat'
@@ -156,6 +162,10 @@ check allow "truncate --size coreutil" 'truncate --size=0 /tmp/app.log'
 check_allow_push "push --all no force"    'git push --all origin'
 check_allow_push "git -C . push feat"     'git -C . push origin feat'
 check_allow_push "branch maintenance"     'git push origin maintenance'
+# --delete/-d of a DIFFERENT branch's ref pushes no commits into main/develop — allowed
+# unconditionally, unlike other push cases above (not env-dependent on BR_NOW).
+check allow "push --delete other branch"  'git push origin --delete codex/some-feature'
+check allow "push -d other branch"        'git push origin -d codex/some-feature'
 
 echo "---"
 echo "pass=$pass fail=$fail skip=$skip"
