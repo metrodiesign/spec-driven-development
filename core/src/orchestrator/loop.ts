@@ -10,15 +10,13 @@ import { LeaseFenceError, type EventLog } from '../state/event-log.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import type { Executor } from '../executor/executor.ts';
 import type { GateRunner } from '../gates/runner.ts';
-import type { LoopControl, ProposalSource } from '../ports.ts';
+import type { LoopControl, ProposalInput, ProposalSource } from '../ports.ts';
 import type {
   ActionRejection,
   Clock,
   GateReport,
-  GuidanceFeedback,
   Hypothesis,
   IdSource,
-  RepairGuidance,
   Role,
   TaskState,
 } from '../types.ts';
@@ -223,7 +221,7 @@ async function runTaskLoopWithLease(opts: LoopOptions): Promise<LoopResult> {
   move('start_implementing');
 
   let iterations = 0;
-  let feedback: ActionRejection[] | GateReport | RepairGuidance | GuidanceFeedback | null = null;
+  let feedback: ProposalInput['feedback'] = null;
 
   for (;;) {
     // Steering boundary (REQ-10.1): poll the control port AFTER the previous atomic
@@ -339,7 +337,10 @@ async function runTaskLoopWithLease(opts: LoopOptions): Promise<LoopResult> {
       payload: { claim: proposal.claim, actionCount: proposal.actions.length },
     });
 
-    const rejections: ActionRejection[] = [];
+    // Source-side rejections (e.g. AAL context_violation, REQ-5.4) merge in FIRST,
+    // ahead of any executor rejection this same round produces — one array, one
+    // roundtrip mechanism regardless of where a rejection originated.
+    const rejections: ActionRejection[] = [...(proposal.rejections ?? [])];
     for (const action of proposal.actions) {
       if (!requireOwnership('action')) return { finalState: state, iterations };
       const outcome = await opts.executor.execute(action, opts.role);
@@ -456,7 +457,9 @@ async function runTaskLoopWithLease(opts: LoopOptions): Promise<LoopResult> {
         taskId: opts.taskId,
         state,
         role: 'diagnostician',
-        feedback: gateFailure,
+        // REQ-5.4: the diagnostician sees this round's action rejections alongside
+        // the gate failure, not gateFailure alone (backlog: rejected-feedback).
+        feedback: rejections.length > 0 ? { ...gateFailure, rejections } : gateFailure,
       });
       iterations += 1;
       if (!requireOwnership('diagnosis_result')) return { finalState: state, iterations };
@@ -465,11 +468,14 @@ async function runTaskLoopWithLease(opts: LoopOptions): Promise<LoopResult> {
       const outcome = await runDiagnosis(diag.hypotheses ?? []);
       if (outcome.status === 'confirmed') {
         move('repair'); // DIAGNOSING -> REPAIRING
-        // Fold the patch plan into the next implementer round as MARKED data (REQ-5.4).
+        // Fold the patch plan into the next implementer round as MARKED data
+        // (REQ-5.4) — alongside this round's rejections, never overwriting them
+        // (backlog: rejected-feedback).
         feedback = {
           kind: 'patch_plan',
           patchPlan: outcome.hypothesis.ifConfirmed.patchPlan,
           estimatedBlastRadius: outcome.hypothesis.ifConfirmed.estimatedBlastRadius,
+          ...(rejections.length > 0 ? { rejections } : {}),
         };
         // Loop continues: the implementer round now attempts the confirmed fix.
       } else {

@@ -55,7 +55,12 @@ export interface ActionRejection {
     // A fusion.deliberate REQUEST_TOOL arriving after the task already consumed its
     // single fusion activation (REQ-10.9, append-only) — structured feedback, mirrors
     // the out-of-authority rejection pattern; never a crash.
-    | 'depth_exceeded';
+    | 'depth_exceeded'
+    // A WRITE to a path neither in the context bundle nor previously READ, rejected
+    // by the proposal source itself before any executor call (REQ-5.4, append-only)
+    // — roundtrips into Proposal.rejections like every other rejection reason
+    // instead of a silent log-only drop (backlog: rejected-feedback).
+    | 'context_violation';
   detail: string;
 }
 
@@ -282,6 +287,10 @@ export interface GateCheck {
   flakySuspect?: boolean;
   evidenceRef: string;
   detail?: string;
+  /** Resolved command this check ran (e.g. after fallback resolution), not the retry wrapper. */
+  command?: string;
+  /** Bounded tail (<=4096 bytes) of the captured stdout/stderr, wrapper header stripped. */
+  outputTail?: string;
 }
 
 /** Every report names exactly what was checked, under which config (INV-10). */

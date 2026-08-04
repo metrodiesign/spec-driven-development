@@ -23,3 +23,6 @@ tsconfig.tsbuildinfo
 # conformance replay cache — must NEVER ship: a committed replay would let
 # `conformance --live` mint a record from canned responses (gate theater)
 .ai/calibration/replay/
+
+# Orchestrator pipeline scratch (handoff docs, ephemeral)
+.pipeline/

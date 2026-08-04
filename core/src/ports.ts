@@ -22,9 +22,16 @@ export interface ProposalInput {
   /**
    * Structured feedback from the previous round — rejections, a gate report, a
    * confirmed hypothesis' patch plan (REQ-5.4), or operator guidance injected while
-   * paused (REQ-10.5). Never free text.
+   * paused (REQ-10.5). A gate report or patch plan may carry that same round's
+   * action rejections alongside it (REQ-5.4, backlog: rejected-feedback) — neither
+   * side is ever sent at the cost of overwriting the other. Never free text.
    */
-  feedback: ActionRejection[] | GateReport | RepairGuidance | GuidanceFeedback | null;
+  feedback:
+    | ActionRejection[]
+    | (GateReport & { rejections?: ActionRejection[] })
+    | (RepairGuidance & { rejections?: ActionRejection[] })
+    | GuidanceFeedback
+    | null;
 }
 
 export interface Proposal {
@@ -40,6 +47,13 @@ export interface Proposal {
   costUnits?: number;
   /** Source-side validation failure that core must escalate before any action/gate. */
   error?: { reason: 'invalid_response'; detail?: string };
+  /**
+   * Rejections the source itself issued this round — e.g. AAL's context_violation
+   * provenance check (REQ-5.4) — merged by the loop into this same round's executor
+   * rejections before folding into next-round feedback. Absent for a source that
+   * never rejects its own proposal, so existing sources are unaffected (append-only).
+   */
+  rejections?: ActionRejection[];
 }
 
 export interface ProposalSource {

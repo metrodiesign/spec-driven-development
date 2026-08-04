@@ -410,6 +410,7 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
         (a) => a.type === 'WRITE_FILE' && !allowed.has(a.path),
       );
       if (violations.length > 0) {
+        const detail = 'action path not in context bundle and never READ_FILE-requested';
         deps.log.append({
           runId: deps.runId,
           taskId: deps.taskId,
@@ -417,10 +418,17 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
           payload: {
             reason: 'context_violation',
             paths: violations.map((a) => pathOf(a)),
-            detail: 'action path not in context bundle and never READ_FILE-requested',
+            detail,
           },
         });
-        return { claim: 'WORKING', actions: [], costUnits };
+        // REQ-5.4 (backlog: rejected-feedback): roundtrip the same rejections the
+        // loop merges into next-round feedback, instead of a log-only drop.
+        return {
+          claim: 'WORKING',
+          actions: [],
+          costUnits,
+          rejections: violations.map((a) => ({ actionId: a.actionId, reason: 'context_violation' as const, detail })),
+        };
       }
 
       // Recall/waste vs the paths this round proposes to touch (§9.4, REQ-7.6).

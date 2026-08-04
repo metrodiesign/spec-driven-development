@@ -21,6 +21,7 @@ import {
   type CoreCommandExecutor,
   type CoreCommandOutcome,
 } from '../executor/command-executor.ts';
+import { scanForSecret } from '../context/secret-scan.ts';
 import { createDefaultPathPolicy } from '../executor/path-policy.ts';
 import {
   createCommandRunner,
@@ -176,6 +177,47 @@ export function createGateRunner(opts: GateRunnerOptions): GateRunner {
     );
   }
 
+  const OUTPUT_TAIL_MAX_BYTES = 4096;
+  const STDOUT_MARKER = '--- stdout ---\n';
+  const STDERR_DIVIDER = '\n--- stderr ---\n';
+
+  /** Bound `text` to the last `maxBytes` bytes, trimmed to a line boundary when possible. */
+  function boundTail(text: string, maxBytes: number): string {
+    const bytes = Buffer.from(text, 'utf8');
+    if (bytes.byteLength <= maxBytes) return text;
+    const tail = bytes.subarray(bytes.byteLength - maxBytes);
+    const newline = tail.indexOf(0x0a);
+    return (newline === -1 ? tail : tail.subarray(newline + 1)).toString('utf8');
+  }
+
+  /**
+   * Strip the `persistCommandEvidence()`/`evidenceBody()` wrapper (sandbox/status
+   * metadata) down to the raw stdout/stderr stream body, keeping the
+   * `--- stdout ---` / `--- stderr ---` markers so the model can tell them apart.
+   * A silent command (no bytes on either stream) yields `''` (AC-4). GOVERN: a
+   * failing command can echo repo/env bytes (config dumps, `set -x`) that never
+   * passed through `buildContext()`'s secret scan — scan the bounded tail here
+   * before it reaches the feedback path or the durable event log; a hit omits
+   * the field entirely, never redacted-and-sent (REQ-7.3/INV-14).
+   */
+  function deriveOutputTail(ref: string): string | undefined {
+    let text: string;
+    try {
+      text = opts.evidence.getText(ref);
+    } catch {
+      return undefined;
+    }
+    const markerIndex = text.indexOf(STDOUT_MARKER);
+    if (markerIndex === -1) return undefined;
+    const afterMarker = text.slice(markerIndex + STDOUT_MARKER.length);
+    const dividerIndex = afterMarker.indexOf(STDERR_DIVIDER);
+    const stdout = dividerIndex === -1 ? afterMarker : afterMarker.slice(0, dividerIndex);
+    const stderr = dividerIndex === -1 ? '' : afterMarker.slice(dividerIndex + STDERR_DIVIDER.length);
+    if (stdout === '' && stderr === '') return '';
+    const tail = boundTail(text.slice(markerIndex), OUTPUT_TAIL_MAX_BYTES);
+    return scanForSecret(tail).hit ? undefined : tail;
+  }
+
   async function runCommandCheck(name: string, cmd: string, frozen: FrozenTree): Promise<GateCheck> {
     try {
       return await withDisposableTree(frozen, async (workspaceRoot) => {
@@ -216,19 +258,25 @@ export function createGateRunner(opts: GateRunnerOptions): GateRunner {
           outcome.exitCode === FLAKY_RETRY_EXIT &&
           opts.evidence.getText(ref).includes(FLAKY_RETRY_MARKER)
         ) {
+          const flakyOutputTail = deriveOutputTail(ref);
           return {
             name,
             pass: false,
             flakySuspect: true,
             evidenceRef: ref,
             detail: 'fail-then-pass on retry: flaky_suspect, needs human review (never auto-quarantined)',
+            command: cmd,
+            ...(flakyOutputTail === undefined ? {} : { outputTail: flakyOutputTail }),
           };
         }
+        const outputTail = deriveOutputTail(ref);
         return {
           name,
           pass: false,
           evidenceRef: ref,
           detail: failureDetail(outcome),
+          command: cmd,
+          ...(outputTail === undefined ? {} : { outputTail }),
         };
       });
     } catch (error) {
