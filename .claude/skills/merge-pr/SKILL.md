@@ -15,10 +15,15 @@ off to sync-branch's existing steps for everything after.
 1. **Verify CI is green** (CLAUDE.md CI Gate rules: ห้าม merge ข้าม failing check):
    ```sh
    env -u GH_TOKEN gh pr checks <n>
-   env -u GH_TOKEN gh pr view <n> --json reviewDecision,mergeable
+   env -u GH_TOKEN gh pr view <n> --json state,reviewDecision,mergeable
    ```
    Stop and report if any required check is failing/pending, `mergeable` is not
    `MERGEABLE`, or there's an unresolved `CHANGES_REQUESTED` review — do not merge.
+
+   **PR ถูก merge ไปแล้วนอก flow นี้**: ถ้า `state` เป็น `MERGED` อยู่แล้ว แปลว่า PR นี้ถูก
+   merge ด้วยทางอื่น (GitHub web UI, เครื่องมืออื่น) ไม่ใช่ผ่าน skill นี้ — ข้าม step 1.5
+   และ step 2 ทั้งคู่ (ไม่มีอะไรให้ merge แล้ว) แล้วไปที่ step 3 ตรง ๆ รายงานตามจริงว่า
+   remote branch ลบผ่าน flow นี้ไม่ได้ และตาม sync-branch step 4 ต้องให้มนุษย์ลบเองถ้ายังอยู่
 
 1.5. **Pre-merge review gate** (`.ai/shared/REVIEW_PROTOCOL.md` § Pre-merge multi-angle
      review, sdd-premerge-review-standard — full trigger criteria, record format, and
@@ -49,19 +54,24 @@ off to sync-branch's existing steps for everything after.
    - This step never runs `/review-fanout` itself — it is expensive and human-priced;
      the operator decides to spend it.
 
-2. **Merge (squash), no branch deletion here:**
+2. **Merge (squash) พร้อมลบ branch:**
    ```sh
-   env -u GH_TOKEN gh pr merge <n> --squash
+   env -u GH_TOKEN gh pr merge <n> --squash --delete-branch
    ```
-   Do **not** add `--delete-branch` — per `gh pr merge --help` it deletes **both** the
-   local and remote branch, which would leave nothing for sync-branch's local-delete
-   step to find, making it report/fail after the PR already merged successfully. Let
-   sync-branch own all cleanup (local + remote), unchanged from its standalone flow.
+   `--delete-branch` ตรงนี้จำเป็น ไม่ใช่ทางเลือก — เป็นทางเดียวที่ agent ลบ remote ref ได้ใน
+   repo นี้ `git push --delete` ถูก block แบบ unconditional โดย Tier 1
+   (`.githooks/pre-push:36` — "deleting remote ref ... confirm with a human first") และ
+   `gh api -X DELETE .../git/refs/heads/<branch>` ถูก block แบบ unconditional โดย session
+   hook เช่นกัน (`.ai/bin/check-destructive.sh:158-169` ซึ่งข้อความ block เองระบุ flag นี้
+   เป็นทางที่ยอมรับ) `--delete-branch` ลบทั้ง local และ remote branch (ตาม
+   `gh pr merge --help`) — ซึ่งตอนนี้คือผลลัพธ์ที่ต้องการ ไม่ใช่ปัญหาอีกต่อไป
 
-3. **Hand off to sync-branch**: run `.claude/skills/sync-branch/SKILL.md` steps 1-5 for
-   this same PR number. Its own checks degrade to a safe no-op only for the merge check
-   in step 1 (trivially passes — just merged in step 2 above); steps 3 and 4 do the
-   real local + remote branch deletion exactly as they would standalone.
+3. **Hand off to sync-branch**: run `.claude/skills/sync-branch/SKILL.md` steps 1-5
+   สำหรับ PR number เดียวกัน step 1-2 ผ่านง่าย ๆ (merge ไปแล้วใน step 2 ข้างบน + อ่าน
+   `baseRefName` ตรง ๆ) step 3 (sync base + delete local ในขั้นเดียวกัน) คืองานจริงที่เหลือ —
+   ส่วน sync base ต้องทำเสมอ ส่วนลบ local มักเจอว่า branch หายไปแล้ว เพราะ `--delete-branch`
+   ใน step 2 ข้างบนลบทั้ง local และ remote ไปแล้ว `git branch -d/-D` เลยรายงาน "not found"
+   ตามด้วย step 4 ที่มักได้ `GONE` — ทั้งคู่คือผลที่คาดไว้ ไม่ใช่ความล้มเหลว
 
 4. **Report**: merge sha, base branch synced sha, local branch deleted (y/n).
 

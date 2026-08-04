@@ -1,13 +1,14 @@
 ---
 name: sync-branch
-description: Sync the local base branch and delete a just-merged PR branch (local + remote), the repo's squash-merge convention. Use right after a PR is merged, when the user says "sync + ลบ branch", "cleanup branch หลัง merge", or "PR merged แล้ว".
+description: Sync the local base branch and delete a just-merged PR branch locally (checking and reporting the remote copy, never deleting it here), the repo's squash-merge convention. Use right after a PR is merged, when the user says "sync + ลบ branch", "cleanup branch หลัง merge", or "PR merged แล้ว".
 argument-hint: [pr-number]
 ---
 
 # Sync branch after merge
 
-Post-merge cleanup: sync the base branch locally, delete the feature branch (local +
-remote) once it's confirmed merged. This repo squash-merges every PR (one commit per
+Post-merge cleanup: sync the base branch locally, delete the feature branch locally —
+the remote copy only gets checked and reported here, never deleted (see "Critical"
+below) — once it's confirmed merged. This repo squash-merges every PR (one commit per
 PR on `develop`), so `git branch -d` in step 3 either succeeds with the benign warning
 below, or refuses outright — both expected, not failures (see step 3):
 
@@ -16,19 +17,25 @@ warning: deleting branch '<name>' that has been merged to 'refs/remotes/origin/<
 but not yet merged to HEAD
 ```
 
-## Critical: never `git push origin --delete`
+## Critical: agent ลบ remote branch เองไม่ได้ในเรพนี้
 
-`.claude/hooks/destructive-guard.sh` blocks **any** `git commit`/`git push` while the
-current branch is `main` or `develop`, unconditionally — it does not parse *what* the
-push does, so even an unrelated `--delete <other-branch>` gets blocked once you've
-checked out the base branch. Delete the remote ref via the GitHub API instead — this
-isn't a guard bypass, it's a different tool that never triggers the `git push` pattern:
+การลบ remote ref ไม่ใช่ความสามารถของ agent ในเรพนี้ ไม่ว่าจะทางไหน:
 
-```sh
-env -u GH_TOKEN gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch-urlencoded>"
-```
+- `git push origin --delete <branch>` (หรือ `git push --delete`, หรือ refspec ลบแบบ
+  `+`/`:`) ถูก block แบบ unconditional โดย Tier 1 (`.githooks/pre-push:36`): push ไหนที่
+  local sha เป็น all-zero (คือการลบ ref) โดน `block "deleting remote ref ... confirm
+  with a human first."` ทันที — บล็อกนี้ไม่สนใจว่า branch ปัจจุบันคืออะไร
+- `gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch>"` ดูเหมือนเป็นคนละ
+  เครื่องมือที่ไม่แตะ `git push` เลย แต่ก็ถูก block เช่นกัน แบบ unconditional โดย session
+  hook (`.ai/bin/check-destructive.sh:158-169`) — เพิ่มเข้ามาหลังจากมี agent ใช้ทางนี้เลี่ยง
+  Tier 1 floor จริง (PR #125/#126) ข้อความ block เองระบุทางที่ยอมรับไว้แล้วคือ
+  `gh pr merge --delete-branch` ตอน merge
 
-(URL-encode `/` in the branch name as `%2F`.)
+เพราะฉะนั้นทางเดียวที่ agent ลบ remote branch ได้คือ `--delete-branch` ตอนรัน
+`gh pr merge` (ดู [merge-pr](../merge-pr/SKILL.md) step 2) ซึ่งต้องทำ*ก่อน*ที่ PR จะกลาย
+เป็น "merged ไปแล้ว" ถ้า PR ถูก merge ไปแล้วด้วยทางอื่น (web UI, เครื่องมืออื่น) การลบ
+remote เป็นงานของมนุษย์ล้วน — step 4 ด้านล่างตรวจจับกรณีนี้แล้วรายงาน ไม่ลองทางที่ถูก
+block ทั้งสองทาง
 
 ## Steps
 
@@ -59,15 +66,21 @@ env -u GH_TOKEN gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch-ur
    independently, via the GitHub API, that this exact branch's PR is merged — that's
    the real safety gate, not `-d`.
 
-4. **Delete the remote branch** (skip quietly if already gone):
+4. **เช็คว่า remote branch ยังอยู่ไหม** (read-only เท่านั้น — ห้ามลองลบตรงนี้ ดู "Critical"
+   ด้านบน):
    ```sh
-   env -u GH_TOKEN gh api "repos/<owner>/<repo>/branches/<branch>" >/dev/null 2>&1 \
-     && env -u GH_TOKEN gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch-urlencoded>"
+   env -u GH_TOKEN gh api "repos/<owner>/<repo>/branches/<branch>" >/dev/null 2>&1 && echo EXISTS || echo GONE
    ```
-   Get `<owner>/<repo>` from `env -u GH_TOKEN gh repo view --json nameWithOwner -q .nameWithOwner`.
+   หา `<owner>/<repo>` จาก `env -u GH_TOKEN gh repo view --json nameWithOwner -q .nameWithOwner`
 
-5. **Report**: base branch + synced sha, local branch deleted (y/n), remote branch
-   deleted (y/n, or "already gone").
+   - `GONE` — ถูกลบไปแล้ว (ส่วนใหญ่มาจาก `gh pr merge --delete-branch` ใน merge-pr step 2
+     หรือมีคนลบด้วยมือไปก่อนแล้ว) ไม่ต้องทำอะไรต่อ
+   - `EXISTS` — รายงานให้ user ทราบแล้วหยุด การลบเป็นงานของมนุษย์ (ผ่าน GitHub UI หรือ
+     terminal ของ user เอง) — ห้ามลอง `git push --delete` หรือ `gh api -X DELETE` ทั้งคู่
+     ถูก block (ดู "Critical" ด้านบน)
+
+5. **Report**: base branch + synced sha, local branch deleted (y/n), สถานะ remote
+   branch (ลบไปแล้ว / ยังอยู่ — ต้องให้มนุษย์ลบเอง)
 
 ## Guardrails
 
@@ -77,3 +90,6 @@ env -u GH_TOKEN gh api -X DELETE "repos/<owner>/<repo>/git/refs/heads/<branch-ur
   GitHub API. If step 1 itself fails to confirm a merge, stop and report why — do not
   force-delete past that.
 - Never touch worktrees here — this skill assumes a normal (non-worktree) checkout.
+- ห้ามลองลบ remote branch เองทุกกรณี — ทุกทาง (`git push --delete`,
+  `gh api -X DELETE .../refs/heads/`) ถูก block แบบ unconditional ในเรพนี้ (ดู "Critical"
+  ด้านบน) step 4 เช็คแค่ว่ายังอยู่ไหมแล้วรายงาน ไม่ลบ
