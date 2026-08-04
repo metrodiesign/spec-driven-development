@@ -6,7 +6,7 @@
 // an AdapterError — records the failure with the breaker and re-routes ONCE to
 // the next eligible adapter before a clean BLOCKED(no_capacity) (REQ-3).
 
-import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy, loadApprovedLessons, LeaseFenceError, validateCostUnits } from 'core';
+import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy, loadApprovedLessons, LeaseFenceError, normalizeWorktreeRelativePath, validateCostUnits } from 'core';
 import { SecretInContextError } from 'core';
 import { breakerKey, type Breaker } from './breaker.ts';
 import { AdapterError } from './protocol.ts';
@@ -101,6 +101,34 @@ function asHypotheses(structuredResult: unknown): Hypothesis[] {
   return Array.isArray(h) ? (h as Hypothesis[]) : [];
 }
 
+/** Cap on accumulated (READ_FILE-requested) paths carried into next round's seed (AC-7). */
+const MAX_ACCUMULATED_PATHS = 20;
+
+/**
+ * Normalize + cap `readRequested` into the path set that rides alongside
+ * `seedPaths` into next round's `buildContext` (AC-1/AC-2/AC-7). A path that is
+ * absolute or escapes the worktree is dropped, never accumulated (AC-2). A path
+ * in `evicted` (its content tripped the secret scanner while accumulated, AC-5)
+ * is kept out of the seed for the rest of the run so the build stops re-hitting
+ * and re-evicting it every round — it stays in `readRequested` (its WRITE_FILE
+ * provenance is preserved), it just no longer rides into the bundle. Over the
+ * cap, the oldest requests are evicted — `readRequested` is a Set, which already
+ * preserves insertion order (ECMA), so recency needs no LRU of its own.
+ */
+function accumulatedSeedPaths(readRequested: ReadonlySet<string>, evicted: ReadonlySet<string>): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of readRequested) {
+    const norm = normalizeWorktreeRelativePath(raw);
+    if (norm === null || seen.has(norm) || evicted.has(norm)) continue;
+    seen.add(norm);
+    normalized.push(norm);
+  }
+  return normalized.length > MAX_ACCUMULATED_PATHS
+    ? normalized.slice(normalized.length - MAX_ACCUMULATED_PATHS)
+    : normalized;
+}
+
 const keyOf = (r: RegisteredAdapter): string => breakerKey(r.record.adapterId, r.record.modelVersion);
 
 export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
@@ -122,6 +150,13 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
   // Paths the model has legitimately requested via READ_FILE accumulate across
   // rounds and expand the provenance-allowed set (REQ-5.4).
   const readRequested = new Set<string>();
+  // Accumulated paths whose content tripped the secret scanner (AC-5). Kept OUT
+  // of the seed set for the rest of the run (so the build stops re-hitting and
+  // re-evicting them), but deliberately NOT removed from readRequested: the
+  // WRITE_FILE allowlist below is `bundle ∪ readRequested`, and a scanner false
+  // positive on a file the model legitimately READ must not permanently strip its
+  // right to write that file (must-fix: the write-allowlist regression).
+  const evictedAccumulated = new Set<string>();
 
   // REQ-12: load once — approved lessons don't change mid-run (also runs the
   // REQ-11.3 offline reconciler exactly once per source construction).
@@ -140,29 +175,79 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
     async propose(input: ProposalInput): Promise<Proposal> {
       const role = input.role; // per-call role, not a construction-time bind (REQ-4.1)
 
-      // Build context; a secret in a piece BLOCKS the build (REQ-7.3).
+      // Build context; a secret in a piece BLOCKS the build (REQ-7.3) — UNLESS it
+      // came from an accumulated-only path (READ_FILE-requested last round, never
+      // a literal seed), in which case that one path is evicted from the SEED set
+      // (dropped from the bundle, but LEFT in readRequested so its WRITE_FILE
+      // provenance survives) and the build is retried (AC-5). Decided by POSITIVE
+      // membership in the accumulated set,
+      // not by absence from seedPaths (AC-11). A path that is BOTH a literal seed
+      // and accumulated still aborts immediately, same as a pure seed path — no
+      // wasted rebuild, no eviction event (AC-13). An EXPAND-only secret (in
+      // neither set) no longer reaches this catch at all: buildContext skips that
+      // one piece itself now (AC-12), so it never throws. AC-14: a SECOND
+      // accumulated path hitting on the retried build evicts and retries again —
+      // draining continues until the build succeeds or this round's accumulated
+      // set is exhausted, not just once. One canary token covers every build in
+      // the drain (AC-6).
       let bundle: ContextBundle;
       let manifestRef: string;
       let lessonsInjected: { id: string; evidenceRefs: string[] }[] = [];
       let lessonsBlocked: { id: string; kind: string }[] = [];
       let planBlocked = false;
-      try {
-        const built = buildContext({
+      let piecesBlocked: { path: string; kind: string }[] = [];
+      const canaryToken = deps.ids.canary();
+      const buildOnce = () =>
+        buildContext({
           taskId: deps.taskId,
           taskContract: deps.taskContract,
           worktreeDir: deps.worktreeDir,
-          seedPaths: deps.seedPaths,
-          canaryToken: deps.ids.canary(),
+          seedPaths: [...deps.seedPaths, ...accumulatedSeedPaths(readRequested, evictedAccumulated)],
+          canaryToken,
           evidence: deps.evidence,
           ...(deps.excludePath ? { excludePath: deps.excludePath } : {}),
           ...(approvedLessons.length > 0 ? { lessons: approvedLessons } : {}),
           ...(deps.plan !== undefined ? { plan: deps.plan } : {}),
         });
+      try {
+        let built: ReturnType<typeof buildContext>;
+        // AC-14: bounded drain — capped at THIS round's accumulated-path count,
+        // fixed before the first evict. Draining always adds exactly one path to
+        // evictedAccumulated per iteration, which drops it from the seed set the
+        // next accumulatedSeedPaths() computes, so the loop can never outlast the
+        // set it drains; the cap is a defensive backstop, not something normal
+        // operation is expected to hit.
+        const drainBudget = accumulatedSeedPaths(readRequested, evictedAccumulated).length;
+        for (let evictions = 0; ; evictions++) {
+          try {
+            built = buildOnce();
+            break;
+          } catch (err) {
+            if (!(err instanceof SecretInContextError)) throw err;
+            const accumulated = accumulatedSeedPaths(readRequested, evictedAccumulated);
+            // AC-13: a path that is ALSO a literal seed (not accumulated-only)
+            // always aborts immediately — evicting it from the seed would not
+            // remove it from deps.seedPaths, so a retry would just fail the same
+            // way again after a wasted rebuild and a misleading eviction event.
+            if (!accumulated.includes(err.file) || deps.seedPaths.includes(err.file)) throw err;
+            if (evictions >= drainBudget) throw err; // this round's accumulated set is exhausted
+            // Drop it from the SEED set (err.file is already normalized), but LEAVE
+            // it in readRequested so the WRITE_FILE allowlist still grants it.
+            evictedAccumulated.add(err.file);
+            deps.log.append({
+              runId: deps.runId,
+              taskId: deps.taskId,
+              type: 'ERROR',
+              payload: { reason: 'accumulated_secret_evicted', file: err.file, kind: err.kind },
+            });
+          }
+        }
         bundle = built.bundle;
         manifestRef = built.manifestRef;
         lessonsInjected = built.lessonsInjected;
         lessonsBlocked = built.lessonsBlocked;
         planBlocked = built.planBlocked;
+        piecesBlocked = built.piecesBlocked;
       } catch (err) {
         if (err instanceof SecretInContextError) {
           deps.log.append({
@@ -438,7 +523,11 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
         runId: deps.runId,
         taskId: deps.taskId,
         type: 'CONTEXT_BUILT',
-        payload: { manifestRef, recall: metrics.recall, waste: metrics.waste, requestId },
+        // AC-15: piecesBlocked names WHICH pieces the builder skipped and WHY
+        // (an EXPAND-only secret, AC-12, or a containment violation, AC-10) —
+        // path + kind only, never file content, so "recall stayed low" is
+        // diagnosable instead of looking identical to a file that never existed.
+        payload: { manifestRef, recall: metrics.recall, waste: metrics.waste, requestId, piecesBlocked },
       });
 
       const claim = asClaim((out.response.structuredResult as { claim?: unknown }).claim);
