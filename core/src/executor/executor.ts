@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import {
   mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   rmSync,
@@ -1226,6 +1227,35 @@ function reject(
   return { status: 'rejected', rejection };
 }
 
+const AVAILABLE_PATHS_HINT_LIMIT = 20;
+
+/**
+ * READ_FILE-not-found rejection hint (REQ-5.4, backlog: rejected-feedback): the
+ * real paths the executor can see from the worktree root, bounded and sorted so
+ * the next round has a signal instead of guessing blind. `.git` is skipped — its
+ * internal object names are never a valid READ_FILE target.
+ */
+function listExistingPaths(root: string, limit = AVAILABLE_PATHS_HINT_LIMIT): string[] {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (found.length >= limit) return;
+      if (entry.name === '.git') continue;
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) walk(abs);
+      else if (entry.isFile()) found.push(relative(root, abs).split(sep).join('/'));
+    }
+  };
+  walk(root);
+  return found.slice(0, limit);
+}
+
 function patchPolicyRejection(
   opts: ExecutorOptions,
   prepared: PreparedPatch,
@@ -1600,8 +1630,28 @@ async function executeValidAction(
           DEFAULT_FROZEN_TREE_LIMITS.maxSingleFileBytes,
         )
       ).content;
-    } catch {
-      return reject(opts, action.actionId, 'schema_violation', `file not found: ${action.path}`);
+    } catch (error) {
+      // Operational failures (spawn timeout/cancellation) are not "file not
+      // found" — propagate like every other catch in this file instead of
+      // mislabeling them (backlog: rejected-feedback nit).
+      if (error instanceof FrozenTreeOperationError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      // The descriptor-safe reader spawns a Python helper; its stderr surfaces
+      // Python's OSError text, so `[Errno 2]` is the only ENOENT signal we get.
+      // Anything else (permission denied, non-regular file, ...) is a real read
+      // failure and must not carry the available-paths hint — that hint says
+      // "here is what actually exists," which is misleading when the requested
+      // path exists but couldn't be read (backlog: rejected-feedback nit).
+      if (/\[Errno 2\]/.test(message)) {
+        const available = listExistingPaths(opts.worktreeDir);
+        return reject(
+          opts,
+          action.actionId,
+          'schema_violation',
+          `file not found: ${action.path} | available: ${available.join(', ')}`,
+        );
+      }
+      return reject(opts, action.actionId, 'schema_violation', `read failed: ${message}`);
     }
     const outputRef = opts.evidence.put(content);
     appendCoreEvent(opts, {

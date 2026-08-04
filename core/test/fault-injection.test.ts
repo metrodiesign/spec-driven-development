@@ -832,6 +832,87 @@ test('DoD#5b (control): deterministic failure is NOT labeled flaky', async () =>
       'retry attempted once, then reported as a real failure',
     );
     assert.equal(existsSync(join(fix.worktree, '.runs')), false, 'failed gate leaves no marker');
+    assert.equal(
+      fullTests?.command,
+      'sh run-tests.sh',
+      'GateCheck.command carries the resolved command, not the retry wrapper (AC-2)',
+    );
+    assert.equal(
+      fullTests?.outputTail?.match(/^GATE_RUN$/gm)?.length,
+      2,
+      'GateCheck.outputTail surfaces the real captured output, not just "exit 1" (AC-1)',
+    );
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#5c: silent command failure -> outputTail empty, command still captured (AC-4)', async () => {
+  const fix = makeFixture();
+  try {
+    // Default fixture run-tests.sh is `grep -q correct src/impl.txt`, which is
+    // POSIX-silent on both stdout and stderr regardless of match, and impl.txt
+    // does not yet contain "correct" — a naturally silent, deterministic failure.
+    const c = buildCore(fix);
+    const report = await c.gates.run('T1');
+    const fullTests = report.checks.find((ch) => ch.name === 'fullTests');
+    assert.equal(fullTests?.pass, false);
+    assert.equal(
+      fullTests?.command,
+      'sh run-tests.sh',
+      'command is still captured even when the command is silent (AC-2/AC-4)',
+    );
+    assert.equal(fullTests?.outputTail, '', 'a silent command yields an empty outputTail, no error (AC-4)');
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#5d: outputTail carrying a secret shape is omitted entirely, never redacted-and-sent (GOVERN)', async () => {
+  // Runtime-assembled so the repo's own secret guard finds no contiguous token in this file's bytes.
+  const fakeToken = 'ghp'.concat('_', 'abcdefghijklmnopqrstuvwxyz1234');
+  const fix = makeFixture({
+    fullTests: `echo "token=${fakeToken}"; exit 1`,
+  });
+  try {
+    const c = buildCore(fix);
+    const report = await c.gates.run('T1');
+    const fullTests = report.checks.find((ch) => ch.name === 'fullTests');
+    assert.equal(fullTests?.pass, false);
+    assert.equal(
+      fullTests?.command,
+      `echo "token=${fakeToken}"; exit 1`,
+      'command is still populated on a secret hit',
+    );
+    assert.ok(fullTests?.detail, 'detail is still populated on a secret hit');
+    assert.ok(fullTests?.evidenceRef, 'evidenceRef is still populated on a secret hit');
+    assert.equal(
+      fullTests?.outputTail,
+      undefined,
+      'outputTail is omitted entirely when the captured output matches a secret shape',
+    );
+  } finally {
+    fix.cleanup();
+  }
+});
+
+test('DoD#5e: flaky_suspect check also carries command/outputTail, same fields as a stable failure', async () => {
+  const fix = makeFixture();
+  try {
+    installFlakyTests(fix);
+    const c = buildCore(fix);
+    const report = await c.gates.run('T1');
+    const fullTests = report.checks.find((ch) => ch.name === 'fullTests');
+    assert.equal(fullTests?.flakySuspect, true);
+    assert.equal(
+      fullTests?.command,
+      'sh run-tests.sh',
+      'flaky_suspect is a gate-command failure too (exit 79) and carries the resolved command (AC-2)',
+    );
+    assert.ok(
+      fullTests?.outputTail?.match(/^GATE_RUN$/gm)?.length,
+      'flaky_suspect still carries captured output, not zero-signal (AC-1)',
+    );
   } finally {
     fix.cleanup();
   }
@@ -1166,6 +1247,77 @@ test('REQ-3.9/3.10/3.11: READ_FILE is evidence-backed, intent-free, and containe
       assert.equal(rejected.rejection.reason, 'path_outside_allowlist');
     }
     assert.equal(c.log.all({ type: 'ACTION_INTENT' }).length, 0);
+  } finally {
+    fix.cleanup();
+  }
+});
+
+// backlog: rejected-feedback (AC-3) — a missing-file READ_FILE used to reject with
+// zero hint about what actually exists; the model burned 4/10 live iterations
+// re-guessing paths blind. The detail now carries a bounded, deterministically
+// sorted listing of the real paths the executor sees.
+test('REQ-5.4: READ_FILE-not-found carries a bounded, deterministic available-paths hint', async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const rejected = await c.executor.execute(
+      { type: 'READ_FILE', actionId: 'a-read-missing', path: 'src/missing.txt' },
+      'implementer',
+    );
+    assert.equal(rejected.status, 'rejected');
+    if (rejected.status === 'rejected') {
+      assert.equal(rejected.rejection.reason, 'schema_violation');
+      const [message, listPart] = rejected.rejection.detail.split(' | available: ');
+      assert.equal(message, 'file not found: src/missing.txt');
+      assert.deepEqual(
+        listPart?.split(', '),
+        [
+          'gate-ladder.json',
+          'run-tests.sh',
+          'src/impl.txt',
+          'test/ai-generated/.gitkeep',
+          'test/golden/_MANIFEST.sha256',
+          'test/golden/expected.txt',
+        ],
+        'real, sorted paths — no .git internals',
+      );
+    }
+    assert.equal(c.log.all({ type: 'ACTION_INTENT' }).length, 0);
+  } finally {
+    fix.cleanup();
+  }
+});
+
+// backlog: rejected-feedback (nit) — the catch around the descriptor-safe read
+// used to swallow every failure as "file not found", so a path that exists but
+// can't be read as a regular file (permission denied, spawn failure, ...) got
+// the same misleading label plus an available-paths listing that contradicted
+// it (the path was right there in the listing). A directory target hits the
+// same non-ENOENT branch deterministically without needing chmod/spawn tricks.
+test('REQ-5.4: READ_FILE non-ENOENT failure is not mislabeled as file-not-found', async () => {
+  const fix = makeFixture();
+  try {
+    const c = buildCore(fix);
+    const rejected = await c.executor.execute(
+      { type: 'READ_FILE', actionId: 'a-read-dir', path: 'src' },
+      'implementer',
+    );
+    assert.equal(rejected.status, 'rejected');
+    if (rejected.status === 'rejected') {
+      assert.equal(rejected.rejection.reason, 'schema_violation');
+      assert.ok(
+        rejected.rejection.detail.startsWith('read failed: '),
+        `expected a "read failed:" label, got: ${rejected.rejection.detail}`,
+      );
+      assert.ok(
+        !rejected.rejection.detail.includes('file not found'),
+        'a real (non-missing) path must not be mislabeled as file-not-found',
+      );
+      assert.ok(
+        !rejected.rejection.detail.includes(' | available: '),
+        'available-paths hint is ENOENT-only — attaching it here would contradict the failure',
+      );
+    }
   } finally {
     fix.cleanup();
   }

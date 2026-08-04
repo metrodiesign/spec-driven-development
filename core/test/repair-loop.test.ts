@@ -127,6 +127,84 @@ test('confirmed hypothesis -> REPAIRING, patch plan folded as marked feedback, r
   }
 });
 
+// backlog: rejected-feedback (AC-1/AC-2) — a failed T0 used to overwrite this
+// round's ActionRejection[] with the confirmed patch plan, and the diagnostician
+// never saw rejections at all (root cause of the live ESCALATED run this task
+// closes). Both a source-side rejection (AAL context_violation shape) and an
+// executor-side rejection (a rejected action) must survive into the diagnostician
+// round AND the repair round, alongside the gate report / patch plan.
+test('T0 failure carries this round\'s rejections into BOTH the diagnostician and the repair round, never overwriting the patch plan (REQ-5.4)', logicOnly, async () => {
+  const fix = makeFixture();
+  try {
+    const c = build(fix, LIMITS);
+    const seen: ProposalInput[] = [];
+    const source: ProposalSource = {
+      async propose(input): Promise<Proposal> {
+        seen.push(input);
+        if (input.role === 'diagnostician') {
+          return {
+            claim: 'WORKING',
+            actions: [],
+            hypotheses: [
+              {
+                statement: 'impl.txt still reads "wrong"',
+                probes: [{ cmd: 'grep wrong src/impl.txt', expected: 'wrong' }],
+                ifConfirmed: { patchPlan: 'write "correct" to src/impl.txt', estimatedBlastRadius: '1 file' },
+              },
+            ],
+            costUnits: 1,
+          };
+        }
+        if (input.state === 'REPAIRING') {
+          return {
+            claim: 'READY_FOR_VERIFICATION',
+            actions: [{ type: 'WRITE_FILE', actionId: 'fix', path: 'src/impl.txt', contentRef: c.evidence.put('correct\n') }],
+            costUnits: 1,
+          };
+        }
+        // First implementer round: one executor-rejected action (escapes the
+        // worktree) PLUS a source-side rejection (AAL context_violation shape) —
+        // both must survive past this round's T0 failure.
+        return {
+          claim: 'WORKING',
+          actions: [{ type: 'WRITE_FILE', actionId: 'a-escape', path: '../escape.txt', contentRef: c.evidence.put('x') }],
+          rejections: [
+            {
+              actionId: 'a-context',
+              reason: 'context_violation',
+              detail: 'action path not in context bundle and never READ_FILE-requested',
+            },
+          ],
+          costUnits: 1,
+        };
+      },
+    };
+    const result = await c.run(source);
+
+    assert.equal(result.finalState, 'REVIEWING', 'the confirmed fix still reaches REVIEWING');
+
+    // AC-2: the diagnostician's feedback carries the gate failure AND both
+    // rejections from the failed round, not gateFailure alone.
+    const diagRound = seen.find((i) => i.role === 'diagnostician');
+    assert.ok(diagRound, 'a diagnostician round ran');
+    const diagFb = diagRound?.feedback as { tier?: string; rejections?: { actionId: string }[] } | null | undefined;
+    assert.ok(diagFb && !Array.isArray(diagFb) && diagFb.tier === 'T0', 'diagnostician still gets the gate report');
+    assert.equal(diagFb?.rejections?.length, 2, 'diagnostician sees BOTH rejections from the failed round');
+    assert.ok(diagFb?.rejections?.some((r) => r.actionId === 'a-escape'), 'executor rejection reached the diagnostician');
+    assert.ok(diagFb?.rejections?.some((r) => r.actionId === 'a-context'), 'source-side rejection reached the diagnostician');
+
+    // AC-1: the repair round's feedback keeps those same rejections alongside the
+    // confirmed patch plan — the overwrite bug this task closes.
+    const repairRound = seen.find((i) => i.state === 'REPAIRING' && i.role === 'implementer');
+    assert.ok(repairRound, 'an implementer round ran from REPAIRING');
+    const fb = repairRound?.feedback as { kind?: string; rejections?: { actionId: string }[] } | null | undefined;
+    assert.ok(fb && !Array.isArray(fb) && fb.kind === 'patch_plan', 'patch plan folded as marked feedback (REQ-5.4)');
+    assert.equal(fb?.rejections?.length, 2, 'the patch plan does not overwrite this round\'s rejections');
+  } finally {
+    fix.cleanup();
+  }
+});
+
 test('all hypotheses refuted -> ESCALATED hypotheses_exhausted with an ordered, dump-free log (REQ-5.6)', logicOnly, async () => {
   const fix = makeFixture();
   try {

@@ -136,6 +136,11 @@ test('rejects a WRITE to a path never in-bundle or READ as context_violation (RE
     const rej = h.log.all({ type: 'ACTION_REJECTED' });
     assert.equal(rej.length, 1);
     assert.equal(rej[0]?.payload['reason'], 'context_violation');
+    // Roundtrip (backlog: rejected-feedback, AC-4): the same rejection now reaches
+    // the next round via Proposal.rejections, not just the log.
+    assert.equal(p.rejections?.length, 1);
+    assert.equal(p.rejections?.[0]?.reason, 'context_violation');
+    assert.equal(p.rejections?.[0]?.detail, rej[0]?.payload['detail']);
   } finally {
     h.cleanup();
   }
