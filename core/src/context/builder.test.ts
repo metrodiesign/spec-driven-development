@@ -3,7 +3,7 @@
 // canary, MANIFEST evidence, recall/waste, machine-config exclusion.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -310,5 +310,162 @@ test('recall/waste: fraction of touched files that were in the bundle, and unuse
     assert.equal(m.waste, 0.5, 'half the bundled files went untouched');
   } finally {
     f.cleanup();
+  }
+});
+
+test('AC-10: EXPAND does not follow an import that resolves outside the worktree', () => {
+  const f = fixture({
+    'src/evil.ts': `import { LEAKED } from '../../outside/stolen.ts';\nexport const evil = 1;\n`,
+  });
+  try {
+    // Sibling of the worktree root, one level ABOVE `wt/` — mirrors the audit's
+    // live repro (finding #1): a READ_FILE-visible file whose import string walks
+    // out of the worktree via `..`.
+    mkdirSync(join(f.root, 'outside'), { recursive: true });
+    writeFileSync(join(f.root, 'outside/stolen.ts'), 'export const LEAKED = "top secret";\n');
+    const r = buildContext(input(f, ['src/evil.ts']));
+    const paths = r.bundle.pieces.map((p) => p.path);
+    assert.ok(paths.includes('src/evil.ts'), 'the seed file itself is still included');
+    assert.ok(
+      !paths.some((p) => p?.includes('stolen.ts')),
+      `the out-of-worktree EXPAND target must not be bundled, got ${JSON.stringify(paths)}`,
+    );
+    const wire = serializeBundle(r.bundle);
+    assert.ok(!wire.includes('top secret'), 'content of the escaped file never reaches the serialized bundle');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC-12: a secret reached only via EXPAND (not in seedPaths) is skipped as a single piece — the build still succeeds', () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const f = fixture({
+    'src/reader.ts': `import { k } from './secret-config.ts';\nexport const reader = 1;\n`,
+    'src/secret-config.ts': `export const k = "${secret}";\n`,
+  });
+  try {
+    const r = buildContext(input(f, ['src/reader.ts']));
+    const paths = r.bundle.pieces.map((p) => p.path);
+    assert.ok(paths.includes('src/reader.ts'), 'the seeded file itself is still included');
+    assert.ok(!paths.includes('src/secret-config.ts'), 'the EXPAND-derived secret-bearing file is skipped, not thrown');
+    const wire = serializeBundle(r.bundle);
+    assert.ok(!wire.includes(secret), 'skipped EXPAND content never reaches the serialized bundle');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC-12: EXPAND resolving a relative import against the repo root reaches a literal seed BEFORE its own turn in the seedPaths loop — reason is expand:depth-N, not seed', () => {
+  // Proves the trap the next test's membership check has to survive is real,
+  // not assumed: with NO secret involved, b.ts (a literal seedPath) still ends
+  // up with an 'expand:depth-1' reason because a.ts's import resolves to it
+  // first (relative imports resolve against the repo root here, not the
+  // importing file's own directory) — collected.has() then skips b.ts's own
+  // 'seed' visit when the seedPaths loop later reaches it.
+  const f = fixture({ 'a.ts': `import './b.ts';\nexport const a = 1;\n`, 'b.ts': `export const b = 2;\n` });
+  try {
+    const r = buildContext(input(f, ['a.ts', 'b.ts']));
+    const bPiece = r.bundle.pieces.find((p) => p.path === 'b.ts');
+    assert.ok(bPiece, 'b.ts made it into the bundle');
+    assert.equal(bPiece?.reason, 'expand:depth-1', 'a literal seed can carry an expand reason when EXPAND reaches it first');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("AC-12: a secret in a path that is itself in seedPaths still aborts, even when EXPAND reaches it first via another seed's import", () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const f = fixture({
+    'a.ts': `import './secret.ts';\nexport const a = 1;\n`,
+    'secret.ts': `export const k = "${secret}";\n`,
+  });
+  try {
+    // secret.ts is a literal seedPath itself, but (as the previous test proves)
+    // EXPAND reaches it first via a.ts's import, so its collected reason is
+    // 'expand:depth-1', not 'seed'. AC-12 must still throw here: it is decided
+    // by seedPathSet membership, not the reason string collected() records —
+    // a reason-based check would silently skip a real seeded secret instead.
+    assert.throws(
+      () => buildContext(input(f, ['a.ts', 'secret.ts'])),
+      (err: unknown) => err instanceof SecretInContextError && err.file.includes('secret.ts'),
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC-15: buildContext reports every skipped piece via piecesBlocked (EXPAND secret + containment), but stays silent for an ordinary missing file', () => {
+  const secret = ['sk', 'live', 'ABCDEFGH1234567890abcdefgh'].join('_');
+  const f = fixture({
+    'reader.ts': [
+      `import { k } from './secret-config.ts';`, // EXPAND-only secret (AC-12)
+      `import { x } from './missing-file.ts';`, // plain missing file — stays silent, same as always
+      `import { LEAKED } from '../../outside/stolen.ts';`, // EXPAND escaping the worktree (AC-10)
+      `export const reader = 1;`,
+    ].join('\n'),
+    'secret-config.ts': `export const k = "${secret}";\n`,
+  });
+  try {
+    mkdirSync(join(f.root, 'outside'), { recursive: true });
+    writeFileSync(join(f.root, 'outside/stolen.ts'), 'export const LEAKED = "top secret";\n');
+    const r = buildContext(input(f, ['reader.ts']));
+    assert.equal(
+      r.piecesBlocked.length,
+      2,
+      `expected exactly 2 blocked pieces (secret + containment) — the missing import must stay silent, got ${JSON.stringify(r.piecesBlocked)}`,
+    );
+    assert.ok(r.piecesBlocked.some((b) => b.path === 'secret-config.ts' && b.kind === 'sk-key'), 'EXPAND-only secret reported with its scan kind');
+    assert.ok(r.piecesBlocked.some((b) => b.path.includes('stolen.ts') && b.kind === 'containment'), 'containment violation reported with kind=containment');
+    assert.ok(!r.piecesBlocked.some((b) => b.path.includes('missing')), 'a plain missing file is never reported');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('LOW-2: a containment-blocked path imported by multiple seeds is reported in piecesBlocked once, not once per importer', () => {
+  // A containment-blocked path never enters `collected`, so the collected.has()
+  // guard in visit() can't stop every importer of it from reaching the push.
+  // Two seeds importing the SAME out-of-worktree path used to yield two identical
+  // entries (audit LOW-2 repro D1); dedupe by path keeps it to one.
+  const f = fixture({
+    'src/one.ts': `import { X } from '../../outside/shared.ts';\nexport const one = 1;\n`,
+    'src/two.ts': `import { X } from '../../outside/shared.ts';\nexport const two = 2;\n`,
+  });
+  try {
+    mkdirSync(join(f.root, 'outside'), { recursive: true });
+    writeFileSync(join(f.root, 'outside/shared.ts'), 'export const X = "top secret";\n');
+    const r = buildContext(input(f, ['src/one.ts', 'src/two.ts']));
+    const blocked = r.piecesBlocked.filter((b) => b.path.includes('shared.ts'));
+    assert.equal(blocked.length, 1, `the same containment-blocked path must be reported once, got ${JSON.stringify(r.piecesBlocked)}`);
+    assert.equal(blocked[0]?.kind, 'containment');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('AC-10: a worktree reached through a symlinked ancestor (e.g. macOS /tmp) still reads its own files normally', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ctx-symlink-'));
+  const realWorktree = join(root, 'real-wt');
+  const linkedWorktree = join(root, 'linked-wt');
+  mkdirSync(join(realWorktree, 'src'), { recursive: true });
+  writeFileSync(join(realWorktree, 'src/a.ts'), 'export const a = 1;\n');
+  symlinkSync(realWorktree, linkedWorktree, 'dir');
+  const evidence = createEvidenceStore(join(root, 'evidence'));
+  try {
+    const r = buildContext({
+      taskId: 'T-1',
+      taskContract: CONTRACT,
+      worktreeDir: linkedWorktree, // the worktree ROOT itself is reached via a symlink
+      seedPaths: ['src/a.ts'],
+      canaryToken: 'CANARY-fixed-123',
+      evidence,
+    });
+    const paths = r.bundle.pieces.map((p) => p.path);
+    assert.ok(
+      paths.includes('src/a.ts'),
+      `expected src/a.ts to still be read through the symlinked worktree root, got ${JSON.stringify(paths)}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

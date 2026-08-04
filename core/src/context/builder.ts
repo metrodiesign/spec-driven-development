@@ -5,15 +5,30 @@
 // function of (contract, worktree files, seedPaths, canaryToken): identical
 // inputs => byte-identical manifest.
 //
+// NOTE (v1.8): `seedPaths` is no longer fixed per task — the caller grows it each
+// round with the paths the role requested via READ_FILE (normalized + capped in
+// aal/src/source.ts), so a later round legitimately builds a larger bundle. This
+// function is unchanged and still pure; only the inputs it is handed differ.
+// See unified-platform-spec.md §9.4/§17 and .ai/specs/context-accumulation/.
+//
 // Machine-config exclusion (REQ-7.7) is enforced by core but PARAMETERIZED: the
 // list of machine-config paths is vendor-specific, so naming those files here
 // would violate INV-7 (core must be vendor-name-free). The caller — the
 // composition root, which is allowed to know the vendor — supplies `excludePath`;
 // core honors whatever predicate it is given and defaults to excluding nothing.
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
 
+import { normalizeWorktreeRelativePath } from '../executor/path-policy.ts';
 import { scanForSecret } from './secret-scan.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import type { ContextBundle, ContextPiece, LessonRecord, TaskContractExcerpt } from '../types.ts';
@@ -57,6 +72,12 @@ export interface ContextBuildResult {
   planInjected: boolean;
   /** GOVERN blocked `input.plan` (a secret hit) — never reached pieces/prompt; the caller records the block. */
   planBlocked: boolean;
+  /**
+   * AC-15: pieces the builder skipped rather than including or throwing for —
+   * an EXPAND-only secret (AC-12) or a containment violation (AC-10). No file
+   * content here; the caller logs {path, kind} onto CONTEXT_BUILT.
+   */
+  piecesBlocked: { path: string; kind: string }[];
 }
 
 export class SecretInContextError extends Error {
@@ -140,24 +161,96 @@ function compressOrTruncate(
   return { content: truncate(full, maxFileBytes), reason: 'truncated' };
 }
 
+/**
+ * Read a worktree-relative path with containment enforced at the read edge
+ * (AC-10): `normalizeWorktreeRelativePath` rejects a syntactic escape (`..`,
+ * absolute) before resolution, then the resolved target must stay under the
+ * worktree's OWN realpath — parent-dir realpath check, then an O_NOFOLLOW open —
+ * the same idiom `readCandidate` in ../gates/red-provenance.ts uses, which also
+ * resolves the worktree side so a symlinked worktree root (e.g. macOS's
+ * /tmp -> /private/tmp) still reads its own files normally. Neither case
+ * throws, but the two are distinguished (AC-15): a plain missing file
+ * (`blocked: 'not-found'`) stays silent, same as before; a containment
+ * violation (traversal, or a symlink anywhere in the resolved path,
+ * `blocked: 'containment'`) is named so the caller can signal it instead of
+ * it looking identical to a file that never existed.
+ */
+function readWithinWorktree(
+  worktreeDir: string,
+  relPath: string,
+): { content: string | null; blocked: 'not-found' | 'containment' | null } {
+  const norm = normalizeWorktreeRelativePath(relPath);
+  if (norm === null) return { content: null, blocked: 'containment' };
+  const absolute = resolve(worktreeDir, norm);
+  let stat;
+  try {
+    stat = lstatSync(absolute);
+  } catch {
+    return { content: null, blocked: 'not-found' }; // ENOENT, ENOTDIR — no file at this path
+  }
+  try {
+    if (!stat.isFile()) return { content: null, blocked: 'containment' }; // symlink or directory, not a plain file
+    const root = realpathSync(worktreeDir);
+    const parent = realpathSync(dirname(absolute));
+    if (parent !== root && !parent.startsWith(`${root}${sep}`)) return { content: null, blocked: 'containment' };
+    const fd = openSync(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      if (!fstatSync(fd).isFile()) return { content: null, blocked: 'containment' };
+      return { content: readFileSync(fd, 'utf8'), blocked: null };
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return { content: null, blocked: 'containment' }; // ELOOP (O_NOFOLLOW hit a symlink) or another failure after existence was confirmed
+  }
+}
+
 export function buildContext(input: ContextBuildInput): ContextBuildResult {
   const maxFileBytes = input.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   const depthBudget = input.depthBudget ?? 1;
   const excludePath = input.excludePath ?? (() => false);
+  // AC-12: a path the caller actually seeded (composition's literal seedPaths OR
+  // the accumulated READ_FILE-requested set the caller already folded in there) —
+  // used below to tell a seeded/accumulated secret (still a whole-build abort)
+  // apart from an EXPAND-only one (a per-piece skip). Checked against
+  // input.seedPaths directly, NOT the 'seed' reason collected() records below,
+  // because visit() can reach a seeded path via EXPAND first (another seed's
+  // import resolves to it before its own turn in the seedPaths loop) — the
+  // reason string alone would then mislabel a real seeded secret as EXPAND-only.
+  const seedPathSet = new Set(input.seedPaths);
 
-  // SEED + EXPAND: collect a deterministic set of {path, reason}, machine config excluded.
-  const collected = new Map<string, string>(); // path -> reason
+  // AC-15: pieces the builder itself decided to skip rather than include or
+  // throw for — a containment violation (AC-10, filled by visit() below) or a
+  // secret reached only via EXPAND (AC-12, filled in the GOVERN loop below).
+  // Content never lands here — path + kind only, for the caller to log. A
+  // plain missing file is NOT included (stays silent, same as always).
+  const piecesBlocked: { path: string; kind: string }[] = [];
+
+  // SEED + EXPAND: collect a deterministic set of {path, reason, content}, machine
+  // config excluded. Containment (AC-10) is enforced by readWithinWorktree at this
+  // single read edge — a path that is absolute, escapes the worktree via `..`, or
+  // resolves (through a symlink) outside the worktree is treated exactly like a
+  // missing file for bundle purposes (silently not collected, for BOTH a literal
+  // seed path and an EXPAND-derived one) but is distinguished from an ordinary
+  // missing file in piecesBlocked (AC-15).
+  const collected = new Map<string, { reason: string; content: string }>(); // path -> {reason, content}
   const visit = (relPath: string, reason: string, depth: number): void => {
     if (excludePath(relPath) || collected.has(relPath)) return;
-    let content: string;
-    try {
-      content = readFileSync(join(input.worktreeDir, relPath), 'utf8');
-    } catch {
-      return; // a missing seed/import is simply not included (recall will reflect it)
+    const read = readWithinWorktree(input.worktreeDir, relPath);
+    if (read.content === null) {
+      // Dedupe by path: a containment-blocked path never enters `collected`, so
+      // the collected.has() guard above can't stop every importer of it from
+      // reaching here — without this, one out-of-worktree import referenced N
+      // times pushes N identical entries (LOW-2). GOVERN's push below walks the
+      // deduped `paths`, so it needs no such guard.
+      if (read.blocked === 'containment' && !piecesBlocked.some((b) => b.path === relPath)) {
+        piecesBlocked.push({ path: relPath, kind: 'containment' });
+      }
+      return; // missing or blocked — not included (recall will reflect it)
     }
-    collected.set(relPath, reason);
+    collected.set(relPath, { reason, content: read.content });
     if (depth < depthBudget) {
-      for (const imp of localImports(content)) {
+      for (const imp of localImports(read.content)) {
         // Resolve a relative import against the repo root, best-effort with .ts.
         const cand = imp.replace(/^\.\//, '').replace(/^\.\.\//, '');
         visit(cand.endsWith('.ts') ? cand : `${cand}.ts`, `expand:depth-${depth + 1}`, depth + 1);
@@ -169,15 +262,28 @@ export function buildContext(input: ContextBuildInput): ContextBuildResult {
   // Deterministic order: sort by path, THEN assign stable piece ids.
   const paths = [...collected.keys()].sort();
 
-  // COMPRESS + GOVERN + MARK.
+  // COMPRESS + GOVERN + MARK. Content was already read (and containment-checked,
+  // AC-10) once during SEED/EXPAND above; reusing it here avoids a second raw
+  // read that would reopen the TOCTOU window the containment check just closed.
   const pieces: ContextPiece[] = [];
   const rules: { pieceId: string; reason: string }[] = [];
   paths.forEach((relPath, i) => {
-    const full = readFileSync(join(input.worktreeDir, relPath), 'utf8');
+    const entry = collected.get(relPath);
+    if (entry === undefined) return; // unreachable: paths is collected.keys()
+    const full = entry.content;
     const hit = scanForSecret(full); // GOVERN scans the FULL file, pre-compression/pre-truncation
-    if (hit.hit) throw new SecretInContextError(relPath, hit.kind ?? 'unknown');
-    const inclusionReason = collected.get(relPath) ?? 'seed';
-    const { content, reason } = compressOrTruncate(full, maxFileBytes, inclusionReason);
+    if (hit.hit) {
+      // AC-12: a secret reached ONLY via EXPAND (never in the caller's
+      // seedPaths, which already carries seed ∪ accumulated) is a per-piece
+      // skip — same precedent as a blocked lesson/plan below, never the
+      // whole-build abort a seeded/accumulated secret still triggers.
+      if (!seedPathSet.has(relPath)) {
+        piecesBlocked.push({ path: relPath, kind: hit.kind ?? 'unknown' }); // AC-15
+        return;
+      }
+      throw new SecretInContextError(relPath, hit.kind ?? 'unknown');
+    }
+    const { content, reason } = compressOrTruncate(full, maxFileBytes, entry.reason);
     const id = `p-${i}`;
     pieces.push({ id, kind: 'file', path: relPath, content, reason });
     rules.push({ pieceId: id, reason });
@@ -233,7 +339,7 @@ export function buildContext(input: ContextBuildInput): ContextBuildResult {
     stats: bundle.stats,
   };
   const manifestRef = input.evidence.put(JSON.stringify(manifest));
-  return { bundle, manifestRef, rules, lessonsInjected, lessonsBlocked, planInjected, planBlocked };
+  return { bundle, manifestRef, rules, lessonsInjected, lessonsBlocked, planInjected, planBlocked, piecesBlocked };
 }
 
 export function computeContextMetrics(

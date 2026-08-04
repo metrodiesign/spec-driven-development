@@ -54,7 +54,8 @@ function acceptanceCriteriaBlock(req: AgentRequest): string {
  */
 function protocolBlock(req: AgentRequest): string {
   const readFileLine =
-    `- {"type":"READ_FILE","path":"<repo-relative path>"} — ask to read a path not yet in your context bundle\n`;
+    `- {"type":"READ_FILE","path":"<repo-relative path>"} — ask to read a path not yet in your context bundle; ` +
+    `its content will be in your context bundle starting NEXT round, so do not re-request it\n`;
   const requestToolLine = `- {"type":"REQUEST_TOOL","name":"<tool>"} — ask for a capability you lack\n`;
   const header =
     `Protocol: you have NO tools and cannot execute anything — every action you want ` +

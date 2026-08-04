@@ -411,8 +411,13 @@ is recorded (same honesty rule as the spikes, A4).
 - **Ring discipline survives the first real vendor (INV-7/8/9):** vendor grep extends to `aal/`;
   adapters are injected at the composition root so Ring 1 never links Ring 2; P6 re-verifies
   propose-only per conformance run instead of trusting D-004 once.
-- **Determinism where it matters:** context builder is a pure function of (contract, worktree);
-  conformance verdicts are deterministic given transcripts; the only nondeterministic component
+- **Determinism where it matters:** context builder is a pure function of its inputs — same
+  inputs, byte-identical manifest (REQ-7.1). NOTE (superseded in part by v1.8, see
+  `unified-platform-spec.md` §9.4/§17 and `.ai/specs/context-accumulation/`): the seed set is
+  no longer fixed per task — from v1.8 the caller grows it each round with the paths the role
+  requested via `READ_FILE`, so a later round legitimately builds a larger bundle. The builder
+  itself is unchanged and still pure; only the inputs it is handed differ.
+  Conformance verdicts are deterministic given transcripts; the only nondeterministic component
   (the model) sits behind evidence capture.
 - **Claim discipline (§16):** calibration reports ranges (n small); costUnits labeled estimates;
   injection canary = measurement, never claimed prevention; parity items that need human eyes stay
