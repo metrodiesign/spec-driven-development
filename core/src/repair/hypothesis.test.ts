@@ -10,6 +10,8 @@ import { test } from 'node:test';
 
 import { createBudget } from '../budget/budget.ts';
 import { createEvidenceStore } from '../evidence/store.ts';
+import { createExecutor } from '../executor/executor.ts';
+import { createDefaultPathPolicy } from '../executor/path-policy.ts';
 import { openEventLog } from '../state/event-log.ts';
 import { evaluateHypotheses, type HypothesisEngineDeps } from './hypothesis.ts';
 import type { ExecuteOutcome, Executor } from '../executor/executor.ts';
@@ -196,5 +198,68 @@ test('checks the budget between probes and stops on a wallclock trip (REQ-5.9)',
     assert.deepEqual(h.runCmds, ['slow'], 'the second probe was gated out by the between-probe budget check');
   } finally {
     h.cleanup();
+  }
+});
+
+test('AC-13: a hypotheses entry that is not an object is rejected, never a throw out of evaluateHypotheses', async () => {
+  // `hypotheses` is the SECOND untrusted array from the model (asHypotheses() in
+  // the AAL source is a bare cast). validateHypothesis() typed the entry, but the
+  // ACTION_REJECTED log line then read `hypothesis.statement` — so a `null` entry
+  // threw a TypeError out of evaluateHypotheses past runTaskLoop (try/finally).
+  const h = harness(() => ({ kind: 'output', text: 'x', exit: 0 }));
+  h.deps.maxHypotheses = 10;
+  try {
+    const bad: readonly unknown[] = [null, 42, 'x', [], true];
+    const out = await evaluateHypotheses(
+      [...bad, hyp('good', [{ cmd: 'a', expected: 'zzz' }])] as unknown as Hypothesis[],
+      h.deps,
+    );
+    assert.equal(out.status, 'exhausted');
+    if (out.status === 'exhausted') assert.equal(out.reason, 'all_refuted');
+    const rejected = h.log.all({ type: 'ACTION_REJECTED' });
+    assert.equal(rejected.length, bad.length, 'every bad entry was rejected, none threw');
+    assert.equal(rejected[0]?.payload['reason'], 'hypothesis_not_object', 'null entry');
+    assert.equal(rejected[0]?.payload['statement'], null, 'no statement read off a non-object');
+    // Control: the well-formed entry after the bad ones still ran its probe.
+    assert.deepEqual(h.runCmds, ['a']);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('AC-9 (probe path): a probe whose `cwd` is not a string is undecided, never a throw out of evaluateHypotheses', async () => {
+  // `hypotheses` is UNTRUSTED end to end: asHypotheses() in the AAL source is a
+  // bare cast and validateHypothesis() above only types `cmd`/`expected`, so a
+  // model-authored `cwd` reaches the executor raw. Wired to the REAL executor on
+  // purpose — the scripted fake above would prove nothing about validate().
+  const wt = mkdtempSync(join(tmpdir(), 'hyp-wt-'));
+  const h = harness(() => ({ kind: 'output', text: 'x', exit: 0 }));
+  try {
+    const executor = createExecutor({
+      worktreeDir: wt,
+      runId: 'RUN-1',
+      taskId: 'T-1',
+      log: h.log,
+      evidence: h.evidence,
+      policy: createDefaultPathPolicy(),
+      clock: { now: () => 1_000_000 },
+    });
+    const out = await evaluateHypotheses(
+      [hyp('h1', [{ cmd: 'echo hi', expected: 'hi', cwd: 42 }] as unknown as Hypothesis['probes'])],
+      { ...h.deps, executor },
+    );
+    assert.equal(out.status, 'exhausted');
+    if (out.status === 'exhausted') {
+      assert.equal(out.reason, 'all_refuted');
+      assert.equal(out.log[0]?.verdict, 'undecided', 'a rejected probe is undecided, never a refutation');
+    }
+    assert.equal(
+      h.log.all({ type: 'ACTION_REJECTED' })[0]?.payload['reason'],
+      'schema_violation',
+      'the executor rejected the probe structurally instead of throwing',
+    );
+  } finally {
+    h.cleanup();
+    rmSync(wt, { recursive: true, force: true });
   }
 });
