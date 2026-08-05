@@ -429,7 +429,7 @@ async function waitFor<T>(fn: () => Promise<T | null> | T | null, timeoutMs = 30
 }
 
 /** The live (non-tombstoned) Human Plane discovery record the run publishes. */
-function waitForDiscovery(persistDir: string): Promise<{ url: string; token: string }> {
+function waitForDiscovery(persistDir: string, timeoutMs = 30_000): Promise<{ url: string; token: string }> {
   return waitFor(() => {
     let meta: { url?: unknown; token?: unknown; tombstoned?: unknown };
     try {
@@ -440,7 +440,7 @@ function waitForDiscovery(persistDir: string): Promise<{ url: string; token: str
     return meta.tombstoned === true || typeof meta.url !== 'string' || typeof meta.token !== 'string'
       ? null
       : { url: meta.url, token: meta.token };
-  });
+  }, timeoutMs);
 }
 
 function fetchApprovals(url: string, token: string): Promise<ApprovalJSON[]> {
@@ -450,8 +450,8 @@ function fetchApprovals(url: string, token: string): Promise<ApprovalJSON[]> {
 }
 
 /** Poll GET /approvals until a package for THIS task is pending. */
-function waitForApprovalOf(url: string, token: string, taskId: string): Promise<ApprovalJSON> {
-  return waitFor(async () => (await fetchApprovals(url, token)).find((p) => p.taskId === taskId) ?? null);
+function waitForApprovalOf(url: string, token: string, taskId: string, timeoutMs = 30_000): Promise<ApprovalJSON> {
+  return waitFor(async () => (await fetchApprovals(url, token)).find((p) => p.taskId === taskId) ?? null, timeoutMs);
 }
 
 function decide(url: string, token: string, id: string, attestations: string[] = []): Promise<number> {
@@ -464,6 +464,13 @@ function decide(url: string, token: string, id: string, attestations: string[] =
 
 test('REQ-4.14: an approval decision is applied to the task it NAMES, never to whichever task is active', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-graph-approve-'));
+  // This end-to-end two-task approval walk measures 28-30s across recent runs (28362ms and
+  // 29143ms in audit, 30284ms in verify) — the old 30s deadline sat right in that band and
+  // flaked on a hosted runner. 120s is ~4x the measured runtime — wide enough for a slower
+  // runner without changing the shared waitFor default (other tests keep 30s).
+  // approval.timeoutMs matches so the blocking human gate never expires before the polling
+  // completes.
+  const APPROVAL_DEADLINE_MS = 120_000;
   try {
     // timeoutMs opts INTO the blocking human gate, so the run holds each task open
     // for a decision and both packages are decided over the real wire, in order.
@@ -472,12 +479,12 @@ test('REQ-4.14: an approval decision is applied to the task it NAMES, never to w
       adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
       clock,
       persistDir,
-      approval: { timeoutMs: 30_000 },
+      approval: { timeoutMs: APPROVAL_DEADLINE_MS },
       taskGraph: graphOption(TWO_TASK_GRAPH),
     });
-    const { url, token } = await waitForDiscovery(persistDir);
+    const { url, token } = await waitForDiscovery(persistDir, APPROVAL_DEADLINE_MS);
 
-    const first = await waitForApprovalOf(url, token, 'T-1');
+    const first = await waitForApprovalOf(url, token, 'T-1', APPROVAL_DEADLINE_MS);
     // T-2 is the task NOT waiting on anything: it has not been selected, so it has no
     // package. Naming it must change nothing — least of all T-1, the active task.
     assert.equal(await decide(url, token, 'T-2'), 404, 'a task with no pending package cannot be decided');
@@ -488,7 +495,7 @@ test('REQ-4.14: an approval decision is applied to the task it NAMES, never to w
     );
 
     assert.equal(await decide(url, token, first.id, first.attestations), 200);
-    const second = await waitForApprovalOf(url, token, 'T-2');
+    const second = await waitForApprovalOf(url, token, 'T-2', APPROVAL_DEADLINE_MS);
     assert.equal(await decide(url, token, second.id, second.attestations), 200);
 
     const out = await runPromise;
