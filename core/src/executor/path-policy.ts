@@ -32,9 +32,20 @@ const WRITE_PREFIXES: Record<Role, string[]> = {
   reviewer: [],
 };
 
-/** Normalize to a worktree-relative path, or null when it escapes the worktree. */
-export function normalizeWorktreeRelativePath(relPath: string): string | null {
-  if (relPath.length === 0 || isAbsolute(relPath)) return null;
+/**
+ * Normalize to a worktree-relative path, or null when it escapes the worktree.
+ *
+ * `relPath` is typed `unknown` on purpose: every value that reaches here comes,
+ * directly or through an accumulator, from a model-authored action field, which
+ * is UNTRUSTED (INV-1/INV-2) and typed by nothing upstream. A non-string used to
+ * throw `TypeError: The "path" argument must be of type string` out of
+ * `isAbsolute()` — past `propose()` and `executeValidAction()`, neither of which
+ * has a catch for it, killing the whole run. A non-string is now fail-closed the
+ * same way a worktree escape is: `null`, never a throw. String behaviour is
+ * unchanged.
+ */
+export function normalizeWorktreeRelativePath(relPath: unknown): string | null {
+  if (typeof relPath !== 'string' || relPath.length === 0 || isAbsolute(relPath)) return null;
   // Accept platform-neutral action paths, then canonicalize before every
   // frozen-RED lookup. This closes `dir/../frozen.test.ts` and slash-alias
   // gaps between preflight and mutation-path commit checks.

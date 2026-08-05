@@ -503,8 +503,24 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
         ...bundle.pieces.map((p) => p.path).filter((p): p is string => p !== undefined),
         ...readRequested,
       ]);
-      const actions = out.response.actionRequests;
-      for (const a of actions) if (a.type === 'READ_FILE') readRequested.add(a.path);
+      // An ENTRY of `actionRequests` is as untrusted as the fields inside it, and
+      // its `Action[]` type is a lie: the wire normalizer forwards a non-object
+      // entry untouched (validation belongs at the far boundary, REQ-1.4) and the
+      // production outputSchema constrains the array to `type: 'array'` with no
+      // item schema. A single `null` in it threw a TypeError on `a.type` out of
+      // propose(), which no catch up the loop receives. Dropped here once, so all
+      // three consumers below (accumulation, the provenance filter, `touched`)
+      // see objects only; the executor re-decides the same case for callers that
+      // reach it without passing through here.
+      const actions = (out.response.actionRequests as unknown[]).filter(
+        (a): a is Action => typeof a === 'object' && a !== null && !Array.isArray(a),
+      );
+      // Only a string `path` accumulates: `readRequested` is a `Set<string>` that
+      // both seeds next round's bundle (through normalizeWorktreeRelativePath)
+      // and widens the write-provenance `allowed` set above. A non-string entry
+      // used to sit in it until next round's accumulatedSeedPaths() threw a
+      // TypeError out of propose(), which has no catch anywhere up the loop.
+      for (const a of actions) if (a.type === 'READ_FILE' && typeof a.path === 'string') readRequested.add(a.path);
       // `path` is UNTRUSTED (INV-1/2) and nothing upstream types it: the wire
       // normalizer passes the model's entry through and the production
       // outputSchema constrains `actionRequests` to `type: 'array'` with no item

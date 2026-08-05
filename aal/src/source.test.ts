@@ -986,6 +986,87 @@ test('write-provenance rework/BLOCKING-1: a WRITE_FILE whose `path` is missing o
   }
 });
 
+test('AC-11: an actionRequests entry that is not an object is dropped, and propose() still resolves', async () => {
+  // The ENTRY, not just its fields: the wire normalizer forwards a non-object
+  // element untouched (REQ-1.4 puts validation at the far boundary) and the
+  // production outputSchema constrains `actionRequests` to `{type:'array'}` with
+  // no item schema, so one `null` in the array threw a TypeError on `a.type` out
+  // of propose() — killing the run, good actions in the same batch included.
+  for (const bad of [null, 42, 'READ_FILE', [], true]) {
+    const label = `entry=${JSON.stringify(bad)}`;
+    const good = { type: 'WRITE_FILE', actionId: 'w-ok', path: 'src/impl.txt', contentRef: 'blob://c' } as Action;
+    const { adapter } = recordingAdapter([[bad as unknown as Action, good]]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      const p = await h.source.propose(INPUT); // must resolve, not throw
+      // Control in the same batch: the well-formed sibling survives untouched.
+      assert.deepEqual(
+        p.actions.map((a) => a.actionId),
+        ['w-ok'],
+        `${label} must be dropped without taking the good action with it`,
+      );
+      assert.equal(p.rejections, undefined, label);
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('AC-6: a READ_FILE whose `path` is not a string never enters readRequested, and the NEXT round still proposes', async () => {
+  // Sibling of the WRITE_FILE hole above, one line away in source.ts. Here the
+  // blast lands a round LATER: the bad value sat in the `Set<string>` until the
+  // next round's accumulatedSeedPaths() fed it to
+  // normalizeWorktreeRelativePath -> isAbsolute(), which threw a TypeError out
+  // of propose(). One round does not reproduce it — two consecutive rounds do.
+  for (const bad of [undefined, null, 42, 0, true, [], ['src/a.ts'], {}, { path: 'src/a.ts' }, '']) {
+    const label = `path=${JSON.stringify(bad) ?? 'undefined'}`;
+    const round1 = [
+      {
+        type: 'READ_FILE',
+        actionId: 'r-malformed',
+        ...(bad === undefined ? {} : { path: bad }),
+      } as unknown as Action,
+    ];
+    const { adapter, requests } = recordingAdapter([round1, []]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      await h.source.propose(INPUT); // round 1: model asks for a malformed READ_FILE
+      const p2 = await h.source.propose(INPUT); // round 2: must resolve, not throw
+      assert.equal(p2.claim, 'WORKING', `${label} must not break the next round`);
+      assert.deepEqual(
+        requests[1]?.contextBundle.pieces.map((piece) => piece.path) ?? [],
+        ['src/impl.txt'],
+        `${label} must not be accumulated into the next round's seed`,
+      );
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('AC-6: a non-string READ_FILE path never widens the write-provenance allowlist either', async () => {
+  // `readRequested` doubles as the provenance `allowed` set. Accumulating a
+  // non-string would make `allowed.has(bad)` true next round, so the matching
+  // malformed WRITE_FILE would slip past the gate that PR #133 built for it.
+  for (const bad of [null, 42, 0, true, [], ['src/a.ts'], {}, { path: 'src/a.ts' }]) {
+    const label = `path=${JSON.stringify(bad) ?? 'undefined'}`;
+    const round1 = [{ type: 'READ_FILE', actionId: 'r-malformed', path: bad } as unknown as Action];
+    const round2 = [
+      { type: 'WRITE_FILE', actionId: 'w-malformed', path: bad, contentRef: 'blob://c' } as unknown as Action,
+    ];
+    const { adapter } = recordingAdapter([round1, round2]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      await h.source.propose(INPUT);
+      const p2 = await h.source.propose(INPUT);
+      assert.equal(p2.actions.length, 0, `${label} must not pass the provenance gate`);
+      assert.equal(p2.rejections?.[0]?.reason, 'context_violation', label);
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
 test('write-provenance rework/SHOULD-FIX-2: a WRITE under a directory symlink that leaves the worktree is an existing entry (AC-3), not a new file — whether or not the target exists yet', async () => {
   // Second case (SHOULD FIX A of the follow-up round): the symlink DANGLES, so
   // realpath reports the same ENOENT a never-created directory does. Telling

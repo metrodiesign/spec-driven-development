@@ -1,9 +1,27 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createDefaultPathPolicy } from './path-policy.ts';
+import { createDefaultPathPolicy, normalizeWorktreeRelativePath } from './path-policy.ts';
 
 const policy = createDefaultPathPolicy();
+
+/**
+ * Every `path` shape a model can emit that is not a usable string. `''` is the
+ * pre-existing empty-string case, kept here so the two rejection routes (type
+ * guard and length guard) are covered by one table.
+ */
+const NON_STRING_PATHS: readonly unknown[] = [
+  undefined,
+  null,
+  42,
+  0,
+  true,
+  [],
+  ['src/a.ts'],
+  {},
+  { path: 'src/a.ts' },
+  '',
+];
 
 test('role write allowlists follow §6.1 defaults (REQ-1.6)', () => {
   assert.equal(policy.checkWrite('planner', 'src/a.ts').allowed, false, 'planner read-only');
@@ -35,4 +53,41 @@ test('reads stay inside the worktree for all roles (REQ-1.2)', () => {
   assert.equal(policy.checkRead('planner', 'test/golden/expected.txt').allowed, true);
   assert.equal(policy.checkRead('implementer', '../secrets.env').allowed, false);
   assert.equal(policy.checkRead('implementer', '/etc/hosts').allowed, false);
+});
+
+test('AC-1: a non-string path normalizes to null instead of throwing a TypeError', () => {
+  // `isAbsolute()` throws `TypeError: The "path" argument must be of type
+  // string` on every one of these, which used to escape propose()/execute().
+  for (const bad of NON_STRING_PATHS) {
+    assert.equal(
+      normalizeWorktreeRelativePath(bad),
+      null,
+      `path=${JSON.stringify(bad) ?? 'undefined'} must normalize to null`,
+    );
+  }
+});
+
+test('AC-1: checkRead/checkWrite deny a non-string path as path_outside_allowlist, never throw', () => {
+  for (const bad of NON_STRING_PATHS) {
+    const label = `path=${JSON.stringify(bad) ?? 'undefined'}`;
+    const read = policy.checkRead('implementer', bad as string);
+    assert.equal(read.allowed, false, `${label} must be denied for read`);
+    if (!read.allowed) assert.equal(read.reason, 'path_outside_allowlist', label);
+    const write = policy.checkWrite('implementer', bad as string);
+    assert.equal(write.allowed, false, `${label} must be denied for write`);
+    if (!write.allowed) assert.equal(write.reason, 'path_outside_allowlist', label);
+  }
+});
+
+test('AC-2: string paths keep their pre-guard behaviour exactly', () => {
+  assert.equal(normalizeWorktreeRelativePath('src/a.ts'), 'src/a.ts');
+  assert.equal(normalizeWorktreeRelativePath('./src/a.ts'), 'src/a.ts');
+  assert.equal(normalizeWorktreeRelativePath('src/../test/golden/x'), 'test/golden/x');
+  assert.equal(normalizeWorktreeRelativePath('../escape.ts'), null);
+  assert.equal(normalizeWorktreeRelativePath('..'), null);
+  assert.equal(normalizeWorktreeRelativePath('/etc/passwd'), null);
+  assert.equal(policy.checkRead('implementer', 'src/a.ts').allowed, true);
+  const escaped = policy.checkRead('implementer', '../escape.ts');
+  assert.equal(escaped.allowed, false);
+  if (!escaped.allowed) assert.equal(escaped.reason, 'path_outside_allowlist');
 });

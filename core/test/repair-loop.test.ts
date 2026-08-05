@@ -244,6 +244,61 @@ test('all hypotheses refuted -> ESCALATED hypotheses_exhausted with an ordered, 
   }
 });
 
+test('AC-13: a non-object hypotheses entry escalates through runTaskLoop, never throws (REQ-5.6)', logicOnly, async () => {
+  // Measured at runTaskLoop on purpose: rejecting the entry inside
+  // evaluateHypotheses is not enough — the rejected entry is pushed into
+  // `verdicts` raw, and summarizeHypothesisLog() (the escalate payload at
+  // loop.ts) then read `v.hypothesis.statement`, so a `null` entry threw a
+  // TypeError out of runTaskLoop (try/finally, no catch) = the whole run died.
+  const fix = makeFixture();
+  try {
+    const c = build(fix, LIMITS);
+    const source: ProposalSource = {
+      async propose(input): Promise<Proposal> {
+        if (input.role === 'diagnostician') {
+          return {
+            claim: 'WORKING',
+            actions: [],
+            // null = the regression; 42 = control (never threw); the last entry
+            // is well-formed and must still be probed and refuted as before.
+            hypotheses: [
+              null,
+              42,
+              {
+                statement: 'a wrong guess',
+                probes: [{ cmd: 'true', expected: 'THIS-NEVER-APPEARS' }],
+                ifConfirmed: { patchPlan: 'noop', estimatedBlastRadius: 'none' },
+              },
+            ] as unknown as NonNullable<Proposal['hypotheses']>,
+            costUnits: 1,
+          };
+        }
+        return { claim: 'READY_FOR_VERIFICATION', actions: [], costUnits: 1 };
+      },
+    };
+    const result = await c.run(source);
+
+    assert.equal(result.finalState, 'ESCALATED', 'the run finished instead of dying on a TypeError');
+    const esc = c.log.all({ type: 'ESCALATED' }).at(-1);
+    assert.equal(esc?.payload['why'], 'hypotheses_exhausted');
+    const rejected = c.log.all({ type: 'ACTION_REJECTED' });
+    assert.equal(rejected.length, 2, 'both non-object entries were rejected');
+    assert.equal(rejected[0]?.payload['reason'], 'hypothesis_not_object', 'null entry rejected, not thrown on');
+
+    const hlog = esc?.payload['hypotheses'] as { statement?: string; verdict: string }[];
+    assert.equal(hlog.length, 3, 'every entry reached the escalation summary');
+    assert.equal(hlog[0]?.verdict, 'undecided');
+    assert.equal(hlog[0]?.statement, undefined, 'no statement read off a non-object entry');
+    assert.equal(hlog[1]?.statement, undefined, 'control: the number entry summarises as before');
+    // Control: the well-formed entry behaves exactly as the all-refuted test above.
+    assert.equal(hlog[2]?.verdict, 'refuted');
+    assert.equal(hlog[2]?.statement, 'a wrong guess');
+    assert.equal(c.log.all({ type: 'HYPOTHESIS_REFUTED' }).length, 1);
+  } finally {
+    fix.cleanup();
+  }
+});
+
 test('REQ-6.7: charging a round to exactly zero escalates budget_exhausted before the next request', async () => {
   const fix = makeFixture();
   try {

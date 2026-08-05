@@ -4079,6 +4079,222 @@ test('REQ-3.11: READ_FILE rejects traversal and symlink escape without dereferen
   });
 });
 
+test('AC-3/AC-4/AC-5: READ_FILE and WRITE_FILE with a non-string path are schema_violation rejections, never throws', async () => {
+  // `path` is model-authored and UNTRUSTED (INV-1/INV-2). The old falsy check let
+  // `42`, `true`, `[]` and `{}` reach the path layer, where isAbsolute() threw a
+  // TypeError past executeOnce (which only catches LeaseFenceError /
+  // FrozenTreeOperationError) and out of execute() itself.
+  const badPaths: readonly unknown[] = [
+    undefined,
+    null,
+    42,
+    0,
+    true,
+    [],
+    ['src/a.ts'],
+    {},
+    { path: 'src/a.ts' },
+    '',
+  ];
+  const h = harness({ git: true, sandbox: FAKE_AVAILABLE });
+  try {
+    const contentRef = h.executorOptions.evidence.put('content\n');
+    for (const [i, bad] of badPaths.entries()) {
+      for (const type of ['READ_FILE', 'WRITE_FILE'] as const) {
+        const label = `${type} path=${JSON.stringify(bad) ?? 'undefined'}`;
+        const action = {
+          type,
+          actionId: `bad-path-${type}-${i}`,
+          ...(type === 'WRITE_FILE' ? { contentRef } : {}),
+          ...(bad === undefined ? {} : { path: bad }),
+        } as unknown as Action;
+        const outcome = await h.executor.execute(action, 'implementer');
+        assert.equal(outcome.status, 'rejected', `${label} must be rejected`);
+        if (outcome.status === 'rejected') {
+          assert.equal(outcome.rejection.reason, 'schema_violation', label);
+          assert.match(outcome.rejection.detail, /string path/, label);
+        }
+      }
+    }
+    // Nothing malformed ever reached a side effect.
+    assert.equal(h.executorOptions.log.all({ type: 'ACTION_INTENT' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('AC-2: a well-formed string path still behaves exactly as before', async () => {
+  const h = harness({ git: true, sandbox: FAKE_AVAILABLE });
+  try {
+    mkdirSync(join(h.worktree, 'src'), { recursive: true });
+    writeFileSync(join(h.worktree, 'src', 'ok.txt'), 'still readable\n');
+    const outcome = await h.executor.execute(
+      { type: 'READ_FILE', actionId: 'read-ok', path: 'src/ok.txt' },
+      'diagnostician',
+    );
+    assert.equal(outcome.status, 'applied');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('AC-9: RUN_COMMAND with an ill-typed cwd is a schema_violation rejection, never a throw', async () => {
+  // Same failure class as `path`, one field over: validate() never typed `cwd`,
+  // so resolveContained() -> resolve() threw a TypeError that executeOnce's catch
+  // rethrows (it only handles LeaseFenceError / FrozenTreeOperationError), out of
+  // execute() and past runTaskLoop, which has try/finally and no catch at all.
+  const badCwds: readonly unknown[] = [null, 42, 0, true, [], ['src'], {}, { cwd: 'src' }, ''];
+  const h = harness({ git: true, sandbox: FAKE_AVAILABLE });
+  try {
+    for (const [i, bad] of badCwds.entries()) {
+      const label = `cwd=${JSON.stringify(bad) ?? 'undefined'}`;
+      const outcome = await h.executor.execute(
+        {
+          type: 'RUN_COMMAND',
+          actionId: `bad-cwd-${i}`,
+          cmd: 'echo hi',
+          network: 'none',
+          cwd: bad,
+        } as unknown as Action,
+        'implementer',
+      );
+      assert.equal(outcome.status, 'rejected', `${label} must be rejected`);
+      if (outcome.status === 'rejected') {
+        assert.equal(outcome.rejection.reason, 'schema_violation', label);
+        assert.match(outcome.rejection.detail, /cwd must be a non-empty string/, label);
+      }
+    }
+    // Control: no `cwd` key at all still runs exactly as before.
+    const control = await h.executor.execute(
+      { type: 'RUN_COMMAND', actionId: 'no-cwd', cmd: 'echo hi', network: 'none' },
+      'implementer',
+    );
+    assert.equal(control.status, 'applied', 'a RUN_COMMAND without cwd is unchanged');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('AC-10: RUN_COMMAND with a missing or ill-typed network is rejected and never defaulted', async () => {
+  // The prompt never advertises `network`, so a MISSING grant is the everyday
+  // case; `action.network.startsWith` threw from inside validate() itself, which
+  // executeOnce calls OUTSIDE its try — nothing anywhere caught it.
+  const badNetworks: readonly unknown[] = [undefined, null, 42, 0, true, [], {}, ''];
+  const h = harness({ git: true, sandbox: FAKE_AVAILABLE });
+  try {
+    for (const [i, bad] of badNetworks.entries()) {
+      const label = `network=${JSON.stringify(bad) ?? 'undefined'}`;
+      const outcome = await h.executor.execute(
+        {
+          type: 'RUN_COMMAND',
+          actionId: `bad-net-${i}`,
+          cmd: 'echo hi',
+          ...(bad === undefined ? {} : { network: bad }),
+        } as unknown as Action,
+        'implementer',
+      );
+      assert.equal(outcome.status, 'rejected', `${label} must be rejected`);
+      if (outcome.status === 'rejected') {
+        // Never 'applied' and never egress-blocked-as-if-'none': a missing grant
+        // is a schema violation, not an implicit network: 'none'.
+        assert.equal(outcome.rejection.reason, 'schema_violation', label);
+        assert.match(outcome.rejection.detail, /network must be/, label);
+      }
+    }
+    // Controls: both legal string forms keep their pre-guard outcome exactly.
+    const none = await h.executor.execute(
+      { type: 'RUN_COMMAND', actionId: 'net-none', cmd: 'echo hi', network: 'none' },
+      'implementer',
+    );
+    assert.equal(none.status, 'applied');
+    const allowlisted = await h.executor.execute(
+      { type: 'RUN_COMMAND', actionId: 'net-allow', cmd: 'echo hi', network: 'allowlist:x' },
+      'implementer',
+    );
+    assert.equal(allowlisted.status, 'rejected');
+    if (allowlisted.status === 'rejected') {
+      assert.equal(
+        allowlisted.rejection.reason,
+        'network_grant_unavailable',
+        'an allowlist grant still passes validate() and is denied at the Phase-0 gate',
+      );
+    }
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('AC-14: RUN_COMMAND with an ill-typed cmd is rejected, never coerced and run', async () => {
+  // The most dangerous variant of the class: an ill-typed `cmd` did not throw, it
+  // was coerced to a string and EXECUTED (`['true']` -> `true` ran and came back
+  // 'applied'; `42` reached the shell and came back exit 127 'command_failed').
+  const badCmds: readonly unknown[] = [42, true, ['true'], {}, ['echo', 'hi'], { cmd: 'echo hi' }];
+  const h = harness({ git: true, sandbox: FAKE_AVAILABLE });
+  try {
+    for (const [i, bad] of badCmds.entries()) {
+      const label = `cmd=${JSON.stringify(bad) ?? 'undefined'}`;
+      const outcome = await h.executor.execute(
+        {
+          type: 'RUN_COMMAND',
+          actionId: `bad-cmd-${i}`,
+          cmd: bad,
+          network: 'none',
+        } as unknown as Action,
+        'implementer',
+      );
+      assert.equal(outcome.status, 'rejected', `${label} must be rejected, not run`);
+      if (outcome.status === 'rejected') {
+        assert.equal(outcome.rejection.reason, 'schema_violation', label);
+        assert.match(outcome.rejection.detail, /RUN_COMMAND requires cmd/, label);
+      }
+    }
+    // The pre-existing falsy cases keep their original outcome exactly.
+    for (const [i, falsy] of ([undefined, null, '', 0, false] as readonly unknown[]).entries()) {
+      const outcome = await h.executor.execute(
+        {
+          type: 'RUN_COMMAND',
+          actionId: `falsy-cmd-${i}`,
+          network: 'none',
+          ...(falsy === undefined ? {} : { cmd: falsy }),
+        } as unknown as Action,
+        'implementer',
+      );
+      assert.equal(outcome.status, 'rejected', `falsy cmd ${String(falsy)} still rejected`);
+    }
+    // Control: a normal string command is unchanged.
+    const control = await h.executor.execute(
+      { type: 'RUN_COMMAND', actionId: 'good-cmd', cmd: 'echo hi', network: 'none' },
+      'implementer',
+    );
+    assert.equal(control.status, 'applied', 'a string cmd runs exactly as before');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('AC-11: an action that is not an object is a schema_violation rejection, never a throw', async () => {
+  // `execute()` is core's public boundary and its `Action` parameter type lies:
+  // the wire normalizer forwards a non-object entry of `actionRequests` untouched
+  // and the production outputSchema has no item schema for that array.
+  const badActions: readonly unknown[] = [null, undefined, 42, 'READ_FILE', [], true];
+  const h = harness({ git: true, sandbox: FAKE_AVAILABLE });
+  try {
+    for (const bad of badActions) {
+      const label = `action=${JSON.stringify(bad) ?? 'undefined'}`;
+      const outcome = await h.executor.execute(bad as unknown as Action, 'implementer');
+      assert.equal(outcome.status, 'rejected', `${label} must be rejected`);
+      if (outcome.status === 'rejected') {
+        assert.equal(outcome.rejection.reason, 'schema_violation', label);
+        assert.match(outcome.rejection.detail, /action must be an object/, label);
+        assert.equal(outcome.rejection.actionId, '(missing)', label);
+      }
+    }
+    assert.equal(h.executorOptions.log.all({ type: 'ACTION_INTENT' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
 // --- execution (darwin sandbox) ---
 
 test('benign network:"none" RUN_COMMAND is unaffected by the offline policy', async () => {

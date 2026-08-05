@@ -136,7 +136,12 @@ export async function evaluateHypotheses(
         runId: deps.runId,
         taskId: deps.taskId,
         type: 'ACTION_REJECTED',
-        payload: { reason: valid.reason, statement: hypothesis.statement ?? null },
+        // `hypothesis` is UNTRUSTED here BY CONSTRUCTION: this is the branch where
+        // validateHypothesis() said the entry is unusable, so a `null` entry reached
+        // `.statement` and threw a TypeError straight out of evaluateHypotheses past
+        // runTaskLoop (try/finally, no catch). Optional chaining keeps every
+        // non-object entry (null/number/string/array) at `null` instead.
+        payload: { reason: valid.reason, statement: hypothesis?.statement ?? null },
       });
       verdicts.push({ hypothesis, verdict: 'undecided', probeOutputs: [], probeRefs: [] });
       evaluated += 1;
@@ -208,7 +213,18 @@ export function summarizeHypothesisLog(
   log: HypothesisVerdict[],
 ): { statement: string; verdict: string; probeRefs: string[] }[] {
   return log.map((v) => ({
-    statement: v.hypothesis.statement,
+    // A rejected entry is pushed into the verdict log UNTRUSTED and raw (see the
+    // validateHypothesis branch above), so `hypothesis` can be null/undefined
+    // here. Optional chaining keeps that at `undefined` — the same summary every
+    // other non-object entry (number, string, array) already produced — instead
+    // of a TypeError out of runTaskLoop, which has no catch.
+    //
+    // Do NOT append `?? null` here to match line 144 — the asymmetry is
+    // deliberate. `undefined` makes JSON.stringify drop the `statement` key
+    // entirely, which is exactly what control entries like `42` or `{}` emit
+    // today; `?? null` would keep the key and change their output. An A/B run
+    // confirmed control output is byte-identical only without it.
+    statement: v.hypothesis?.statement,
     verdict: v.verdict,
     probeRefs: v.probeRefs,
   }));

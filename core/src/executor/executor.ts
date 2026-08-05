@@ -1106,15 +1106,44 @@ function validate(action: Action): string | null {
   }
   switch (action.type) {
     case 'WRITE_FILE':
-      if (!action.path || !action.contentRef) return 'WRITE_FILE requires path and contentRef';
+      // `path` is model-authored and UNTRUSTED (INV-1/INV-2): a falsy check let
+      // `42`, `true`, `[]` and `{}` through to the path layer, which threw a
+      // TypeError out of execute(). Type-check it here so it is a schema
+      // violation at the boundary instead.
+      if (typeof action.path !== 'string' || action.path.length === 0 || !action.contentRef) {
+        return 'WRITE_FILE requires a non-empty string path and contentRef';
+      }
       return null;
     case 'APPLY_PATCH':
       if (!action.diffRef) return 'APPLY_PATCH requires diffRef';
       return null;
     case 'RUN_COMMAND':
-      if (!action.cmd) return 'RUN_COMMAND requires cmd';
-      if (action.network !== 'none' && !action.network.startsWith('allowlist:')) {
+      // `cmd` is model-authored and UNTRUSTED like `path`: the falsy check let
+      // `42`, `true`, `['true']` and `{}` through, and the command layer coerced
+      // them to a string and RAN the result (`['true']` -> `true` actually
+      // executed; `42` reached the shell as exit 127). Type-check it here so an
+      // ill-typed command is a schema violation instead of an executed one. The
+      // falsy cases ('' / 0 / false / null / undefined) reject exactly as before.
+      if (typeof action.cmd !== 'string' || action.cmd.length === 0) {
+        return 'RUN_COMMAND requires cmd';
+      }
+      // `network` is model-authored and UNTRUSTED like `path`, and the prompt
+      // never advertises the field, so it is routinely MISSING. `.startsWith()`
+      // on a non-string threw a TypeError from inside validate() itself, which
+      // executeOnce calls OUTSIDE its try — the throw left execute() entirely.
+      // Type-check before dereferencing; a missing/ill-typed grant is a schema
+      // violation, never defaulted to 'none' (that would be core silently
+      // deciding a network-scope contract on the model's behalf).
+      if (
+        typeof action.network !== 'string' ||
+        (action.network !== 'none' && !action.network.startsWith('allowlist:'))
+      ) {
         return 'network must be "none" or "allowlist:<name>"';
+      }
+      // Same untrusted reasoning for `cwd`: it is a path field validate() never
+      // checked, and resolveContained() -> resolve() throws on a non-string.
+      if (action.cwd !== undefined && (typeof action.cwd !== 'string' || action.cwd.length === 0)) {
+        return 'RUN_COMMAND cwd must be a non-empty string when present';
       }
       if (
         action.timeoutMs !== undefined &&
@@ -1127,7 +1156,10 @@ function validate(action: Action): string | null {
       }
       return null;
     case 'READ_FILE':
-      if (!action.path) return 'READ_FILE requires path';
+      // Same untrusted-`path` reasoning as WRITE_FILE above.
+      if (typeof action.path !== 'string' || action.path.length === 0) {
+        return 'READ_FILE requires a non-empty string path';
+      }
       return null;
     case 'REQUEST_TOOL':
       if (!action.name) return 'REQUEST_TOOL requires name';
@@ -1427,9 +1459,22 @@ async function executeOnce(
   action: Action,
   role: Role,
 ): Promise<ExecuteOutcome> {
+  // `action` is UNTRUSTED at this public boundary (INV-1) and its static type
+  // lies: the wire normalizer forwards a non-object entry of `actionRequests`
+  // untouched and the production outputSchema constrains that array to
+  // `type: 'array'` with no item schema. A `null` element used to throw a
+  // TypeError on `action.actionId` instead of being rejected, so widen to
+  // `unknown` and decide it here, before anything dereferences a field.
+  const raw: unknown = action;
+  const isObject = typeof raw === 'object' && raw !== null && !Array.isArray(raw);
+  const rawId = isObject ? (raw as { actionId?: unknown }).actionId : undefined;
+  const actionId = typeof rawId === 'string' ? rawId : '(missing)';
+  if (!isObject) {
+    return reject(opts, actionId, 'schema_violation', 'action must be an object');
+  }
   const invalid = validate(action);
   if (invalid !== null) {
-    return reject(opts, action.actionId ?? '(missing)', 'schema_violation', invalid);
+    return reject(opts, actionId, 'schema_violation', invalid);
   }
 
   const operation =
