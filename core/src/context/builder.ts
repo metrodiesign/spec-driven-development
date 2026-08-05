@@ -205,6 +205,81 @@ function readWithinWorktree(
   }
 }
 
+/**
+ * Fail-closed existence probe at the SAME containment edge `readWithinWorktree`
+ * uses (v1.9). `false` — the ONLY answer that means "there is no entry here" —
+ * requires ALL of: the path normalizes to a worktree-relative path, an `lstat`
+ * of the resolved path reports `ENOENT`, and the deepest directory that DOES
+ * exist on the way to it still realpath-resolves inside the worktree. Every
+ * other outcome answers `true`: an absolute path or a `..` escape (normalize
+ * returns null), a symlink (`lstat` does NOT follow it, so even a DANGLING
+ * symlink is an entry — the case `existsSync` gets wrong), a directory, a path
+ * that leaves the worktree through a directory symlink, live or dangling
+ * (`src/link/new.ts` under a `src/link` -> outside), or any other stat failure
+ * (EACCES, ENOTDIR, …).
+ *
+ * Lives in core, next to `readWithinWorktree`, so "does this worktree path hold
+ * something" has ONE definition — a second `lstatSync` in Ring 1 would be a
+ * second definition of the same rule, free to drift (spec §9.4 "containment
+ * บังคับที่ขอบการอ่านจริงของ builder").
+ *
+ * The caller is `aal/src/source.ts`'s WRITE_FILE provenance gate: a write to a
+ * path with no entry is creating a NEW file, which destroys nothing the model
+ * never saw. No `isFile()` branch is needed here — every non-ENOENT outcome,
+ * regular file or not, is already `true`.
+ */
+export function worktreeEntryExists(worktreeDir: string, relPath: string): boolean {
+  const norm = normalizeWorktreeRelativePath(relPath);
+  if (norm === null) return true;
+  const absolute = resolve(worktreeDir, norm);
+  try {
+    lstatSync(absolute);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return true;
+  }
+  // Nothing at the path itself — but `lstat` FOLLOWS the directory components
+  // leading to it, so an ENOENT can also mean "no such file under a directory
+  // that is not in this worktree at all" (`src/link/new.ts` where `src/link` is
+  // a symlink pointing out). Hence the parent-realpath check `readWithinWorktree`
+  // does, walked up to the deepest directory that exists — the parent of a
+  // genuinely new file (`src/newdir/a.ts`) need not exist yet.
+  let root: string;
+  try {
+    root = realpathSync(worktreeDir);
+  } catch {
+    return true; // the worktree root itself does not resolve — undecidable, fail closed
+  }
+  let probe = dirname(absolute);
+  for (;;) {
+    try {
+      const real = realpathSync(probe);
+      // Inverted on purpose: a deepest-existing dir OUTSIDE the worktree -> `true`
+      // = treat as existing (fail closed, an escape is never a new file); contained
+      // -> `false` = a genuinely new file the gate may allow.
+      return real !== root && !real.startsWith(`${root}${sep}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return true;
+      // `realpath` reports ENOENT for a DANGLING directory symlink too — the
+      // entry IS here, only its target is missing. Walking past it would judge
+      // containment by a directory that is not on this path's route at all, so
+      // `src/dangling/new.ts` (src/dangling -> a not-yet-created dir outside)
+      // would come back "new file". Only an ENOENT that `lstat` confirms —
+      // nothing here at all — may walk up; every other lstat outcome (EACCES,
+      // ELOOP, ENOTDIR, …) is undecidable and fail-closed, same as above.
+      try {
+        lstatSync(probe);
+        return true;
+      } catch (probeErr) {
+        if ((probeErr as NodeJS.ErrnoException).code !== 'ENOENT') return true;
+      }
+      const parent = dirname(probe);
+      if (parent === probe) return true; // walked past the filesystem root
+      probe = parent;
+    }
+  }
+}
+
 export function buildContext(input: ContextBuildInput): ContextBuildResult {
   const maxFileBytes = input.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   const depthBudget = input.depthBudget ?? 1;

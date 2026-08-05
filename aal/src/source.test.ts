@@ -4,7 +4,7 @@
 // no_capacity, secret_in_context, and Proposal mapping.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -37,6 +37,13 @@ function passingRecord(id: string, susceptibilityScore = 0): ConformanceRecord {
 
 function harness(opts: {
   seedFiles: Record<string, string>;
+  /**
+   * Files written to the worktree but deliberately NOT seeded (write-provenance):
+   * `seedPaths` below is `Object.keys(opts.seedFiles)`, which ties "on disk" to
+   * "in the bundle" — the two states the v1.9 gate has to tell apart. A path here
+   * exists on disk while staying out of the bundle and out of readRequested.
+   */
+  diskFiles?: Record<string, string>;
   adapter?: AdapterInterface;
   adapters?: AdapterInterface[];
   register?: boolean;
@@ -49,7 +56,7 @@ function harness(opts: {
 }) {
   const root = mkdtempSync(join(tmpdir(), 'src-'));
   const worktree = join(root, 'wt');
-  for (const [rel, content] of Object.entries(opts.seedFiles)) {
+  for (const [rel, content] of Object.entries({ ...opts.seedFiles, ...opts.diskFiles })) {
     const abs = join(worktree, rel);
     mkdirSync(join(abs, '..'), { recursive: true });
     writeFileSync(abs, content);
@@ -127,9 +134,36 @@ test('records PROPOSAL_INTENT before mapping a valid response to a Proposal (REQ
   }
 });
 
-test('rejects a WRITE to a path never in-bundle or READ as context_violation (REQ-5.4)', async () => {
-  // Seed a DIFFERENT file; the compliant adapter writes src/impl.txt -> not allowed.
+// --- write-provenance (v1.9): the gate blocks blind OVERWRITES, not file creation ---
+
+test('write-provenance AC-1 (row 1): a WRITE to a path never in-bundle or READ but NOT on disk is a file CREATION and passes the gate', async () => {
+  // Flipped from REJECT by write-provenance AC-1 (was: "rejects a WRITE to a path
+  // never in-bundle or READ as context_violation (REQ-5.4)"). Seeds a DIFFERENT
+  // file, so the compliant adapter's write to src/impl.txt is neither in the
+  // bundle nor READ_FILE-requested — but src/impl.txt is NOT on disk here, so
+  // nothing the model never saw is destroyed and the gate has nothing to protect.
+  // checkWrite still decides the write itself (AC-6). The rejection half of the
+  // old assertion moved to the row-2 test below, where the target DOES exist.
   const h = harness({ seedFiles: { 'src/seen.ts': 'export const x = 1;\n' } });
+  try {
+    const p = await h.source.propose(INPUT);
+    const w = p.actions[0];
+    assert.ok(w?.type === 'WRITE_FILE' && w.path === 'src/impl.txt', `expected the creating WRITE_FILE through, got ${JSON.stringify(p.actions)}`);
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0, 'creating a new file is not a context_violation');
+    assert.equal(p.rejections, undefined);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance AC-2 (row 2): a WRITE to a path that EXISTS on disk but was never in-bundle or READ is still context_violation', async () => {
+  // Same shape as row 1, except the target is already on disk (and deliberately
+  // NOT seeded, so it is absent from the bundle): a blind overwrite of content
+  // the model never saw — the guarantee REQ-5.4 actually meant.
+  const h = harness({
+    seedFiles: { 'src/seen.ts': 'export const x = 1;\n' },
+    diskFiles: { 'src/impl.txt': 'existing content the model never read\n' },
+  });
   try {
     const p = await h.source.propose(INPUT);
     assert.equal(p.actions.length, 0, 'violating actions are not returned');
@@ -141,6 +175,10 @@ test('rejects a WRITE to a path never in-bundle or READ as context_violation (RE
     assert.equal(p.rejections?.length, 1);
     assert.equal(p.rejections?.[0]?.reason, 'context_violation');
     assert.equal(p.rejections?.[0]?.detail, rej[0]?.payload['detail']);
+    // AC-4: detail names the offending path AND the remedy — the model sees only
+    // this string, never the ACTION_REJECTED payload.
+    assert.match(String(p.rejections?.[0]?.detail), /src\/impl\.txt/);
+    assert.match(String(p.rejections?.[0]?.detail), /request the path via READ_FILE in an earlier round/);
   } finally {
     h.cleanup();
   }
@@ -810,6 +848,397 @@ test('AC-15: CONTEXT_BUILT names every piece the builder skipped (EXPAND secret 
     const serialized = JSON.stringify(built?.payload);
     assert.ok(!serialized.includes(secret), 'no secret content leaked into the CONTEXT_BUILT payload');
     assert.ok(!serialized.includes(outsideContent), 'no out-of-worktree content leaked into the CONTEXT_BUILT payload');
+  } finally {
+    h.cleanup();
+  }
+});
+
+// --- write-provenance (v1.9): the adversarial table of .pipeline/write-provenance/spec.md ---
+//
+// Row 1 + row 2 live next to the original REQ-5.4 test near the top of this file;
+// row 7 is the eviction regression above ("AC-5/must-fix: an accumulated path
+// evicted for a scanner false positive keeps its WRITE_FILE provenance").
+// Rows 14/17/18/19 assert the GATE half only — the executor half (golden_write_denied,
+// red_artifact_frozen, path_outside_allowlist) is owned by core/src/executor/path-policy.test.ts,
+// core/src/executor/red-artifact-fault.test.ts and core/test/fault-injection.test.ts.
+
+const writeTo = (path: string, actionId = `w-${path}`): Action => ({ type: 'WRITE_FILE', actionId, path, contentRef: 'blob://c' });
+const readOf = (path: string, actionId = `r-${path}`): Action => ({ type: 'READ_FILE', actionId, path });
+
+/** The paths of the WRITE_FILE actions the gate let through this round. */
+function writtenPaths(actions: readonly Action[]): string[] {
+  return actions.filter((a) => a.type === 'WRITE_FILE').map((a) => a.path);
+}
+
+test('write-provenance row 3: a path in the bundle (a literal seed) is writable even though it exists on disk', async () => {
+  const { adapter } = recordingAdapter([[writeTo('src/impl.txt')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p.actions), ['src/impl.txt'], 'in-bundle write survives (allowed set, unchanged by v1.9)');
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 4: a path READ_FILE-requested in an earlier round is writable later even though it exists on disk', async () => {
+  const { adapter } = recordingAdapter([[readOf('src/other.ts')], [writeTo('src/other.ts')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, diskFiles: { 'src/other.ts': 'existing\n' }, adapter });
+  try {
+    await h.source.propose(INPUT);
+    const p2 = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p2.actions), ['src/other.ts']);
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 5: READ_FILE of a path with no file (a 404), then a WRITE to it — allowed via BOTH readRequested and the new-file case', async () => {
+  const { adapter } = recordingAdapter([[readOf('src/ghost.ts')], [writeTo('src/ghost.ts')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    await h.source.propose(INPUT);
+    const p2 = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p2.actions), ['src/ghost.ts']);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance B-1: pre-registration still works on its own — a 404 READ_FILE grants write provenance even after the file appears on disk', async () => {
+  // The file exists by the time round 2 is evaluated, so the new-file branch
+  // CANNOT be what lets this through: only readRequested can. Proves v1.9 added a
+  // second road to the gate instead of replacing the first one.
+  const { adapter } = recordingAdapter([[readOf('src/late.ts')], [writeTo('src/late.ts')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    await h.source.propose(INPUT);
+    mkdirSync(join(h.root, 'wt', 'src'), { recursive: true });
+    writeFileSync(join(h.root, 'wt', 'src/late.ts'), 'created between rounds\n');
+    const p2 = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p2.actions), ['src/late.ts'], 'readRequested alone carries this write');
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 6: a successfully READ file that is deleted before the write is still writable', async () => {
+  const { adapter } = recordingAdapter([[readOf('src/gone.ts')], [writeTo('src/gone.ts')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, diskFiles: { 'src/gone.ts': 'here for now\n' }, adapter });
+  try {
+    await h.source.propose(INPUT);
+    rmSync(join(h.root, 'wt', 'src/gone.ts'));
+    const p2 = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p2.actions), ['src/gone.ts']);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance rows 8+9: a traversal or absolute WRITE path is fail-closed — normalization fails, so it is never a new file', async () => {
+  for (const bad of ['../../etc/passwd', '/etc/passwd', '']) {
+    const { adapter } = recordingAdapter([[writeTo(bad)]]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      const p = await h.source.propose(INPUT);
+      assert.equal(p.actions.length, 0, `${JSON.stringify(bad)} must not pass the gate`);
+      assert.equal(p.rejections?.[0]?.reason, 'context_violation');
+      const detail = String(p.rejections?.[0]?.detail);
+      if (bad !== '') assert.match(detail, new RegExp(bad.replaceAll('/', '\\/').replaceAll('.', '\\.')));
+      else assert.match(detail, /\(empty path\)/); // an empty path renders readably, not a blank list entry
+      // A path that never normalizes is not "existing" and has no READ_FILE
+      // remedy either (checkRead answers path_outside_allowlist), so the detail
+      // must not send the model to spend a round on one.
+      assert.match(detail, /outside the worktree/);
+      assert.doesNotMatch(detail, /request the path via READ_FILE/);
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('write-provenance rework/BLOCKING-1: a WRITE_FILE whose `path` is missing or not a string is a context_violation, never a throw', async () => {
+  // `path` is model-controlled and nothing upstream types it: the wire normalizer
+  // passes the entry through and the production outputSchema stops at
+  // `actionRequests: {type:'array'}` (console/backend/src/loop-run.ts). Before the
+  // fix the gate handed these straight to worktreeEntryExists, which threw a
+  // TypeError out of propose() — and neither loop.ts nor loop-run.ts has a catch.
+  for (const bad of [undefined, null, 42, { path: 'src/a.ts' }, ['src/a.ts']]) {
+    const action = {
+      type: 'WRITE_FILE',
+      actionId: 'w-malformed',
+      contentRef: 'blob://c',
+      ...(bad === undefined ? {} : { path: bad }),
+    } as unknown as Action;
+    const { adapter } = recordingAdapter([[action]]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      const p = await h.source.propose(INPUT); // must resolve, not reject
+      assert.equal(p.actions.length, 0, `path=${JSON.stringify(bad)} must not pass the gate`);
+      assert.equal(p.rejections?.[0]?.reason, 'context_violation');
+      assert.match(String(p.rejections?.[0]?.detail), /without a "path" string/);
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('write-provenance rework/SHOULD-FIX-2: a WRITE under a directory symlink that leaves the worktree is an existing entry (AC-3), not a new file — whether or not the target exists yet', async () => {
+  // Second case (SHOULD FIX A of the follow-up round): the symlink DANGLES, so
+  // realpath reports the same ENOENT a never-created directory does. Telling
+  // them apart is what keeps the escape out of the "new file" bucket.
+  const cases = [
+    { path: 'src/link/new.ts', make: (root: string) => { mkdirSync(join(root, 'outside'), { recursive: true }); symlinkSync(join(root, 'outside'), join(root, 'wt', 'src/link')); } },
+    { path: 'src/dangling/new.ts', make: (root: string) => symlinkSync(join(root, 'never-created'), join(root, 'wt', 'src/dangling')) },
+  ];
+  for (const c of cases) {
+    const { adapter } = recordingAdapter([[writeTo(c.path)]]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      c.make(h.root);
+      const p = await h.source.propose(INPUT);
+      assert.equal(p.actions.length, 0, `${c.path}: lstat reports ENOENT there, but the path is not in this worktree at all`);
+      assert.equal(p.rejections?.[0]?.reason, 'context_violation');
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('write-provenance rework/SHOULD-FIX-2: containment does not swallow real new files — an existing dir and a not-yet-created dir both still pass', async () => {
+  for (const path of ['src/brand-new.ts', 'src/newdir/a.ts', 'a/b/c/deep.ts']) {
+    const { adapter } = recordingAdapter([[writeTo(path)]]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      const p = await h.source.propose(INPUT);
+      assert.deepEqual(writtenPaths(p.actions), [path], `${path} is a file creation inside the worktree`);
+      assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0);
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('write-provenance rows 10+11+12: a symlink (dangling included) or a directory at the target counts as an existing entry — lstat, not existsSync', async () => {
+  const cases: { path: string; make: (wt: string) => void }[] = [
+    { path: 'src/link.ts', make: (wt) => symlinkSync('/etc/passwd', join(wt, 'src/link.ts')) },
+    { path: 'src/dangling.ts', make: (wt) => symlinkSync(join(wt, 'src/never-created.ts'), join(wt, 'src/dangling.ts')) },
+    { path: 'src/adir', make: (wt) => mkdirSync(join(wt, 'src/adir'), { recursive: true }) },
+  ];
+  for (const c of cases) {
+    const { adapter } = recordingAdapter([[writeTo(c.path)]]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      c.make(join(h.root, 'wt'));
+      const p = await h.source.propose(INPUT);
+      assert.equal(p.actions.length, 0, `${c.path} is an entry, not a new file`);
+      assert.equal(p.rejections?.[0]?.reason, 'context_violation');
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('write-provenance row 13: a path that reached the bundle through EXPAND alone stays writable (v1.8 ceiling, unchanged)', async () => {
+  const { adapter, requests } = recordingAdapter([[writeTo('dep.ts')]]);
+  const h = harness({
+    seedFiles: { 'src/impl.txt': `import { y } from './dep.ts';\nwrong\n` },
+    diskFiles: { 'dep.ts': 'export const y = 1;\n' },
+    adapter,
+  });
+  try {
+    const p = await h.source.propose(INPUT);
+    const bundlePaths = requests[0]?.contextBundle.pieces.map((piece) => piece.path) ?? [];
+    assert.ok(bundlePaths.includes('dep.ts'), `expected the EXPAND-derived piece in the bundle, got ${JSON.stringify(bundlePaths)}`);
+    assert.deepEqual(writtenPaths(p.actions), ['dep.ts']);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance rows 14+15: a golden path passes the gate when absent (the executor denies it) and is a context_violation when it exists', async () => {
+  const golden = 'test/golden/expected.txt';
+  const absent = recordingAdapter([[writeTo(golden)]]);
+  const h1 = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter: absent.adapter });
+  try {
+    const p = await h1.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p.actions), [golden], 'row 14: the gate defers to checkWrite, which answers golden_write_denied');
+  } finally {
+    h1.cleanup();
+  }
+  const present = recordingAdapter([[writeTo(golden)]]);
+  const h2 = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, diskFiles: { [golden]: 'expected\n' }, adapter: present.adapter });
+  try {
+    const p = await h2.source.propose(INPUT);
+    assert.equal(p.actions.length, 0, 'row 15: an existing golden file never reaches the executor');
+    assert.equal(p.rejections?.[0]?.reason, 'context_violation');
+  } finally {
+    h2.cleanup();
+  }
+});
+
+test('write-provenance rows 16+17: an existing frozen-RED artifact is a context_violation when unseen, and reaches the executor when it is in the bundle', async () => {
+  const red = 'test/ai-generated/red.test.ts';
+  const unseen = recordingAdapter([[writeTo(red)]]);
+  const h1 = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, diskFiles: { [red]: 'assert(false);\n' }, adapter: unseen.adapter });
+  try {
+    const p = await h1.source.propose(INPUT);
+    assert.equal(p.actions.length, 0, 'row 16: blocked at the gate, never reaching red_artifact_frozen');
+    assert.equal(p.rejections?.[0]?.reason, 'context_violation');
+  } finally {
+    h1.cleanup();
+  }
+  const seeded = recordingAdapter([[writeTo(red)]]);
+  const h2 = harness({ seedFiles: { 'src/impl.txt': 'wrong\n', [red]: 'assert(false);\n' }, adapter: seeded.adapter });
+  try {
+    const p = await h2.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p.actions), [red], 'row 17: in-bundle — the executor answers red_artifact_frozen, not the gate');
+  } finally {
+    h2.cleanup();
+  }
+});
+
+test('write-provenance row 18: a new file outside the role write root passes the gate and is left to checkWrite', async () => {
+  const { adapter } = recordingAdapter([[writeTo('docs/readme.md')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p.actions), ['docs/readme.md'], 'path_outside_allowlist is the executor\'s answer, not context_violation');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 19: a write-less role proposing a new file passes the gate (its empty write prefix list denies it at the executor)', async () => {
+  for (const role of ['planner', 'reviewer'] as const) {
+    const { adapter } = recordingAdapter([[writeTo('src/new.ts')]]);
+    const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+    try {
+      const p = await h.source.propose({ ...INPUT, role });
+      assert.deepEqual(writtenPaths(p.actions), ['src/new.ts'], `${role}: the gate is provenance-only, roles are the executor's job`);
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
+test('write-provenance row 20 (B-4): a diagnostician round returns before the gate — its WRITE_FILE is dropped without a context_violation', async () => {
+  const { adapter } = recordingAdapter([[writeTo('src/impl.txt')]]);
+  const h = harness({ seedFiles: { 'src/seen.ts': 'x\n' }, diskFiles: { 'src/impl.txt': 'existing\n' }, adapter });
+  try {
+    const p = await h.source.propose({ ...INPUT, role: 'diagnostician' });
+    assert.equal(p.actions.length, 0, 'core never executes a diagnostician round\'s actions');
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0, 'and the gate is never consulted');
+    assert.equal(p.rejections, undefined);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 21 (the live-run batch): 3 allowed paths + 2 brand-new files — all 5 survive', async () => {
+  const batch = [
+    writeTo('src/impl.txt'), // seed -> in bundle
+    writeTo('src/read-earlier.ts'), // READ_FILE-requested in round 1
+    writeTo('dep.ts'), // EXPAND-derived piece
+    writeTo('src/auth.js'), // new file
+    writeTo('test/ai-generated/auth.test.js'), // new file
+  ];
+  const { adapter } = recordingAdapter([[readOf('src/read-earlier.ts')], batch]);
+  const h = harness({
+    seedFiles: { 'src/impl.txt': `import { y } from './dep.ts';\nwrong\n` },
+    diskFiles: { 'dep.ts': 'export const y = 1;\n', 'src/read-earlier.ts': 'read me\n' },
+    adapter,
+  });
+  try {
+    await h.source.propose(INPUT);
+    const p2 = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p2.actions), batch.map((a) => (a.type === 'WRITE_FILE' ? a.path : '')));
+    assert.equal(h.log.all({ type: 'ACTION_REJECTED' }).length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 22: all-or-nothing is unchanged — 4 allowed paths + 1 blind overwrite still drops the whole batch, and detail names the offender only', async () => {
+  const batch = [
+    writeTo('src/impl.txt'),
+    writeTo('src/read-earlier.ts'),
+    writeTo('src/brand-new.ts'),
+    writeTo('test/ai-generated/new.test.ts'),
+    writeTo('src/unseen.ts'), // exists on disk, never in the bundle, never READ
+  ];
+  const { adapter } = recordingAdapter([[readOf('src/read-earlier.ts')], batch]);
+  const h = harness({
+    seedFiles: { 'src/impl.txt': 'wrong\n' },
+    diskFiles: { 'src/read-earlier.ts': 'read me\n', 'src/unseen.ts': 'never seen by the model\n' },
+    adapter,
+  });
+  try {
+    await h.source.propose(INPUT);
+    const p2 = await h.source.propose(INPUT);
+    assert.equal(p2.actions.length, 0, 'one violation still discards the batch');
+    assert.equal(p2.rejections?.length, 1, 'one rejection: the offending action');
+    assert.equal(p2.rejections?.[0]?.actionId, 'w-src/unseen.ts');
+    const detail = String(p2.rejections?.[0]?.detail);
+    assert.match(detail, /src\/unseen\.ts/);
+    assert.ok(!detail.includes('src/brand-new.ts'), `detail must name only the offender, got ${detail}`);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 23: a `./`-prefixed READ then a bare WRITE of a file that does not exist is allowed by the new-file case (the normalization mismatch is a recorded ceiling)', async () => {
+  const { adapter } = recordingAdapter([[readOf('./src/a.ts')], [writeTo('src/a.ts')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    await h.source.propose(INPUT);
+    const p2 = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p2.actions), ['src/a.ts']);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 24: the same new path proposed twice in one round is decided identically for both (dedup is the executor\'s actionId job)', async () => {
+  const { adapter } = recordingAdapter([[writeTo('src/twice.ts', 'w-1'), writeTo('src/twice.ts', 'w-2')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p.actions), ['src/twice.ts', 'src/twice.ts']);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 25 (TOCTOU ceiling): existence is judged at proposal time, so a RUN_COMMAND that creates the file later in the same round does not change the verdict', async () => {
+  const round: Action[] = [
+    { type: 'RUN_COMMAND', actionId: 'c-1', cmd: 'touch src/x.ts', network: 'none' },
+    writeTo('src/x.ts'),
+  ];
+  const { adapter } = recordingAdapter([round]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    const p = await h.source.propose(INPUT);
+    assert.deepEqual(writtenPaths(p.actions), ['src/x.ts'], 'accepted ceiling: the content overwritten would be this round\'s own');
+    assert.equal(p.actions.length, 2, 'the RUN_COMMAND rides along untouched — only WRITE_FILE handling changed');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('write-provenance row 26: a file created between rounds (e.g. by a gate command) is an existing file — overwriting it unseen is still a context_violation', async () => {
+  const { adapter } = recordingAdapter([[], [writeTo('src/generated.ts')]]);
+  const h = harness({ seedFiles: { 'src/impl.txt': 'wrong\n' }, adapter });
+  try {
+    await h.source.propose(INPUT);
+    mkdirSync(join(h.root, 'wt', 'src'), { recursive: true });
+    writeFileSync(join(h.root, 'wt', 'src/generated.ts'), 'produced by the gate command\n');
+    const p2 = await h.source.propose(INPUT);
+    assert.equal(p2.actions.length, 0, 'correct case-B behaviour, not a regression');
+    assert.equal(p2.rejections?.[0]?.reason, 'context_violation');
   } finally {
     h.cleanup();
   }
