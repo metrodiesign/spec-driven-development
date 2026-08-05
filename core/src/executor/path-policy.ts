@@ -14,6 +14,13 @@ export type PolicyDecision = { allowed: true } | { allowed: false; reason: strin
 export interface PathPolicy {
   checkWrite(role: Role, relPath: string): PolicyDecision;
   checkRead(role: Role, relPath: string): PolicyDecision;
+  /**
+   * Role gate for RUN_COMMAND, enforced BEFORE spawn (spec §6.1). Only implementer
+   * and diagnostician may run commands; every other role is rejected so no process
+   * is created. REQUIRED (not optional): an absent method would default to
+   * fail-open, exactly the gap this closes.
+   */
+  checkCommand(role: Role): PolicyDecision;
   /** Normalized worktree-relative roots a role may durably mutate through RUN_COMMAND. */
   writeRoots(role: Role): readonly string[];
   /** Core-owned frozen RED tests denied to implementers on every write surface. */
@@ -21,6 +28,14 @@ export interface PathPolicy {
 }
 
 const GOLDEN_PREFIX = `test${sep}golden${sep}`;
+
+/**
+ * Roles permitted to EXECUTE RUN_COMMAND (spec §6.1) — not to propose it.
+ * Prompt advertising is a separate, deliberately asymmetric concern: diagnostician
+ * executes here (hypothesis probe, deploy stage) while its prompt does NOT list
+ * RUN_COMMAND. Do not add it back to that prompt on the strength of this list.
+ */
+const COMMAND_ROLES: readonly Role[] = ['implementer', 'diagnostician'];
 
 const WRITE_PREFIXES: Record<Role, string[]> = {
   planner: [],
@@ -92,6 +107,12 @@ export function createDefaultPathPolicy(
       return contain(relPath) === null
         ? { allowed: false, reason: 'path_outside_allowlist' }
         : { allowed: true };
+    },
+
+    checkCommand(role) {
+      return COMMAND_ROLES.includes(role)
+        ? { allowed: true }
+        : { allowed: false, reason: 'command_role_denied' };
     },
   };
 }

@@ -452,10 +452,15 @@ test('DoD#2c: RUN_COMMAND cannot write outside the worktree or onto golden', rea
   }
 });
 
-test('DoD#2d / REQ-2.4: planner and test_designer cannot bypass role roots via RUN_COMMAND', realMacOSOnly, async () => {
+test('DoD#2d / REQ-2.4 + spec §6.1: planner and test_designer cannot run ANY command — denied before spawn', realMacOSOnly, async () => {
   const fix = makeFixture();
   try {
     const c = buildCore(fix);
+    // checkCommand (spec §6.1) rejects every non-implementer/diagnostician role BEFORE
+    // spawn, so neither a write nor a read command runs — a real macOS spawn would have
+    // created the marker files if the gate leaked. The former "planner retains read-only
+    // command access" behaviour is intentionally removed: only implementer and
+    // diagnostician may run commands at all.
     const cases = [
       {
         role: 'planner' as const,
@@ -469,44 +474,31 @@ test('DoD#2d / REQ-2.4: planner and test_designer cannot bypass role roots via R
         cmd: 'printf bypass > src/test-owned.txt',
         target: join(fix.worktree, 'src', 'test-owned.txt'),
       },
+      {
+        // A test_designer command targeting its OWN former write root is now denied too:
+        // the role gate is on the command, not the path.
+        role: 'test_designer' as const,
+        actionId: 'test-command-allowed-write',
+        cmd: 'printf allowed > test/ai-generated/allowed.txt',
+        target: join(fix.worktree, 'test', 'ai-generated', 'allowed.txt'),
+      },
+      {
+        // A pure read command by planner is denied as well (no read-only exemption).
+        role: 'planner' as const,
+        actionId: 'planner-command-read',
+        cmd: 'test -f src/impl.txt',
+        target: undefined,
+      },
     ];
     for (const item of cases) {
       const out = await c.executor.execute(
         { type: 'RUN_COMMAND', actionId: item.actionId, cmd: item.cmd, network: 'none' },
         item.role,
       );
-      assert.equal(out.status, 'rejected', `${item.role} write is structured rejection`);
-      if (out.status === 'rejected') assert.equal(out.rejection.reason, 'sandbox_violation');
-      assert.equal(existsSync(item.target), false);
+      assert.equal(out.status, 'rejected', `${item.actionId} is a structured rejection`);
+      if (out.status === 'rejected') assert.equal(out.rejection.reason, 'command_role_denied');
+      if (item.target !== undefined) assert.equal(existsSync(item.target), false);
     }
-
-    const plannerRead = await c.executor.execute(
-      {
-        type: 'RUN_COMMAND',
-        actionId: 'planner-command-read',
-        cmd: 'test -f src/impl.txt',
-        network: 'none',
-      },
-      'planner',
-    );
-    assert.equal(plannerRead.status, 'applied', 'planner retains read-only command access');
-    if (plannerRead.status === 'applied') assert.equal(plannerRead.exitCode, 0);
-
-    const testWrite = await c.executor.execute(
-      {
-        type: 'RUN_COMMAND',
-        actionId: 'test-command-allowed-write',
-        cmd: 'printf allowed > test/ai-generated/allowed.txt',
-        network: 'none',
-      },
-      'test_designer',
-    );
-    assert.equal(testWrite.status, 'applied', 'test_designer can write its declared root');
-    if (testWrite.status === 'applied') assert.equal(testWrite.exitCode, 0);
-    assert.equal(
-      readFileSync(join(fix.worktree, 'test', 'ai-generated', 'allowed.txt'), 'utf8'),
-      'allowed',
-    );
   } finally {
     fix.cleanup();
   }

@@ -450,6 +450,16 @@ core-classified `read_only_probe` does not enter artifact promotion and retains 
 existing direct exit/output result contract. The shared runner uses async child-process
 APIs so lease heartbeat and cancellation continue while a command is running.
 
+> Note (superseded in part — see `unified-platform-spec.md` changelog v1.10, spec
+> `.pipeline/run-command-prompt-contract/`): a later policy tightening added a role
+> allowlist for `RUN_COMMAND`. Only `implementer` and `diagnostician` may run one; a
+> `RUN_COMMAND` from `planner`, `test_designer`, or `reviewer` is now rejected before
+> spawn (`command_role_denied`), so the write-root and `read_only_probe` mechanisms
+> described here still work as written but are no longer reachable by every role. This
+> also qualifies the REQ-2 regression-matrix row below (the
+> "planner/reviewer/diagnostician/test-designer package/write escalation" and "read-only
+> test/probe ... unchanged" entries are now scoped to the allowed roles).
+
 The deprecated macOS backend declares
 `denialObservation: 'direct_only'`,
 `revocableDescendantContainment: false`, and

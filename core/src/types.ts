@@ -33,6 +33,10 @@ export interface ActionRejection {
     | 'sandbox_unavailable'
     | 'sandbox_violation'
     | 'network_grant_unavailable'
+    // A RUN_COMMAND proposed by a role with no command grant (only implementer and
+    // diagnostician may run commands, spec §6.1) — rejected BEFORE spawn, no process
+    // is created (append-only). Mirrors golden_write_denied's role-gate shape.
+    | 'command_role_denied'
     | 'offline_dependency_unavailable'
     | 'package_install_denied'
     | 'command_artifact_unavailable'

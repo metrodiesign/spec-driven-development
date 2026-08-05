@@ -254,23 +254,17 @@ test('an unknown network grant name is denied before spawn', async () => {
   }
 });
 
-test('REQ-2.4/2.5/2.6: planner RUN_COMMAND receives no durable write roots and rejects an escape write', async () => {
+// checkCommand (spec §6.1) now denies planner/test_designer RUN_COMMAND BEFORE spawn.
+// These two roles never reach the command runner, so the former post-run mutation-diff
+// path (sandbox_violation) is unreachable for them; the security invariant — the escape
+// write never lands — holds strictly earlier. `request` proves the runner was never
+// invoked (no process), not merely that the status was rejected (AC-2/AC-3).
+test('AC-2/AC-3: planner RUN_COMMAND is denied before spawn — no process, no escape write', async () => {
   let request: InjectedCommand | undefined;
-  const evidenceRoot = mkdtempSync(join(tmpdir(), 'executor-boundary-evidence-'));
-  const boundaryEvidence = createEvidenceStore(evidenceRoot);
-  const denialRef = boundaryEvidence.put('sandbox:enforced\nfilesystem-write-denied:true\nexit:1\n');
   const commandRunner: InjectedCommandRunner = {
     async run(input) {
       request = input;
-      return {
-        status: 'rejected',
-        reason: 'sandbox_violation',
-        detail: 'write outside role roots denied',
-        evidenceRef: denialRef,
-        exitCode: 1,
-        egressBlocked: true,
-        observedViolation: { source: 'backend_owned', operation: 'filesystem' },
-      };
+      return { status: 'completed', exitCode: 0, evidenceRef: 'unused', egressBlocked: true };
     },
   };
   const h = harness({ git: true, sandbox: FAKE_AVAILABLE, commandRunner });
@@ -280,33 +274,24 @@ test('REQ-2.4/2.5/2.6: planner RUN_COMMAND receives no durable write roots and r
       'planner',
     );
     assert.equal(out.status, 'rejected');
-    if (out.status === 'rejected') assert.equal(out.rejection.reason, 'sandbox_violation');
-    assert.deepEqual(request?.writableRoots, []);
-    assert.deepEqual(request?.protectedRoots, ['test/golden']);
+    if (out.status === 'rejected') {
+      assert.equal(out.rejection.reason, 'command_role_denied');
+      assert.match(out.rejection.detail, /planner/);
+      assert.match(out.rejection.detail, /implementer and diagnostician/);
+    }
+    assert.equal(request, undefined, 'command runner must never be invoked for planner');
     assert.equal(existsSync(join(h.worktree, 'src', 'planner.txt')), false);
   } finally {
     h.cleanup();
-    rmSync(evidenceRoot, { recursive: true, force: true });
   }
 });
 
-test('REQ-2.4/2.5/2.6: test_designer RUN_COMMAND is restricted to test/ai-generated', async () => {
+test('AC-2/AC-3: test_designer RUN_COMMAND is denied before spawn — no process, no escape write', async () => {
   let request: InjectedCommand | undefined;
-  const evidenceRoot = mkdtempSync(join(tmpdir(), 'executor-boundary-evidence-'));
-  const boundaryEvidence = createEvidenceStore(evidenceRoot);
-  const denialRef = boundaryEvidence.put('sandbox:enforced\nfilesystem-write-denied:true\nexit:1\n');
   const commandRunner: InjectedCommandRunner = {
     async run(input) {
       request = input;
-      return {
-        status: 'rejected',
-        reason: 'sandbox_violation',
-        detail: 'write outside role roots denied',
-        evidenceRef: denialRef,
-        exitCode: 1,
-        egressBlocked: true,
-        observedViolation: { source: 'backend_owned', operation: 'filesystem' },
-      };
+      return { status: 'completed', exitCode: 0, evidenceRef: 'unused', egressBlocked: true };
     },
   };
   const h = harness({ git: true, sandbox: FAKE_AVAILABLE, commandRunner });
@@ -316,9 +301,80 @@ test('REQ-2.4/2.5/2.6: test_designer RUN_COMMAND is restricted to test/ai-genera
       'test_designer',
     );
     assert.equal(out.status, 'rejected');
-    if (out.status === 'rejected') assert.equal(out.rejection.reason, 'sandbox_violation');
-    assert.deepEqual(request?.writableRoots, ['test/ai-generated']);
+    if (out.status === 'rejected') assert.equal(out.rejection.reason, 'command_role_denied');
+    assert.equal(request, undefined, 'command runner must never be invoked for test_designer');
     assert.equal(existsSync(join(h.worktree, 'src', 'test-agent.txt')), false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+// Full adversarial table (spec rows 1-8): the role gate lets implementer/diagnostician
+// spawn and blocks every other role BEFORE the runner is touched, without reordering the
+// network-grant gate for allowed roles.
+test('AC-1..AC-3: checkCommand role gate — allowed roles spawn, denied roles never do', async () => {
+  const evidenceRoot = mkdtempSync(join(tmpdir(), 'executor-role-gate-evidence-'));
+  const boundaryEvidence = createEvidenceStore(evidenceRoot);
+  const outputRef = boundaryEvidence.put('sandbox:enforced\nexit:0\n');
+  let calls = 0;
+  const commandRunner: InjectedCommandRunner = {
+    async run() {
+      calls += 1;
+      return { status: 'completed', exitCode: 0, evidenceRef: outputRef, egressBlocked: true };
+    },
+  };
+  const h = harness({ git: true, sandbox: FAKE_AVAILABLE, commandRunner });
+  try {
+    // Rows 1-2: allowed roles reach the runner and run to completion (behaviour preserved).
+    for (const role of ['implementer', 'diagnostician'] as const) {
+      const before = calls;
+      const out = await h.executor.execute(
+        { type: 'RUN_COMMAND', actionId: `ok-${role}`, cmd: 'true', network: 'none' },
+        role,
+      );
+      assert.equal(out.status, 'applied', `${role} runs`);
+      assert.equal(calls, before + 1, `${role} spawns exactly once`);
+    }
+    // Rows 3-5: denied roles are rejected before the runner is ever touched.
+    for (const role of ['planner', 'test_designer', 'reviewer'] as const) {
+      const before = calls;
+      const out = await h.executor.execute(
+        { type: 'RUN_COMMAND', actionId: `deny-${role}`, cmd: 'true', network: 'none' },
+        role,
+      );
+      assert.equal(out.status, 'rejected', `${role} denied`);
+      if (out.status === 'rejected') assert.equal(out.rejection.reason, 'command_role_denied', role);
+      assert.equal(calls, before, `${role} must not spawn`);
+    }
+    // Row 6: a denied role whose command WOULD create a file — the file must not appear
+    // (proof the process never ran, not just that the status is rejected).
+    const marker = join(h.worktree, 'src', 'reviewer-marker.txt');
+    const before6 = calls;
+    const out6 = await h.executor.execute(
+      { type: 'RUN_COMMAND', actionId: 'deny-side-effect', cmd: 'printf x > src/reviewer-marker.txt', network: 'none' },
+      'reviewer',
+    );
+    assert.equal(out6.status, 'rejected');
+    assert.equal(calls, before6, 'no spawn for side-effecting denied command');
+    assert.equal(existsSync(marker), false, 'denied command produced no file');
+    // Row 7: an allowed role with a network grant still hits network_grant_unavailable
+    // (the role gate did not reorder ahead of the network gate for allowed roles).
+    const before7 = calls;
+    const out7 = await h.executor.execute(
+      { type: 'RUN_COMMAND', actionId: 'allow-net', cmd: 'true', network: 'allowlist:x' },
+      'implementer',
+    );
+    assert.equal(out7.status, 'rejected');
+    if (out7.status === 'rejected') assert.equal(out7.rejection.reason, 'network_grant_unavailable');
+    assert.equal(calls, before7, 'network grant rejected before spawn');
+    // Row 8: a denied role with a network grant is rejected and never spawns (either gate).
+    const before8 = calls;
+    const out8 = await h.executor.execute(
+      { type: 'RUN_COMMAND', actionId: 'deny-net', cmd: 'true', network: 'allowlist:x' },
+      'planner',
+    );
+    assert.equal(out8.status, 'rejected');
+    assert.equal(calls, before8, 'denied role with grant never spawns');
   } finally {
     h.cleanup();
     rmSync(evidenceRoot, { recursive: true, force: true });

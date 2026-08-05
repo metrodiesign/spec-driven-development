@@ -483,7 +483,9 @@ test('REQ-2.31/2.32: a read-only role receives no package scratch or install spa
 
     assert.equal(outcome.status, 'rejected');
     if (outcome.status === 'rejected') {
-      assert.equal(outcome.rejection.reason, 'package_install_denied');
+      // The role gate (spec §6.1 checkCommand) now fires BEFORE the install-policy gate:
+      // planner may run no command at all, so it never reaches package_install_denied.
+      assert.equal(outcome.rejection.reason, 'command_role_denied');
     }
     assert.equal(calls, 0);
     assert.equal(existsSync(join(h.worktree, 'node_modules')), false);

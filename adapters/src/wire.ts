@@ -57,6 +57,19 @@ function protocolBlock(req: AgentRequest): string {
     `- {"type":"READ_FILE","path":"<repo-relative path>"} — ask to read a path not yet in your context bundle; ` +
     `its content will be in your context bundle starting NEXT round, so do not re-request it\n`;
   const requestToolLine = `- {"type":"REQUEST_TOOL","name":"<tool>"} — ask for a capability you lack\n`;
+  // RUN_COMMAND is advertised ONLY to implementer, never diagnostician — even though the
+  // executor's role gate (`core/src/executor/path-policy.ts` checkCommand) still allows both.
+  // The asymmetry is deliberate: `aal/src/source.ts:482-483` returns `actions: []` for a
+  // diagnostician round, so any RUN_COMMAND it proposes is dropped silently — no rejection,
+  // no feedback. Teaching it RUN_COMMAND only lures the model into putting a probe in
+  // "actionRequests" instead of "hypotheses", yielding empty hypotheses → hypotheses_exhausted
+  // → escalation with no cause. A diagnostician already runs commands via its hypothesis
+  // probes (the paragraph below), which core executes for it. Do NOT add RUN_COMMAND here.
+  // "network" MUST be the literal "none" — no other value can be granted today, so advertising
+  // one would only invite a rejected round.
+  const runCommandLine =
+    `- {"type":"RUN_COMMAND","cmd":"<shell command>","network":"none","cwd":"<optional repo-relative dir>"} — ` +
+    `run a command in the sandbox; "network" MUST be exactly "none", and "cwd" is optional (omit it to run at the worktree root)\n`;
   const header =
     `Protocol: you have NO tools and cannot execute anything — every action you want ` +
     `is a PROPOSAL listed in "actionRequests" (each an object with a "type" string). ` +
@@ -86,6 +99,7 @@ function protocolBlock(req: AgentRequest): string {
     `context bundle or have been requested via READ_FILE in an EARLIER round before you may overwrite it\n` +
     readFileLine +
     requestToolLine +
+    (req.agentRole === 'implementer' ? runCommandLine : '') +
     `Never invent other types. If the objective, acceptance criteria and context already ` +
     `determine the edit, PROPOSE it and set "claim":"READY_FOR_VERIFICATION" — the platform ` +
     `executes and verifies for you; claim BLOCKED only when the task is truly impossible.\n`
