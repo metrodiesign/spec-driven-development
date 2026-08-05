@@ -6,7 +6,7 @@
 // an AdapterError — records the failure with the breaker and re-routes ONCE to
 // the next eligible adapter before a clean BLOCKED(no_capacity) (REQ-3).
 
-import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy, loadApprovedLessons, LeaseFenceError, normalizeWorktreeRelativePath, validateCostUnits } from 'core';
+import { buildContext, computeContextMetrics, canaryTripped, checkDataPolicy, loadApprovedLessons, LeaseFenceError, normalizeWorktreeRelativePath, validateCostUnits, worktreeEntryExists } from 'core';
 import { SecretInContextError } from 'core';
 import { breakerKey, type Breaker } from './breaker.ts';
 import { AdapterError } from './protocol.ts';
@@ -485,17 +485,74 @@ export function createAALProposalSource(deps: AALSourceDeps): ProposalSource {
 
       // Provenance: a WRITE to a path neither in the bundle nor previously READ is
       // rejected as context_violation; the whole result is rejected (REQ-5.4).
+      //
+      // v1.9 splits the two cases REQ-5.4 treated identically. Only the OVERWRITE
+      // of an existing file the model never saw is a blind write worth blocking;
+      // creating a file that does not exist destroys nothing, so the gate was
+      // protecting nothing there while costing a whole round on a ritual
+      // READ_FILE of a file that isn't there. The layers that actually bound a
+      // write — checkWrite's role write roots, test/golden, frozen RED,
+      // resolveContained and checkMutationPaths — are untouched and still decide
+      // every write after this gate. `worktreeEntryExists` is fail-closed: only a
+      // path that normalizes AND lstats to ENOENT counts as a new file, so a
+      // symlink (dangling included), a directory, a traversal or any stat failure
+      // stays on the reject side. Relaxed for WRITE_FILE ONLY — no other action
+      // type's handling changes. All-or-nothing is unchanged: one violation still
+      // drops the whole batch.
       const allowed = new Set<string>([
         ...bundle.pieces.map((p) => p.path).filter((p): p is string => p !== undefined),
         ...readRequested,
       ]);
       const actions = out.response.actionRequests;
       for (const a of actions) if (a.type === 'READ_FILE') readRequested.add(a.path);
+      // `path` is UNTRUSTED (INV-1/2) and nothing upstream types it: the wire
+      // normalizer passes the model's entry through and the production
+      // outputSchema constrains `actionRequests` to `type: 'array'` with no item
+      // schema. A missing or non-string `path` is therefore a violation decided
+      // HERE — not handed to a helper that would throw out of `propose()` past a
+      // loop that has no catch. Same shape as the executor's own `validate()`
+      // (core/src/executor/executor.ts), which checks the field before touching it.
       const violations = actions.filter(
-        (a) => a.type === 'WRITE_FILE' && !allowed.has(a.path),
+        (a) =>
+          a.type === 'WRITE_FILE' &&
+          !allowed.has(a.path) &&
+          (typeof a.path !== 'string' || worktreeEntryExists(deps.worktreeDir, a.path)),
       );
       if (violations.length > 0) {
-        const detail = 'action path not in context bundle and never READ_FILE-requested';
+        // The offending paths + the remedy travel in `detail` itself: the model
+        // only ever sees this string (the ACTION_REJECTED event below is
+        // operator-facing), so naming neither left it unable to act on the
+        // rejection. Three kinds of violation land here and only ONE of them has
+        // a READ_FILE remedy — a path that never normalizes cannot be
+        // READ_FILE-requested either (checkRead answers path_outside_allowlist),
+        // so offering that advice would burn a round on something unfollowable.
+        // One pass, kind decided once per violation: a non-string path is
+        // `malformed`, a string that never normalizes is `outside`, the rest are
+        // `existing`. Each string path lands in exactly one bucket, symmetrically.
+        const existing: string[] = [];
+        const outside: string[] = [];
+        let malformed = 0;
+        for (const a of violations) {
+          const p = pathOf(a);
+          if (typeof p !== 'string') malformed++;
+          else if (normalizeWorktreeRelativePath(p) === null) outside.push(p);
+          else existing.push(p);
+        }
+        const detail = [
+          existing.length > 0
+            ? `WRITE_FILE to an existing path that is not in the context bundle and was never READ_FILE-requested: ` +
+              `${existing.join(', ')} — request the path via READ_FILE in an earlier round before overwriting it`
+            : null,
+          outside.length > 0
+            ? `WRITE_FILE to a path outside the worktree: ${outside.map((p) => (p === '' ? '(empty path)' : p)).join(', ')} — propose a repo-relative path ` +
+              `inside the worktree instead; this path cannot be READ_FILE-requested either`
+            : null,
+          malformed > 0
+            ? `${malformed} WRITE_FILE action(s) without a "path" string — every WRITE_FILE needs a repo-relative "path"`
+            : null,
+        ]
+          .filter((s): s is string => s !== null)
+          .join('; ');
         deps.log.append({
           runId: deps.runId,
           taskId: deps.taskId,

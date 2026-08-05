@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { buildContext, computeContextMetrics, serializeBundle, SecretInContextError } from './builder.ts';
+import { buildContext, computeContextMetrics, serializeBundle, worktreeEntryExists, SecretInContextError } from './builder.ts';
 import { createEvidenceStore } from '../evidence/store.ts';
 import type { ContextBuildInput } from './builder.ts';
 import type { LessonRecord, TaskContractExcerpt } from '../types.ts';
@@ -465,6 +465,83 @@ test('AC-10: a worktree reached through a symlinked ancestor (e.g. macOS /tmp) s
       paths.includes('src/a.ts'),
       `expected src/a.ts to still be read through the symlinked worktree root, got ${JSON.stringify(paths)}`,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- worktreeEntryExists: the fail-closed existence probe the WRITE_FILE
+// provenance gate in aal/src/source.ts runs (write-provenance AC-3) ---
+
+test('worktreeEntryExists answers false ONLY for a normalizable path whose lstat is ENOENT; everything else is fail-closed true', () => {
+  const { root, worktree } = fixture({ 'src/real.ts': 'export const a = 1;\n' });
+  try {
+    assert.equal(worktreeEntryExists(worktree, 'src/absent.ts'), false, 'a plain missing file is the ONLY new-file case');
+    assert.equal(worktreeEntryExists(worktree, 'src/real.ts'), true);
+    assert.equal(worktreeEntryExists(worktree, 'src'), true, 'a directory is an entry');
+    // A trailing slash resolves to the same final component, so it does not change the verdict.
+    assert.equal(worktreeEntryExists(worktree, 'src/real.ts/'), true, 'trailing slash on an existing file');
+    assert.equal(worktreeEntryExists(worktree, 'src/absent.ts/'), false, 'trailing slash on a missing file is still a new file');
+    // Fail-closed on every path shape that never resolves to a worktree file.
+    assert.equal(worktreeEntryExists(worktree, '/etc/passwd'), true, 'absolute');
+    assert.equal(worktreeEntryExists(worktree, '../../etc/passwd'), true, 'traversal');
+    assert.equal(worktreeEntryExists(worktree, ''), true, 'empty');
+    // lstat does NOT follow the link, so a dangling symlink is an entry — the
+    // case existsSync gets wrong (it would report "missing" and open a blind
+    // overwrite of the link).
+    symlinkSync(join(worktree, 'src/never-created.ts'), join(worktree, 'src/dangling.ts'));
+    assert.equal(worktreeEntryExists(worktree, 'src/dangling.ts'), true, 'dangling symlink');
+    symlinkSync('/etc/passwd', join(worktree, 'src/outward.ts'));
+    assert.equal(worktreeEntryExists(worktree, 'src/outward.ts'), true, 'symlink out of the worktree');
+    // A stat failure that is not ENOENT (here ENOTDIR: a file used as a directory)
+    // is fail-closed too — undecidable never means "safe to create".
+    assert.equal(worktreeEntryExists(worktree, 'src/real.ts/child.ts'), true, 'ENOTDIR');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('worktreeEntryExists: an ENOENT reached THROUGH a directory symlink out of the worktree is fail-closed, a not-yet-created directory inside it is not', () => {
+  const { root, worktree } = fixture({ 'src/real.ts': 'export const a = 1;\n' });
+  try {
+    // lstat does not follow the FINAL component, but the components leading to
+    // it are followed — so "no entry" can mean "no entry outside the worktree".
+    mkdirSync(join(root, 'outside'), { recursive: true });
+    writeFileSync(join(root, 'outside/there.ts'), 'x\n');
+    symlinkSync(join(root, 'outside'), join(worktree, 'src/link'));
+    assert.equal(worktreeEntryExists(worktree, 'src/link/new.ts'), true, 'escapes the worktree through a directory symlink (AC-3)');
+    assert.equal(worktreeEntryExists(worktree, 'src/link/there.ts'), true, 'an existing file out there is an entry as well');
+    // The parent of a genuinely new file need not exist yet: the check walks up
+    // to the deepest directory that does.
+    assert.equal(worktreeEntryExists(worktree, 'src/newdir/a.ts'), false, 'one missing directory level');
+    assert.equal(worktreeEntryExists(worktree, 'a/b/c/d.ts'), false, 'several missing directory levels');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('worktreeEntryExists: a DANGLING directory symlink is an entry, not a missing directory to walk past', () => {
+  const { root, worktree } = fixture({ 'src/real.ts': 'export const a = 1;\n' });
+  try {
+    // `realpath` answers ENOENT for a dangling symlink exactly as it does for a
+    // directory that was never created — telling the two apart is the whole
+    // point, otherwise the walk skips the escape and lands on `src` (contained)
+    // and the write out of the worktree is classified as a new file (AC-3).
+    symlinkSync(join(root, 'never-created'), join(worktree, 'src/dangling'));
+    assert.equal(worktreeEntryExists(worktree, 'src/dangling/new.ts'), true, 'dangling directory symlink out of the worktree');
+    // Same at depth: the escape is several levels above the probed parent.
+    assert.equal(worktreeEntryExists(worktree, 'src/dangling/a/b/new.ts'), true, 'dangling directory symlink, deeper path');
+    // A dangling symlink pointing back INSIDE the worktree is fail-closed too:
+    // the entry exists, and nothing here may answer false on a maybe.
+    symlinkSync(join(worktree, 'src/never-created-dir'), join(worktree, 'src/dangling-inward'));
+    assert.equal(worktreeEntryExists(worktree, 'src/dangling-inward/new.ts'), true, 'dangling symlink pointing inward');
+    // The neighbours the fix must not flip: a live inward symlink and plain
+    // not-yet-created directories are still genuine new files.
+    mkdirSync(join(worktree, 'src/here'), { recursive: true });
+    symlinkSync(join(worktree, 'src/here'), join(worktree, 'src/inward'));
+    assert.equal(worktreeEntryExists(worktree, 'src/inward/new.ts'), false, 'symlink resolving back into the worktree');
+    assert.equal(worktreeEntryExists(worktree, 'src/newdir/a.ts'), false, 'one missing directory level');
+    assert.equal(worktreeEntryExists(worktree, 'a/b/c/d.ts'), false, 'several missing directory levels');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

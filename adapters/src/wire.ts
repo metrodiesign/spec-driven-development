@@ -81,7 +81,9 @@ function protocolBlock(req: AgentRequest): string {
 
   return (
     header +
-    `- {"type":"WRITE_FILE","path":"<repo-relative path>","content":"<full new file body>"} — propose a file's new content\n` +
+    `- {"type":"WRITE_FILE","path":"<repo-relative path>","content":"<full new file body>"} — propose a file's new content; ` +
+    `a file that does not exist yet may be proposed directly, but a file that ALREADY exists must either be in your ` +
+    `context bundle or have been requested via READ_FILE in an EARLIER round before you may overwrite it\n` +
     readFileLine +
     requestToolLine +
     `Never invent other types. If the objective, acceptance criteria and context already ` +

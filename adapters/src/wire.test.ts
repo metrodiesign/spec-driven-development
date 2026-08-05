@@ -74,6 +74,14 @@ test('buildProposePrompt: advertises READ_FILE as a proposal type (bugfix-wire-p
   assert.match(prompt, /"type":"READ_FILE"/);
 });
 
+test('buildProposePrompt: states the write-provenance rule — new file direct, existing file needs the bundle or an earlier READ_FILE (write-provenance AC-5)', () => {
+  const prompt = buildProposePrompt(req());
+  assert.match(prompt, /does not exist yet may be proposed directly/);
+  // Both roads the gate actually accepts (aal/src/source.ts `allowed`): a stricter
+  // sentence would teach a READ_FILE round for a file already in hand.
+  assert.match(prompt, /ALREADY exists must either be in your context bundle or have been requested via READ_FILE in an EARLIER round/);
+});
+
 test('buildProposePrompt: diagnostician gets a distinct protocol teaching Hypothesis shape, never WRITE_FILE (bugfix-wire-prompt-vocabulary F2)', () => {
   const implementerPrompt = buildProposePrompt(req('fix impl', 'implementer'));
   const diagnosticianPrompt = buildProposePrompt(req('fix impl', 'diagnostician'));

@@ -141,6 +141,7 @@ export {
   buildContext,
   computeContextMetrics,
   serializeBundle,
+  worktreeEntryExists,
   SecretInContextError,
   type ContextBuildInput,
   type ContextBuildResult,
