@@ -17,6 +17,8 @@ cost tracking และ retrospective. อ่านตามลำดับส�
    task-gate/precompact) ที่ block/warn อัตโนมัติรอบ tool call
 6. [GitHub Issues (teammate visibility)](06-github-issues.md) — เชื่อม spec -> GitHub Issues,
    epic + sub-issue, label, ผูก PR, CI gate
+7. [Packages / workspace guide](07-packages.md) — แต่ละ workspace (core/aal/adapters/console/scripts)
+   คืออะไร รับผิดชอบอะไร งานแบบไหนลงที่ไหน พร้อมตัวอย่างโค้ดจริง + ตาราง "งานแบบนี้ลงที่ไหน"
 
 ## แหล่งความจริง (source of truth) — ห้ามขัดกับไฟล์เหล่านี้
 

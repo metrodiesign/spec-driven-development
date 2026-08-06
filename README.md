@@ -40,6 +40,9 @@ pnpm workspace ที่ประกอบด้วย package ต่อไป�
 | `console/web` | `console-web` | React 19 SPA (Vite, `@xterm/xterm`) |
 | `spikes/` | `spikes` | สคริปต์ verification/spike (§15) ไม่ใช่ production code |
 
+รายละเอียดต่อ workspace (คืออะไร รับผิดชอบอะไร งานแบบไหนควรลงที่ไหน พร้อมตัวอย่างจากโค้ดจริง)
+อยู่ที่ [`docs/07-packages.md`](docs/07-packages.md)
+
 ไดเรกทอรีระดับ repo ที่ไม่ใช่ package:
 
 - `.ai/` — vendor-neutral operating layer ที่ทุก harness (Claude Code / Codex / OpenCode / Pi)
@@ -113,7 +116,8 @@ logic ตัวจริงของ guard ทั้งหมดอยู่ใ�
 - `docs/04-git-pr-and-rules.md` — convention ของ branch/PR
 - `docs/05-hooks.md` — hook แต่ละตัวยิงเมื่อไร
 - `docs/06-github-issues.md` — sync spec tasks ไป GitHub Issues
-- `docs/README.md` — index/สารบัญ ของโฟลเดอร์ `docs/` เอง (คู่มือปฏิบัติ 6 หัวข้อ + ตารางแหล่งความจริง)
+- `docs/07-packages.md` — รายละเอียดต่อ workspace (core/aal/adapters/console/scripts): คืออะไร รับผิดชอบอะไร งานแบบไหนลงที่ไหน พร้อมตัวอย่างโค้ดจริง
+- `docs/README.md` — index/สารบัญ ของโฟลเดอร์ `docs/` เอง (คู่มือปฏิบัติ 7 หัวข้อ + ตารางแหล่งความจริง)
 - `docs/DEVIATIONS.md` — บันทึกจุดที่ implement เบี่ยงจาก `unified-platform-spec.md` (ตาม §0.2/§0.6: อะไร/ทำไม/ขอบเขต/วิธีย้อน)
 - `docs/sdd-optimization-plan.md` — แผน optimize spec workflow (อ้าง Kiro docs) พร้อมสถานะราย item Tier 1–5 (APPLIED/OPEN/SUPERSEDED)
 - `.ai/shared/` — knowledge/protocol ที่ทุก agent อ่านร่วม (`PROJECT_CONTEXT`,
