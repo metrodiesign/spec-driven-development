@@ -53,3 +53,4 @@
 | slice-tool-verify-not-just-missing-marker | mechanized | .claude/hooks/tests/spec-slice.test.sh::slice-tool-verify-not-just-missing-marker — bare-N.M-id match, mixed-style regression, and zero-row MISSING cases (sdd-spec-context-loading REQ-3.6/3.7) |
 | test-not-real-repo-incidental-state | advisory | test-authoring judgment call (what counts as "incidental" repo state vs. a real invariant) — no generic lint distinguishes them |
 | autobg-notification-not-manual-wait | advisory | harness tool-usage guidance for the assistant itself, not a repo-checkable code pattern |
+| ci-red-on-default-branch | mechanized | .claude/hooks/tests/ci-scope.test.sh::empty-base_ref-fail-closed — push/workflow_dispatch with EMPTY or MISSING base_ref must decide full (ci-test-scope) / scan all (ci-secret-scope), never a usage-error abort — the exact production-trigger input the old `${2:?usage}` guard died on |

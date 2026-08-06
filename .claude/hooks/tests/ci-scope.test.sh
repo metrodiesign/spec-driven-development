@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # ci-scope.test.sh — adversarial test for scripts/ci-secret-scope.sh + ci-test-scope.sh
 # (sdd-ci-incremental-checks REQ-2, REQ-3, REQ-5.3). Run: bash .claude/hooks/tests/ci-scope.test.sh
+# Coverage artifact for lesson [#ci-red-on-default-branch]: the EMPTY/MISSING base_ref cases
+# below pin the production-trigger input the old ${2:?usage} guard died on (see LESSONS-COVERAGE.md).
 #
 # Every case runs CI_SCOPE_DRY_RUN=1 so the script always logs its DECISION to stderr and
 # exits 0 without actually running check-secrets.sh/pnpm test for real — fixtures assert on
