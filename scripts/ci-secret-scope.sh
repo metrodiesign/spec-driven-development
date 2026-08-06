@@ -11,7 +11,10 @@
 set -euo pipefail
 
 EVENT="${1:?usage: ci-secret-scope.sh <event_name> <base_ref>}"
-BASE_REF="${2:?usage: ci-secret-scope.sh <event_name> <base_ref>}"
+# base_ref is empty on non-PR events (push/workflow_dispatch set no GITHUB_BASE_REF).
+# Default to empty rather than `${2:?}` so those events reach the non-PR branch below
+# instead of dying with a usage error (fail-closed: never abort into skipping the scan).
+BASE_REF="${2:-}"
 BIN="$(cd "$(dirname "$0")/../.ai/bin" && pwd)"
 ENGINE="$BIN/check-secrets.sh"
 
@@ -27,6 +30,10 @@ run_all() { # $1=cause
 if [ "$EVENT" != "pull_request" ]; then
   run_all "non-PR event ($EVENT)"
 fi
+
+# A pull_request with no base_ref is an abnormal state; fail-closed to the full scan
+# with an explicit cause rather than resolving merge-base against a bare "origin/".
+[ -n "$BASE_REF" ] || run_all "pull_request event with empty base_ref"
 
 BASE=$(git merge-base "origin/$BASE_REF" HEAD 2>/dev/null || true)
 [ -n "$BASE" ] || run_all "merge-base unresolvable (origin/$BASE_REF)"

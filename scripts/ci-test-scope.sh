@@ -17,7 +17,10 @@
 set -uo pipefail
 
 EVENT="${1:?usage: ci-test-scope.sh <event_name> <base_ref>}"
-BASE_REF="${2:?usage: ci-test-scope.sh <event_name> <base_ref>}"
+# base_ref is empty on non-PR events (push/workflow_dispatch set no GITHUB_BASE_REF).
+# Default to empty rather than `${2:?}` so those events reach the non-PR branch below
+# instead of dying with a usage error (REQ-3.6 fail-closed: never abort into skipping).
+BASE_REF="${2:-}"
 
 run_full() { # $1=cause
   echo "scope: event=$EVENT decision=full cause=\"$1\"" >&2
@@ -31,6 +34,10 @@ run_full() { # $1=cause
 if [ "$EVENT" != "pull_request" ]; then
   run_full "non-PR event ($EVENT)"
 fi
+
+# A pull_request with no base_ref is an abnormal state; fail-closed to the full suite
+# with an explicit cause rather than resolving merge-base against a bare "origin/".
+[ -n "$BASE_REF" ] || run_full "pull_request event with empty base_ref"
 
 BASE=$(git merge-base "origin/$BASE_REF" HEAD 2>/dev/null)
 [ -n "$BASE" ] || run_full "merge-base unresolvable (origin/$BASE_REF)"
