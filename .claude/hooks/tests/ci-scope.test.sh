@@ -52,6 +52,50 @@ else
   fail=$((fail+1)); echo "FAIL: push event should force decision=full :: $OUT"
 fi
 
+# Real CI passes GITHUB_BASE_REF, which is EMPTY on non-PR events (push/workflow_dispatch).
+# ci.yml calls the script with that empty string as arg 2 — the case a `push develop`
+# fixture never exercised. These assert the empty/missing arg 2 still decides full, never
+# a usage-error abort (REQ-3.6 fail-closed).
+echo "=== ci-test-scope: push event, EMPTY base_ref (real CI) -> FULL (REQ-3.6) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$TEST_SCOPE" push "" 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=full' && printf '%s' "$OUT" | grep -q 'non-PR event'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: push with empty base_ref should force decision=full :: $OUT"
+fi
+
+echo "=== ci-test-scope: push event, MISSING base_ref (no arg 2) -> FULL (REQ-3.6) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$TEST_SCOPE" push 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=full' && printf '%s' "$OUT" | grep -q 'non-PR event'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: push with no arg 2 should force decision=full :: $OUT"
+fi
+
+echo "=== ci-test-scope: workflow_dispatch event, EMPTY base_ref -> FULL (REQ-3.6) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$TEST_SCOPE" workflow_dispatch "" 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=full' && printf '%s' "$OUT" | grep -q 'non-PR event'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: workflow_dispatch with empty base_ref should force decision=full :: $OUT"
+fi
+
+echo "=== ci-test-scope: pull_request event, EMPTY base_ref (abnormal) -> FULL + cause (REQ-3.6 fail-closed) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$TEST_SCOPE" pull_request "" 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=full' && printf '%s' "$OUT" | grep -q 'empty base_ref'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: pull_request with empty base_ref should force decision=full + cause :: $OUT"
+fi
+
+echo "=== ci-test-scope: no args at all -> loud error, NOT a silent skip (REQ-3.6) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$TEST_SCOPE" 2>&1 ); RC=$?
+if [ "$RC" -ne 0 ] && ! printf '%s' "$OUT" | grep -q 'decision=skip'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: no args should error loudly, never skip :: rc=$RC :: $OUT"
+fi
+
 echo "=== ci-secret-scope: push event -> decision=all (REQ-2.2) ==="
 OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$SECRET_SCOPE" push develop 2>&1 )
 if printf '%s' "$OUT" | grep -q 'decision=all'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: push should be decision=all :: $OUT"; fi
@@ -60,6 +104,50 @@ echo "=== ci-secret-scope: pull_request event, resolvable base -> decision=range
 ( cd "$FIX" && echo x > pkg-a/x.txt && git add -A && git commit -q -m head )
 OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$SECRET_SCOPE" pull_request develop 2>&1 )
 if printf '%s' "$OUT" | grep -q 'decision=range'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: PR should be decision=range :: $OUT"; fi
+
+# Real CI passes GITHUB_BASE_REF, EMPTY on non-PR events. ci.yml calls ci-secret-scope.sh
+# with that empty string as arg 2 — the case `push develop` never exercised. These assert
+# empty/missing arg 2 still scans the whole tree (decision=all), never a usage-error abort
+# (fail-closed, same principle as the ci-test-scope EMPTY-base_ref cases above).
+echo "=== ci-secret-scope: push event, EMPTY base_ref (real CI) -> ALL (fail-closed) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$SECRET_SCOPE" push "" 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=all' && printf '%s' "$OUT" | grep -q 'non-PR event'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: push with empty base_ref should scan all :: $OUT"
+fi
+
+echo "=== ci-secret-scope: push event, MISSING base_ref (no arg 2) -> ALL (fail-closed) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$SECRET_SCOPE" push 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=all' && printf '%s' "$OUT" | grep -q 'non-PR event'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: push with no arg 2 should scan all :: $OUT"
+fi
+
+echo "=== ci-secret-scope: workflow_dispatch event, EMPTY base_ref -> ALL (fail-closed) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$SECRET_SCOPE" workflow_dispatch "" 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=all' && printf '%s' "$OUT" | grep -q 'non-PR event'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: workflow_dispatch with empty base_ref should scan all :: $OUT"
+fi
+
+echo "=== ci-secret-scope: pull_request event, EMPTY base_ref (abnormal) -> ALL + cause (fail-closed) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$SECRET_SCOPE" pull_request "" 2>&1 )
+if printf '%s' "$OUT" | grep -q 'decision=all' && printf '%s' "$OUT" | grep -q 'empty base_ref'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: pull_request with empty base_ref should scan all + cause :: $OUT"
+fi
+
+echo "=== ci-secret-scope: no args at all -> loud error, NOT a silent skip (fail-closed) ==="
+OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$SECRET_SCOPE" 2>&1 ); RC=$?
+if [ "$RC" -ne 0 ] && ! printf '%s' "$OUT" | grep -q 'decision='; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: no args should error loudly, never scan-skip :: rc=$RC :: $OUT"
+fi
 
 echo "=== ci-test-scope: unresolvable base -> decision=full, cause logged (REQ-3.6) ==="
 OUT=$( cd "$FIX" && CI_SCOPE_DRY_RUN=1 "$TEST_SCOPE" pull_request no-such-branch-anywhere 2>&1 )

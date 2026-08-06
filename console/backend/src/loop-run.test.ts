@@ -100,8 +100,32 @@ function waitForDiscovery(persistDir: string): Promise<{ url: string; token: str
   });
 }
 
+// The Human Plane server (core/src/human/api.ts, node:http keep-alive) shares this
+// event loop with the sandboxed RUN_COMMAND subprocess hammering it; under load a
+// keep-alive socket gets reset and fetch() THROWS a transport error (TypeError:
+// fetch failed / ECONNRESET / socket hang up) with no recovery, flaking the run.
+// Retry ONLY that thrown network failure — an HTTP response of ANY status (e.g. the
+// 404 that decideDeploy tests assert) is returned as-is, never retried, so no
+// assertion is masked. Success returns on the first try with zero delay.
+// The injectable `doFetch` param is the test seam (rows 14-17); real callers omit it.
+async function fetchRetry(
+  input: string,
+  init?: RequestInit,
+  retries = 3,
+  doFetch: typeof fetch = fetch,
+): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await doFetch(input, init);
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      await new Promise((r) => setTimeout(r, 25 * attempt));
+    }
+  }
+}
+
 async function fetchApprovals(url: string, token: string): Promise<ApprovalPackageJSON[]> {
-  const res = await fetch(`${url}/approvals`, { headers: { authorization: `Bearer ${token}` } });
+  const res = await fetchRetry(`${url}/approvals`, { headers: { authorization: `Bearer ${token}` } });
   return (await res.json()) as ApprovalPackageJSON[];
 }
 
@@ -114,7 +138,7 @@ function waitForApprovalPackage(url: string, token: string): Promise<ApprovalPac
 }
 
 function decide(url: string, token: string, id: string, decision: 'approve' | 'reject', attestations: string[] = []): Promise<number> {
-  return fetch(`${url}/approvals/${id}`, {
+  return fetchRetry(`${url}/approvals/${id}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ decision, attestations }),
@@ -127,7 +151,7 @@ interface DeployStatusJSON {
 }
 
 function fetchDeploy(url: string, token: string): Promise<DeployStatusJSON> {
-  return fetch(`${url}/deploy`, { headers: { authorization: `Bearer ${token}` } }).then(
+  return fetchRetry(`${url}/deploy`, { headers: { authorization: `Bearer ${token}` } }).then(
     (res) => res.json() as Promise<DeployStatusJSON>,
   );
 }
@@ -141,7 +165,7 @@ function waitForDeployState(url: string, token: string, want: string): Promise<D
 }
 
 function decideDeploy(url: string, token: string, decision: 'approve' | 'reject', attestations: string[] = []): Promise<number> {
-  return fetch(`${url}/deploy/decision`, {
+  return fetchRetry(`${url}/deploy/decision`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ decision, attestations }),
@@ -149,10 +173,56 @@ function decideDeploy(url: string, token: string, decision: 'approve' | 'reject'
 }
 
 function rollbackDeploy(url: string, token: string): Promise<number> {
-  return fetch(`${url}/deploy/rollback`, { method: 'POST', headers: { authorization: `Bearer ${token}` } }).then(
+  return fetchRetry(`${url}/deploy/rollback`, { method: 'POST', headers: { authorization: `Bearer ${token}` } }).then(
     (res) => res.status,
   );
 }
+
+// fetchRetry contract (adversarial rows 14-17): retry only thrown transport errors,
+// never an HTTP status, and never delay the happy path.
+test('fetchRetry: retries a thrown network error once, then succeeds (row 14, AC-11)', async () => {
+  let calls = 0;
+  const flaky: typeof fetch = async () => {
+    calls++;
+    if (calls === 1) throw new TypeError('fetch failed', { cause: new Error('read ECONNRESET') });
+    return new Response('ok', { status: 200 });
+  };
+  const res = await fetchRetry('http://x/', undefined, 3, flaky);
+  assert.equal(res.status, 200);
+  assert.equal(calls, 2);
+});
+
+test('fetchRetry: throws the real error after exhausting retries (row 15, AC-11)', async () => {
+  let calls = 0;
+  const dead: typeof fetch = async () => {
+    calls++;
+    throw new TypeError('fetch failed', { cause: new Error('socket hang up') });
+  };
+  await assert.rejects(fetchRetry('http://x/', undefined, 3, dead), /fetch failed/);
+  assert.equal(calls, 3);
+});
+
+test('fetchRetry: a 404 returns immediately, never retried (row 16, AC-12)', async () => {
+  let calls = 0;
+  const notFound: typeof fetch = async () => {
+    calls++;
+    return new Response('nope', { status: 404 });
+  };
+  const res = await fetchRetry('http://x/', undefined, 3, notFound);
+  assert.equal(res.status, 404);
+  assert.equal(calls, 1);
+});
+
+test('fetchRetry: a 200 returns on the first try with no retry (row 17, AC-13)', async () => {
+  let calls = 0;
+  const ok: typeof fetch = async () => {
+    calls++;
+    return new Response('ok', { status: 200 });
+  };
+  const res = await fetchRetry('http://x/', undefined, 3, ok);
+  assert.equal(res.status, 200);
+  assert.equal(calls, 1);
+});
 
 test('supervised loop with the FakeAdapter reaches REVIEWING; calibration computed (harness math only)', async () => {
   const persistDir = mkdtempSync(join(tmpdir(), 'loop-run-'));
@@ -739,7 +809,7 @@ test('kill while a package is pending ends the wait -> CANCELLED, the same termi
     });
     const { url, token } = await waitForDiscovery(persistDir);
     await waitForApprovalPackage(url, token);
-    const res = await fetch(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    const res = await fetchRetry(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
     assert.equal(res.status, 200);
 
     const out = await resultPromise;
