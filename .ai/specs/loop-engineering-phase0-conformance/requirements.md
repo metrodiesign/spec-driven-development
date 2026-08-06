@@ -41,7 +41,7 @@ deterministic boundary เดียวกัน เพื่อไม่ให�
 - 2.1 WHEN the executor, a gate, or command-workspace preparation launches a child process THE SYSTEM SHALL launch it through one shared command-execution primitive.
 - 2.2 WHILE a T0 or T1 command is running THE SYSTEM SHALL deny network egress.
 - 2.3 IF an execution backend cannot prove revocable containment of every descendant that could retain a network grant THEN THE SYSTEM SHALL reject the network-allow request before spawning the command.
-- 2.4 WHILE an agent-proposed command is running THE SYSTEM SHALL restrict durable writes to the normalized roots allowed for that role.
+- 2.4 WHILE an agent-proposed command is running THE SYSTEM SHALL restrict durable writes to the normalized roots allowed for that role. _(Superseded in part by unified-platform-spec.md changelog v1.10 — role allowlist gate before spawn; ดู note ใต้ 2.26 ด้านล่าง)_
 - 2.5 WHEN a direct-child result or another enforcement-owned channel observes an unauthorized filesystem or network denial THE SYSTEM SHALL return structured `sandbox_violation` feedback.
 - 2.6 IF a command attempts a write outside its allowed roots THEN THE SYSTEM SHALL leave the protected artifact tree unchanged.
 - 2.7 IF the enforcing sandbox is unavailable THEN THE SYSTEM SHALL fail the command closed with a structured reason.
@@ -64,6 +64,16 @@ deterministic boundary เดียวกัน เพื่อไม่ให�
 - 2.24 THE SYSTEM SHALL make no Phase 0 claim that the macOS backend terminates descendants after they establish a new session.
 - 2.25 WHERE a command is core-classified as a read-only test or probe THE SYSTEM SHALL execute it without entering the artifact-promotion path.
 - 2.26 WHEN a core-classified read-only test or probe terminates THE SYSTEM SHALL preserve its exit-status and output-evidence contract.
+
+> **Superseded in part (unified-platform-spec.md changelog v1.10, spec `.pipeline/run-command-prompt-contract/`):**
+> RUN_COMMAND ได้ role allowlist gate (`checkCommand`) ก่อน spawn — เฉพาะ `implementer`/`diagnostician`
+> รันได้; `planner`/`test_designer`/`reviewer` ถูกปฏิเสธด้วย `command_role_denied` ก่อนถึงจุดรัน ผลต่อ AC
+> กลุ่มนี้: **2.4** ยังจำกัด durable write ตาม role สำหรับ role ที่รันได้ แต่ role นอก allowlist ไม่ถึงจุดรัน
+> อีกต่อไป (ถูกตัดก่อน spawn ไม่ใช่ตอนตรวจ mutation diff ปลายทาง) · **2.25/2.26** read-only test/probe คง
+> exit/output contract เดิมสำหรับ role ที่รันได้ แต่ "read-only" ไม่เป็นข้ออนุญาตให้ role นอก allowlist สั่ง
+> ได้อีกต่อไป · ส่วนที่ไม่ขยับ: mutation-diff / `writeRoots(role)` / `read_only_probe` classification ที่
+> Ring 0 คงเดิมทุกประการ รายละเอียดเต็ม + เหตุผลดู changelog v1.10 ใน `unified-platform-spec.md`
+
 - 2.27 IF a frozen or captured command artifact cannot be materialized and inventoried within core-owned resource limits THEN THE SYSTEM SHALL fail closed with a structured reason.
 - 2.28 WHEN a command-artifact attempt fails before returning a promotable artifact THE SYSTEM SHALL clean up every core-owned temporary artifact from that attempt.
 - 2.29 WHEN core starts a command under `network: none` THE SYSTEM SHALL record the enforced network-policy hash in core-owned evidence.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { sep } from 'node:path';
 import { test } from 'node:test';
 
 import { createDefaultPathPolicy, normalizeWorktreeRelativePath } from './path-policy.ts';
@@ -30,6 +31,15 @@ test('role write allowlists follow §6.1 defaults (REQ-1.6)', () => {
   assert.equal(policy.checkWrite('implementer', 'src/a.ts').allowed, true);
   assert.equal(policy.checkWrite('implementer', 'test/ai-generated/x.test.ts').allowed, true);
   assert.equal(policy.checkWrite('implementer', 'docs/readme.md').allowed, false);
+});
+
+test('writeRoots exposes the per-role durable-write allowlist for every role (REQ-1.6)', () => {
+  const aiGenerated = `test${sep}ai-generated`;
+  assert.deepEqual(policy.writeRoots('planner'), []);
+  assert.deepEqual(policy.writeRoots('test_designer'), [aiGenerated]);
+  assert.deepEqual(policy.writeRoots('implementer'), ['src', aiGenerated]);
+  assert.deepEqual(policy.writeRoots('diagnostician'), []);
+  assert.deepEqual(policy.writeRoots('reviewer'), []);
 });
 
 test('golden is read-only for every role, decision names the reason (REQ-1.3)', () => {
@@ -76,6 +86,17 @@ test('AC-1: checkRead/checkWrite deny a non-string path as path_outside_allowlis
     const write = policy.checkWrite('implementer', bad as string);
     assert.equal(write.allowed, false, `${label} must be denied for write`);
     if (!write.allowed) assert.equal(write.reason, 'path_outside_allowlist', label);
+  }
+});
+
+test('checkCommand grants only implementer and diagnostician (spec §6.1)', () => {
+  for (const role of ['implementer', 'diagnostician'] as const) {
+    assert.equal(policy.checkCommand(role).allowed, true, `${role} may run commands`);
+  }
+  for (const role of ['planner', 'test_designer', 'reviewer'] as const) {
+    const d = policy.checkCommand(role);
+    assert.equal(d.allowed, false, `${role} may not run commands`);
+    if (!d.allowed) assert.equal(d.reason, 'command_role_denied', role);
   }
 });
 

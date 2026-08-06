@@ -100,6 +100,32 @@ test('buildProposePrompt: serializes acceptance criteria into the prompt when pr
   assert.match(prompt, /AC-1: d/);
 });
 
+test('AC-4/AC-5/AC-6: RUN_COMMAND is advertised only to implementer, always with network:none, never allowlist', () => {
+  const implementer = buildProposePrompt(req('fix impl', 'implementer'));
+  const diagnostician = buildProposePrompt(req('fix impl', 'diagnostician'));
+
+  // AC-4: implementer sees RUN_COMMAND with the literal network value.
+  assert.match(implementer, /"type":"RUN_COMMAND"/);
+  assert.match(implementer, /"network":"none"/);
+
+  // Row 10: the diagnostician does NOT see RUN_COMMAND (its actions are dropped silently at
+  // aal/src/source.ts, so teaching it the type only lures a probe into the wrong slot) but
+  // still keeps its full hypothesis paragraph.
+  assert.doesNotMatch(diagnostician, /RUN_COMMAND/);
+  assert.match(diagnostician, /hypotheses/);
+  assert.match(diagnostician, /probes/);
+
+  // AC-5: the four non-implementer roles never see RUN_COMMAND.
+  for (const role of ['diagnostician', 'planner', 'test_designer', 'reviewer'] as const) {
+    assert.doesNotMatch(buildProposePrompt(req('fix impl', role)), /RUN_COMMAND/, role);
+  }
+
+  // AC-6: no role's prompt mentions allowlist (there is no grantable value today).
+  for (const role of ['implementer', 'diagnostician', 'planner', 'test_designer', 'reviewer'] as const) {
+    assert.doesNotMatch(buildProposePrompt(req('fix impl', role)), /allowlist/, role);
+  }
+});
+
 test('classifyAdapterError: quota/auth patterns, else transport (REQ-1.5)', () => {
   assert.equal(classifyAdapterError(new Error('429 rate limit exceeded')), 'quota_limited');
   assert.equal(classifyAdapterError('you have hit your usage limit'), 'quota_limited');

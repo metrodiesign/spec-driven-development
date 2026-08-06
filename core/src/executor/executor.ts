@@ -1646,6 +1646,15 @@ async function executeValidAction(
     );
   }
   if (action.type === 'RUN_COMMAND') {
+    const commandDecision = opts.policy.checkCommand(role);
+    if (!commandDecision.allowed) {
+      return reject(
+        opts,
+        action.actionId,
+        commandDecision.reason as ActionRejection['reason'],
+        `RUN_COMMAND denied for role ${role}; only implementer and diagnostician may run commands`,
+      );
+    }
     if (action.network !== 'none') {
       return reject(
         opts,
