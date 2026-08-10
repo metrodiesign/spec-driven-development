@@ -56,4 +56,8 @@ test('trusted workflow binds artifact PR through source workflow merge SHA witho
   assert.doesNotMatch(finalize, /pull_requests\[0\]/u);
   assert.match(finalize, /--source-head "\$SOURCE_WORKFLOW_HEAD_SHA"/u);
   assert.match(finalize, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/u);
+  assert.match(analysis, /BOOTSTRAP_BASE_SHA: 926cc2053115bc358979049499964260d0b77419/u);
+  assert.match(analysis, /grep -Fq "if \(rest\[0\] === 'analyze'\)"/u);
+  assert.match(analysis, /Trusted base missing pr-gate analyze outside pinned bootstrap commit/u);
+  assert.equal((analysis.match(/if: steps\.trusted_gate\.outputs\.available == 'true'/gu) ?? []).length, 5);
 });

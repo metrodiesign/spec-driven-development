@@ -56,6 +56,7 @@ static, security, trace, audit และ desktop/mobile browser smoke ผ่า�
 - Every run pins exact current PR head; stale SHA, missing object or provenance mismatch fail closed
 - Stale direct run creates a durable replacement run for current SHA; trusted workflow path records replacement supplied by `pull_request synchronize`
 - Privileged finalize workflow consumes verified artifact metadata and trusted GitHub API state; it does not checkout PR code
+- Initial rollout uses a one-time analysis exemption pinned to trusted base `926cc2053115bc358979049499964260d0b77419`; any other base missing the handler fails closed
 - Deterministic checks form mandatory floor; reviewer panel and Judge cannot weaken it
 - Node checks copy dependency bytes only from trusted base checkout and include ignored dependency roots in frozen command input; network and install remain denied
 - Four reviewer slots receive identical context and anonymous labels; Judge consumes structured findings only
@@ -87,6 +88,7 @@ static, security, trace, audit และ desktop/mobile browser smoke ผ่า�
 - `pnpm --filter console-web test` -> 77 passed, 0 failed
 - `pnpm --filter console-web typecheck && pnpm --filter console-web build` -> passed
 - `ruby -e "require 'yaml'; ARGV.each { |path| YAML.load_file(path, aliases: true) }" .github/workflows/pr-quality-analysis.yml .github/workflows/pr-quality-finalize.yml` -> passed
+- PR #138 bootstrap regression: workflow test, backend typecheck, lint และ pinned-base simulation -> passed
 - guard regression tests 14/14, lessons coverage และ spec-trace active/archive specs 20/20 -> passed
 - `pnpm test` -> exit `0`; Web 77, Core 612, AAL 192, Adapters 50 และ Backend 436 passed; Core มี 10 capability-gated skips
 - `pnpm audit --prod --audit-level high` -> exit `0`; 1 low และ 4 moderate findings ต่ำกว่า blocking threshold

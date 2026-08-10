@@ -34,6 +34,7 @@
        - typecheck: `pnpm --filter console-backend typecheck` -> passed
        - focused test: `(cd console/backend && node --test --test-reporter=dot src/pr-gate/*.test.ts src/app-pr-gate.test.ts src/pr-gate-cli.test.ts)` -> 39 passed, 0 failed
        - workflow syntax: `ruby -e "require 'yaml'; ARGV.each { |path| YAML.load_file(path, aliases: true) }" .github/workflows/pr-quality-analysis.yml .github/workflows/pr-quality-finalize.yml` -> passed
+       - bootstrap: analysis workflow exemption ถูก pin กับ trusted base `926cc2053115bc358979049499964260d0b77419` เท่านั้น; base อื่นที่ handler หาย fail closed และ regression test passed
        - governance: timeout-aligned policy snapshot `8390f44d0c38e6d314674a03c2acc8ca06f3499b0bbd4fc63b0ba2c2e0c00a5e` approved by human event `gov-e5b83542c43caf5f`; runtime approval check passed
        - viewports: n/a — manager and GitHub trust boundary
        - deviations: none; full backend suite passed on final unrestricted host run
