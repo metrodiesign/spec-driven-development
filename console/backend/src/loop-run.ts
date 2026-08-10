@@ -876,10 +876,13 @@ export async function runSupervisedLoop(opts: {
     // REQ-3.5/3.6 + design.md "kill switch covers interruption": kill must end the
     // deploy-approval wait AND the post-EXPANDED window wait, not just the task-approval
     // wait (Phase-4 review gap — onKill previously only resolved pendingApprovalResolve).
-    const deployKillResolvers: Array<() => void> = [];
+    const deployWindowResolvers: Array<() => void> = [];
+    const releaseDeployWindow = (): void => {
+      for (const resolve of deployWindowResolvers.splice(0)) resolve();
+    };
     const killDeployWaits = (): void => {
       pendingDeployResolve?.('killed');
-      for (const r of deployKillResolvers.splice(0)) r();
+      releaseDeployWindow();
     };
     const deployState = (): DeployState | null => {
       if (opts.contract.deploy === undefined) return null;
@@ -928,6 +931,7 @@ export async function runSupervisedLoop(opts: {
           payload: { state: 'ESCALATED', trigger: 'rollback_failed', simulation: true, detail: (err as Error).message },
         });
       });
+      releaseDeployWindow();
       return { ok: true };
     };
 
@@ -1463,7 +1467,7 @@ export async function runSupervisedLoop(opts: {
             // No production wait exists anywhere in core yet (task 2 finding) — real here,
             // tests just configure small interval_ms/expandedWindowMs.
             // .unref() the wait timer so a kill during the EXPANDED window (which wins
-            // the race below via deployKillResolvers) does not leave a live ~10-min
+            // the race below via deployWindowRelease) does not leave a live ~10-min
             // timer pinning the CLI process alive after the server closes (PR #50
             // review). The Human Plane server keeps the loop alive while the stage runs,
             // so an unref'd inter-probe wait still fires normally.
@@ -1481,6 +1485,9 @@ export async function runSupervisedLoop(opts: {
                 if (!requireTaskLease(`deploy:${boundary}`)) throw new LeaseFenceError('lease_lost');
               },
             };
+            // Register before runDeployStage can publish EXPANDED so a rollback
+            // accepted immediately after that event cannot miss this wake-up.
+            const deployWindowRelease = new Promise<void>((resolve) => { deployWindowResolvers.push(resolve); });
             let deployOutcome: Awaited<ReturnType<typeof runDeployStage>>;
             try {
               deployOutcome = await runDeployStage(deployDeps);
@@ -1496,7 +1503,7 @@ export async function runSupervisedLoop(opts: {
               // (design.md "kill switch covers interruption").
               await Promise.race([
                 deployClock.wait(expandedWindowMs),
-                new Promise<void>((resolve) => { deployKillResolvers.push(resolve); }),
+                deployWindowRelease,
               ]);
               // A manual rollback triggered during the window must finish before the
               // server (and this run) tears down — REQ-6.12's "remain open" scope.

@@ -976,15 +976,20 @@ test(
         persistDir,
         autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
         approval: { timeoutMs: 5000 },
-        deploy: { expandedWindowMs: 50 },
+        deploy: { expandedWindowMs: 60_000 },
       });
       const { url, token } = await waitForDiscovery(persistDir);
       const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
       assert.deepEqual(pending.approval?.provenance, PROVENANCE);
 
       await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      await waitForDeployState(url, token, 'EXPANDED');
+      const killStartedAt = Date.now();
+      const kill = await fetchRetry(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+      assert.equal(kill.status, 200);
       const out = await resultPromise;
       assert.equal(out.finalState, 'COMPLETED');
+      assert.ok(Date.now() - killStartedAt < 30_000, 'kill releases the remaining expanded window');
     } finally {
       rmSync(persistDir, { recursive: true, force: true });
     }
@@ -1060,7 +1065,7 @@ test(
     const audited: Record<string, unknown>[] = [];
     try {
       const resultPromise = runSyntheticLoop({
-        contract: L1_CONTRACT_DEPLOY,
+        contract: { ...L1_CONTRACT, deploy: { ...DEPLOY_OK, rollbackCmd: 'sleep 1' } },
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
         persistDir,
@@ -1076,6 +1081,11 @@ test(
 
       const status = await rollbackDeploy(url, token);
       assert.equal(status, 200);
+      assert.equal(
+        (await fetchDeploy(url, token)).state,
+        'ROLLING_BACK',
+        'Human Plane stays open while the accepted rollback command is running',
+      );
 
       const out = await resultPromise;
       assert.equal(out.finalState, 'COMPLETED', 'a deploy rollback never touches the task finalState');
@@ -1089,6 +1099,7 @@ test(
         );
         assert.equal(states.find((e) => e.payload['state'] === 'ROLLING_BACK')?.payload['trigger'], 'manual_rollback');
         assert.ok(audited.some((e) => e['event'] === 'deploy_manual_rollback'), 'REQ-6.10: manual rollback audited');
+        assert.equal(log.all({ type: 'DEPLOY_WINDOW_CLOSED' }).length, 1, 'window closes after rollback settles');
       } finally {
         log.close();
       }
@@ -1110,7 +1121,7 @@ test(
         persistDir,
         autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
         approval: { timeoutMs: 5000 },
-        deploy: { expandedWindowMs: 500 },
+        deploy: { expandedWindowMs: 60_000 },
       });
       const { url, token } = await waitForDiscovery(persistDir);
       const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
@@ -1118,8 +1129,23 @@ test(
       await waitForDeployState(url, token, 'EXPANDED');
       assert.equal(await rollbackDeploy(url, token), 200);
 
-      // The run must RESOLVE (not reject on a rejecting manualRollback) and close the window.
-      const out = await resultPromise;
+      // Accepted rollback ends the remaining window. A kill only cleans up the RED
+      // path so this regression never leaves the Human Plane server running.
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      const settled = await Promise.race([
+        resultPromise.then((out) => ({ out })),
+        new Promise<null>((resolve) => {
+          deadlineTimer = setTimeout(() => resolve(null), 30_000);
+        }),
+      ]);
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+      if (settled === null) {
+        const kill = await fetchRetry(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+        assert.equal(kill.status, 200);
+        await resultPromise;
+        assert.fail('accepted manual rollback did not end the remaining expanded window');
+      }
+      const { out } = settled;
       assert.equal(out.finalState, 'COMPLETED', 'a failed deploy rollback never touches the task finalState');
 
       const log = openEventLog(join(persistDir, 'events.db'), clock);
