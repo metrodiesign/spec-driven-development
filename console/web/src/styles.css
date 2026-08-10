@@ -47,6 +47,24 @@ a {
   color: var(--color-link);
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--color-link);
+  outline-offset: 2px;
+}
+
+.prq-status {
+  border-left: 0.35rem solid var(--color-border-strong);
+  padding-left: 0.5rem;
+}
+
+.prq-success { border-color: var(--color-success); }
+.prq-warning { border-color: var(--color-warning); }
+.prq-danger { border-color: var(--color-danger); }
+
 .app-header {
   display: flex;
   align-items: center;

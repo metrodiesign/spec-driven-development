@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.platform/schemas/pr-quality-result.schema.json",
+  "title": "Universal PR Quality Decision Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runId", "snapshot", "decision", "reasons", "profiles", "risk", "analysisCoverage", "reviewerCoverage", "deterministicReportRef", "judgedFindingRefs", "consensusRef", "policyRef", "costUnits", "durationMs", "reportRef"],
+  "properties": {
+    "runId": { "type": "string", "minLength": 1 },
+    "snapshot": { "$ref": "pr-review.schema.json#/$defs/snapshot" },
+    "decision": { "enum": ["PASS", "PASS_WITH_WARNINGS", "HUMAN_REVIEW_REQUIRED", "FAIL", "INFRASTRUCTURE_FAILURE"] },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "profiles": { "type": "array", "items": { "type": "string" } },
+    "risk": { "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+    "analysisCoverage": { "enum": ["FULL", "PARTIAL", "LIMITED"] },
+    "reviewerCoverage": { "enum": ["FULL", "DEGRADED", "INSUFFICIENT", "INFRASTRUCTURE_FAILURE"] },
+    "deterministicReportRef": { "$ref": "#/$defs/ref" },
+    "judgedFindingRefs": { "type": "array", "items": { "$ref": "#/$defs/ref" } },
+    "consensusRef": { "$ref": "#/$defs/ref" },
+    "policyRef": { "$ref": "#/$defs/ref" },
+    "costUnits": { "type": "number", "minimum": 0 },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "reportRef": { "$ref": "#/$defs/ref" }
+  },
+  "$defs": { "ref": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } }
+}

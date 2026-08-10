@@ -191,6 +191,23 @@ test('an ExecFn that throws is classified into a typed AdapterError (REQ-2.7)', 
   } finally { h.cleanup(); }
 });
 
+test('AbortSignal and timeout are forwarded to live ExecFn seam', async () => {
+  let seen: { signal?: AbortSignal; timeoutMs?: number } = {};
+  const h = harness((input) => {
+    seen = {
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    };
+    return fakeExec()(input);
+  });
+  const controller = new AbortController();
+  try {
+    await h.adapter.send(req('controlled'), { signal: controller.signal, timeoutMs: 456 });
+    assert.equal(seen.signal, controller.signal);
+    assert.equal(seen.timeoutMs, 456);
+  } finally { h.cleanup(); }
+});
+
 test('codex adapter exposes no healthProbe — breaker is error-rate only (REQ-2.10)', () => {
   const h = harness(fakeExec());
   try {

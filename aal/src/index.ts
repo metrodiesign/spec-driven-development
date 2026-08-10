@@ -64,6 +64,16 @@ export {
   type ProbeContext,
   type P7Result,
 } from './conformance/harness.ts';
+export {
+  JUDGE_OUTPUT_SCHEMA,
+  REVIEWER_OUTPUT_SCHEMA,
+  runBlindReviewPanel,
+  runEvidenceJudge,
+  type BlindPanelInput,
+  type EvidenceJudgeInput,
+  type EvidenceJudgeOutcome,
+  type ReviewSlot,
+} from './pr-review/panel.ts';
 // Fusion plane (Ring 1, §7.5; REQ-8/9/10). Pure orchestration — executes nothing;
 // candidate gate evidence arrives through the CandidateEvidenceRunner port (INV-1/2).
 export {

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 import { AdapterError } from 'aal';
 import { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';
-import type { AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
+import type { AdapterInterface, AgentCallControl, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
 import type { Action } from 'core';
 
 /** Default hard kill timeout for the live spawn (SPIKE-6 #1) — recorded calibration knob (AZ-6). */
@@ -44,6 +44,8 @@ export type ExecFn = (args: {
   schema: Record<string, unknown>;
   cwd: string;
   model?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) => Promise<CodexExecResult>;
 
 export interface CodexAdapterOptions {
@@ -113,11 +115,12 @@ export function createCodexAdapter(opts: CodexAdapterOptions): AdapterInterface 
       };
     },
 
-    async send(req: AgentRequest): Promise<AgentResponse> {
+    async send(req: AgentRequest, control?: AgentCallControl): Promise<AgentResponse> {
       // Durable replay (survives restart): a repeated requestId is served from disk so a
       // crash-resume retry cannot double-burn quota; ExecFn is NOT invoked (REQ-2.4/P8).
       const rfile = replayPath(req.requestId);
       if (existsSync(rfile)) return JSON.parse(readFileSync(rfile, 'utf8')) as AgentResponse;
+      if (control?.signal.aborted) throw new AdapterError('cancelled', 'provider call cancelled');
 
       // `--output-schema` already constrains the final message, so fenceGuard=false (REQ-1.3).
       let result: CodexExecResult;
@@ -127,6 +130,7 @@ export function createCodexAdapter(opts: CodexAdapterOptions): AdapterInterface 
           schema: req.outputSchema,
           cwd: opts.cwd,
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(control !== undefined ? { signal: control.signal, timeoutMs: control.timeoutMs } : {}),
         });
       } catch (err) {
         // Transport-level failure (spawn/timeout) — typed, never self-retried (REQ-2.7, INV-5).

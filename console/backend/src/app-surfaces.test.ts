@@ -206,7 +206,7 @@ test('F-Skill: SKILL.md edit + enabledPlugins toggle through writeSafe (REQ-14.2
 
 // --- F-Sys (REQ-15) ---
 
-test('F-Sys: doctor degraded card never 500; stats from node:os (REQ-15.1/15.2)', async () => {
+test('F-Sys: doctor degraded card never 500 (REQ-15.1, B2/B3)', async () => {
   const fix = makeHome();
   const degradedApp = buildApp(depsFor(fix, { doctorCapture: async () => { throw new Error('ENOENT'); } }));
   const okApp = buildApp(depsFor(fix, { doctorCapture: async () => 'all good' }));
@@ -217,11 +217,6 @@ test('F-Sys: doctor degraded card never 500; stats from node:os (REQ-15.1/15.2)'
 
     const ok = await okApp.inject({ method: 'GET', url: '/api/system/doctor', headers: HOST });
     assert.equal(ok.json().available, true);
-
-    const stats = await okApp.inject({ method: 'GET', url: '/api/system/stats', headers: HOST });
-    assert.equal(stats.statusCode, 200);
-    assert.equal(typeof stats.json().cpus, 'number');
-    assert.equal(typeof stats.json().totalMem, 'number');
   } finally {
     await degradedApp.close();
     await okApp.close();
@@ -229,7 +224,65 @@ test('F-Sys: doctor degraded card never 500; stats from node:os (REQ-15.1/15.2)'
   }
 });
 
-test('F-Sys: retention prune is two-step + refuses under a live PTY + audits (REQ-15.3/15.4, REQ-18.3)', async () => {
+test('F-Sys: stats preserve healthy metrics and degrade only denied uptime (REQ-15.2, F1-F5/B1/B5)', async () => {
+  const fix = makeHome();
+  const healthyStats = {
+    platform: () => 'darwin',
+    arch: () => 'arm64',
+    cpus: () => 10,
+    totalMem: () => 32 * 1024 ** 3,
+    freeMem: () => 8 * 1024 ** 3,
+    loadAvg: () => [1.5, 1, 1],
+    uptimeS: () => 7_200,
+  };
+  const healthyApp = buildApp(depsFor(fix, { hostStats: healthyStats }));
+  const degradedApp = buildApp(depsFor(fix, {
+    hostStats: {
+      ...healthyStats,
+      uptimeS: () => { throw new Error('uv_uptime returned EPERM'); },
+    },
+  }));
+  try {
+    const healthy = await healthyApp.inject({ method: 'GET', url: '/api/system/stats', headers: HOST });
+    assert.equal(healthy.statusCode, 200);
+    assert.deepEqual(healthy.json(), {
+      platform: 'darwin',
+      arch: 'arm64',
+      cpus: 10,
+      totalMem: 32 * 1024 ** 3,
+      freeMem: 8 * 1024 ** 3,
+      loadAvg: [1.5, 1, 1],
+      uptimeS: 7_200,
+    });
+
+    const degraded = await degradedApp.inject({ method: 'GET', url: '/api/system/stats', headers: HOST });
+    assert.equal(degraded.statusCode, 200);
+    assert.deepEqual(degraded.json(), {
+      platform: 'darwin',
+      arch: 'arm64',
+      cpus: 10,
+      totalMem: 32 * 1024 ** 3,
+      freeMem: 8 * 1024 ** 3,
+      loadAvg: [1.5, 1, 1],
+      uptimeS: null,
+      degraded: true,
+      unavailableMetrics: ['uptimeS'],
+    });
+
+    const forbidden = await healthyApp.inject({
+      method: 'GET',
+      url: '/api/system/stats',
+      headers: { host: 'example.invalid' },
+    });
+    assert.equal(forbidden.statusCode, 403);
+  } finally {
+    await healthyApp.close();
+    await degradedApp.close();
+    fix.cleanup();
+  }
+});
+
+test('F-Sys: retention prune is two-step + refuses under a live PTY + audits (REQ-15.3/15.4, REQ-18.3, B6/B7/B8)', async () => {
   const fix = makeHome();
   // Seed an OLD transcript the prune should target.
   const pdir = join(fix.homeDir, '.claude', 'projects', 'proj');

@@ -10,7 +10,8 @@ import { dirname, join } from 'node:path';
 
 import { AdapterError } from 'aal';
 import { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';
-import type { AdapterHealth, AdapterInterface, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
+import { linkCallControl, providerEnvironment } from './control.ts';
+import type { AdapterHealth, AdapterInterface, AgentCallControl, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
 import type { Action } from 'core';
 
 // Re-export the shared wire helpers so existing importers (and tests) keep resolving
@@ -35,6 +36,8 @@ export type QueryFn = (args: {
     systemPrompt: string;
     cwd: string;
     maxTurns?: number;
+    abortController?: AbortController;
+    env?: Record<string, string>;
   };
 }) => AsyncIterable<SdkMessage>;
 
@@ -153,7 +156,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
       };
     },
 
-    async send(req: AgentRequest): Promise<AgentResponse> {
+    async send(req: AgentRequest, control?: AgentCallControl): Promise<AgentResponse> {
       // Durable replay (survives restart): a repeated requestId is served from disk
       // so a crash-resume retry cannot double-burn quota (REQ-4.9/P8).
       const rfile = replayPath(req.requestId);
@@ -164,6 +167,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
       let sessionId: string | null = null;
       let inTok = 0;
       let outTok = 0;
+      const linked = linkCallControl(control);
       try {
         for await (const msg of opts.query({
           prompt: buildProposePrompt(req, { fenceGuard: true }),
@@ -174,6 +178,8 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
             systemPrompt: opts.systemPrompt,
             cwd: opts.cwd,
             maxTurns: 4,
+            ...(linked.controller !== undefined ? { abortController: linked.controller } : {}),
+            env: providerEnvironment(process.env, ['HOME', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY']),
           },
         })) {
           if (msg.session_id !== undefined) sessionId = msg.session_id;
@@ -189,7 +195,11 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
           }
         }
       } catch (err) {
+        const controlled = linked.reason();
+        if (controlled !== null) throw new AdapterError(controlled, controlled === 'timed_out' ? 'provider call timed out' : 'provider call cancelled');
         throw new AdapterError(classifyAdapterError(err), err instanceof Error ? err.message : String(err));
+      } finally {
+        linked.dispose();
       }
 
       let structuredResult: unknown;

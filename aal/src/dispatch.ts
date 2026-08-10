@@ -6,7 +6,7 @@
 // configured bucket is not rate-limited (unlimited).
 
 import { AdapterError } from './protocol.ts';
-import type { AdapterInterface, AgentRequest, AgentResponse } from './protocol.ts';
+import type { AdapterInterface, AgentCallControl, AgentRequest, AgentResponse } from './protocol.ts';
 import type { TokenBucket } from './ratelimit.ts';
 
 export interface DispatcherOptions {
@@ -29,6 +29,7 @@ export interface DispatcherOptions {
 export interface DispatchItem {
   adapter: AdapterInterface;
   request: AgentRequest;
+  control?: AgentCallControl;
 }
 
 export interface DispatchResult {
@@ -61,7 +62,7 @@ export function createDispatcher(opts: DispatcherOptions): {
           await sleep(waitMs);
         }
         try {
-          const response = await item.adapter.send(item.request);
+          const response = await item.adapter.send(item.request, item.control);
           return { item, outcome: { ok: true, response } };
         } catch (err) {
           // Contract: adapters throw only AdapterError (INV-5). Wrap anything else so

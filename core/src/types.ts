@@ -223,7 +223,20 @@ export type EventType =
   | 'TASK_GRAPH_FROZEN'
   | 'TASK_GRAPH_REJECTED'
   // P0-08 operator golden provenance (append-only; REQ-8.11).
-  | 'GOLDEN_FIXTURE_PROVISIONED';
+  | 'GOLDEN_FIXTURE_PROVISIONED'
+  // PR quality gate additions (append-only; event payloads contain refs/hashes only).
+  | 'PR_GATE_STATE'
+  | 'PR_SOURCE_PINNED'
+  | 'PR_SNAPSHOT_ATTESTED'
+  | 'PR_CLASSIFIED'
+  | 'PR_CHECK_RESULT'
+  | 'PR_REVIEW_RESULT'
+  | 'PR_JUDGE_RESULT'
+  | 'PR_GATE_DECIDED'
+  | 'PR_HUMAN_DECISION'
+  | 'PR_GATE_REPORTED'
+  | 'PR_REPLACEMENT_ENQUEUED'
+  | 'PR_RUN_CANCELLED';
 
 /**
  * Shared context contracts (spec §9.4). Core owns these because core/context

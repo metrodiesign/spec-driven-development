@@ -58,8 +58,9 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
 
 4. **design.md.** เขียน architecture: components + responsibilities, sequence diagrams (Mermaid),
    data models & interfaces, technology decisions (prefer `CODING_STANDARDS.md`), error handling
-   strategy, testing strategy (map -> REQ IDs), และ `## Requirement Traceability` table (design
-   element -> REQ-x.y). เมื่อ design แตะ CORE domain logic (core algorithm / validation ใน
+   strategy, testing strategy (map -> REQ IDs), และ `## Requirement Traceability` table ที่มี
+   column `Design element | REQ | Section` โดยทุกค่า `Section` ต้องตรงกับ real `##` heading
+   ใน design เดียวกันแบบ exact match. เมื่อ design แตะ CORE domain logic (core algorithm / validation ใน
    the project test directory, co-located กับ logic under test) ให้ adopt
    [../roles/spec-architect.md](../roles/spec-architect.md) (mode=critique) เป็น fresh-context
    reviewer — apply หรือ rebut ทุก finding ก่อน STOP.

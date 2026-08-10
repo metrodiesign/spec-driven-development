@@ -79,7 +79,11 @@ export type AdapterErrorKind =
   | 'quota_limited'
   | 'auth_unavailable'
   | 'transport'
-  | 'invalid_response';
+  | 'invalid_response'
+  | 'timed_out'
+  | 'cancelled'
+  | 'context_limited'
+  | 'unavailable';
 
 export class AdapterError extends Error {
   readonly kind: AdapterErrorKind;
@@ -104,7 +108,12 @@ export interface AdapterHealth {
 export interface AdapterInterface {
   manifest(): CapabilityManifest;
   /** Sends one request. Throws AdapterError (typed) — NEVER retries itself (INV-5). */
-  send(req: AgentRequest): Promise<AgentResponse>;
+  send(req: AgentRequest, control?: AgentCallControl): Promise<AgentResponse>;
+}
+
+export interface AgentCallControl {
+  signal: AbortSignal;
+  timeoutMs: number;
 }
 
 /** Conformance probe ids that are pass/fail (P7 is a score, tracked separately). */

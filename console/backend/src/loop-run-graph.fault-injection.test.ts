@@ -20,13 +20,18 @@ import { FakeAdapter, type AdapterInterface, type AgentRequest, type AgentRespon
 import { openEventLog, type TaskContract } from 'core';
 import type { Action } from 'core/types';
 
+import { syntheticLoopSandbox } from '../test/helpers/synthetic-loop-sandbox.ts';
 import { runSupervisedLoop } from './loop-run.ts';
 
 const clock = { now: () => 1_000_000 };
 
 // Explicit test-only synthetic golden seam; operational callers pass operator bytes.
 const runSyntheticLoop = (opts: Parameters<typeof runSupervisedLoop>[0]) =>
-  runSupervisedLoop({ ...opts, syntheticGoldenFixtureForTests: true });
+  runSupervisedLoop({
+    ...opts,
+    syntheticGoldenFixtureForTests: true,
+    syntheticSandboxForTests: syntheticLoopSandbox,
+  });
 
 /** A contract whose ACs a graph can split one per task; all golden, risk L2. */
 function contractOf(acIds: string[]): TaskContract {

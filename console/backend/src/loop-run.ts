@@ -533,7 +533,12 @@ export async function runSupervisedLoop(opts: {
   requireOperatorGoldenFixture?: boolean;
   /** Explicit test-only seam; never set by console/CLI production callers. */
   syntheticGoldenFixtureForTests?: boolean;
+  /** Explicit test-only command sandbox; valid only with syntheticGoldenFixtureForTests. */
+  syntheticSandboxForTests?: NonNullable<Parameters<typeof createExecutor>[0]['sandbox']>;
 }): Promise<LoopRunResult> {
+  if (opts.syntheticSandboxForTests !== undefined && opts.syntheticGoldenFixtureForTests !== true) {
+    throw new Error('synthetic_sandbox_requires_synthetic_golden_fixture');
+  }
   // Operational composition must name immutable operator bytes before any other
   // planning/setup path can run. Only the explicit test seam may omit this input.
   if (opts.syntheticGoldenFixtureForTests !== true && opts.operatorGoldenFixtureDir === undefined) {
@@ -1152,6 +1157,9 @@ export async function runSupervisedLoop(opts: {
           ? {}
           : { offlineDependencyPolicy: opts.offlineDependencyPolicy }),
         ...(opts.toolHandlers !== undefined ? { toolHandlers: opts.toolHandlers } : {}),
+        ...(opts.syntheticSandboxForTests === undefined
+          ? {}
+          : { sandbox: opts.syntheticSandboxForTests }),
         redArtifacts,
         fence: () => taskLease.claim,
       });
@@ -1171,6 +1179,9 @@ export async function runSupervisedLoop(opts: {
           evidence,
           reportIntegrity,
           clock,
+          ...(opts.syntheticSandboxForTests === undefined
+            ? {}
+            : { sandbox: opts.syntheticSandboxForTests }),
           fence: () => taskLease.claim,
         }),
         log,
@@ -1249,6 +1260,9 @@ export async function runSupervisedLoop(opts: {
           evidence,
         reportIntegrity,
         clock,
+        ...(opts.syntheticSandboxForTests === undefined
+          ? {}
+          : { sandbox: opts.syntheticSandboxForTests }),
         assertOwnership: (boundary) => {
           if (!requireTaskLease(`merge:${boundary}`)) throw new Error('lease_lost');
         },
@@ -1347,6 +1361,9 @@ export async function runSupervisedLoop(opts: {
                 evidence,
                 reportIntegrity,
                 clock,
+                ...(opts.syntheticSandboxForTests === undefined
+                  ? {}
+                  : { sandbox: opts.syntheticSandboxForTests }),
                 assertOwnership: (boundary) => {
                   if (!requireTaskLease(`merge:${boundary}`)) throw new Error('lease_lost');
                 },

@@ -95,6 +95,16 @@ canary token ต้องถูกเรียกครั้งเดียว�
 - ยังไม่ทำ byte cap: เพดานต่อไฟล์ 8,000 bytes + COMPRESS มีอยู่แล้ว เพดานรวมที่รู้ตัวคือ
   20 × 8,000 bytes; จุดตัดที่ต้องกลับมาเพิ่มคือเห็น `stats.bytes` เกิน 32 KB จริง
 
+## เอกสารที่ต้องแก้ตามกัน
+
+พฤติกรรมใหม่เปลี่ยนสัญญาเดิม จึงต้องแก้ artifact เหล่านี้ใน change เดียวกัน:
+
+- `unified-platform-spec.md` §9.4, version banner และ §17 changelog ต้องประกาศ seed set
+  ต่อรอบกับ supersession ของ Phase-1 REQ-7.3.
+- `requirements.md` ต้องเก็บ supersession block และผลต่อ `contextWaste` ไว้ถาวร.
+- `.ai/specs/archive/platform-phase1/design.md` กับ doc comment ของ
+  `core/src/context/builder.ts` ต้องเลิกอธิบาย input set เดิมที่ไม่จริงแล้ว.
+
 ## Containment ที่ขอบการอ่าน (เพิ่มหลัง audit)
 
 ด่าน `normalizeWorktreeRelativePath` ที่ฝั่ง caller กันได้เฉพาะ path ที่ role ขอตรง ๆ
@@ -189,26 +199,26 @@ block ไม่ใช่ redact — การใส่ตัวอย่าง�
 
 ## Requirement Traceability
 
-| เกณฑ์ | ลงที่ไหนในดีไซน์ |
-|---|---|
-| 1.1 | กลไก — seed set = `seedPaths` ∪ accumulated ส่งผ่าน `buildContext` ทางเดียว ไม่มี post-build append |
-| 1.2 | กลไก — ลูกศร `B->>WT` ทุกรอบ ไม่มีชั้น cache ในดีไซน์เลย |
-| 1.3 | กลไก — `normalizeWorktreeRelativePath` เป็นด่านแรกก่อน SEED |
-| 1.4 | ขอบเขตที่บังคับด้วย cap — 20 path ตัดเก่าสุด `seedPaths` ไม่ถูกตัด |
-| 1.5 | ผลกระทบที่ตรวจแล้วว่าไม่มี — allowlist เป็นยูเนียนชุดเดิม |
-| 2.1 | กลไก — GOVERN + MARK อยู่ในเส้น `buildContext` เดิม ไม่มีทางลัด |
-| 2.2 | การจัดการ secret สองทาง — สาขา `seedPaths` |
-| 2.3 | การจัดการ secret สองทาง — สาขา accumulated + ย่อหน้า bounded drain |
-| 2.4 | การจัดการ secret สองทาง — canary ใบเดียวต่อรอบ |
-| 2.5 | การแยกสาขา secret ต้องบังคับสองชั้น — ตารางชั้น caller (seed ชนะ, fail closed) |
-| 2.6 | การแยกสาขา secret ต้องบังคับสองชั้น — ตารางชั้น builder + ย่อหน้าตัวตัดสินต้องเป็น membership |
-| 3.1 | Amendment §9.4 ปิดช่องว่างกับสัญญาที่ §6.1 ให้ไว้ (ดู `amendment.md`) |
-| 3.2 | Supersession block ใน `requirements.md` + §17 changelog |
-| 3.3 | banner บรรทัด 3 + §17 changelog entry + บรรทัดจุดเริ่ม |
-| 3.4 | แก้ `archive/platform-phase1/design.md:414` + doc comment `core/src/context/builder.ts:4-6` |
-| 3.5 | ผลข้างเคียงที่บันทึกไว้ — `contextWaste` สูงขึ้นโดยกลไก ไม่ใช่ regression |
-| 4.1 | Containment ที่ขอบการอ่าน — บังคับที่จุดอ่านจริง ไม่ใช่ต่อทางเข้า |
-| 4.2 | Containment ที่ขอบการอ่าน — idiom `realpathSync` + `O_NOFOLLOW` จาก `red-provenance.ts` |
-| 4.3 | Containment ที่ขอบการอ่าน — ข้าม path ที่ไม่ผ่านแบบเดียวกับไฟล์ที่อ่านไม่ได้ ไม่ล้ม build |
-| 5.1 | Signal ของ piece ที่ถูกข้าม — ใช้รูป `lessonsBlocked`/`planBlocked` เดิมซ้ำ |
-| 5.2 | Signal ของ piece ที่ถูกข้าม — payload มีแค่ path/จำนวน/เหตุผล ห้ามมีเนื้อไฟล์ |
+| Design element | REQ | Section |
+|---|---|---|
+| seed set = `seedPaths` ∪ accumulated ผ่าน `buildContext` ทางเดียว | 1.1 | กลไก |
+| re-read จาก worktree ทุกรอบโดยไม่มี cache | 1.2 | กลไก |
+| normalize path ก่อนเข้า SEED | 1.3 | กลไก |
+| cap 20 path และไม่ตัด `seedPaths` | 1.4 | กลไก |
+| allowlist ยังเป็นยูเนียนชุดเดิม | 1.5 | ผลกระทบที่ตรวจแล้วว่าไม่มี |
+| GOVERN + MARK อยู่ในเส้น `buildContext` เดิม | 2.1 | กลไก |
+| secret จาก `seedPaths` ใช้สาขาเดิม | 2.2 | กลไก |
+| accumulated secret ใช้ bounded drain | 2.3 | กลไก |
+| canary ใบเดียวต่อรอบ | 2.4 | กลไก |
+| caller แยก seed กับ accumulated แบบ seed ชนะและ fail closed | 2.5 | กลไก |
+| builder แยก EXPAND ด้วย seed membership | 2.6 | กลไก |
+| amendment §9.4 ปิดช่องว่างกับสัญญา §6.1 | 3.1 | เอกสารที่ต้องแก้ตามกัน |
+| supersession block และ §17 changelog | 3.2 | เอกสารที่ต้องแก้ตามกัน |
+| version banner, changelog entry และบรรทัดจุดเริ่ม | 3.3 | เอกสารที่ต้องแก้ตามกัน |
+| Phase-1 design กับ builder doc comment ใช้คำอธิบายใหม่ | 3.4 | เอกสารที่ต้องแก้ตามกัน |
+| `contextWaste` สูงขึ้นโดยกลไก ไม่ใช่ regression | 3.5 | ผลข้างเคียงที่บันทึกไว้ |
+| containment บังคับที่จุดอ่านจริง | 4.1 | Containment ที่ขอบการอ่าน (เพิ่มหลัง audit) |
+| ใช้ `realpathSync` และ `O_NOFOLLOW` | 4.2 | Containment ที่ขอบการอ่าน (เพิ่มหลัง audit) |
+| ข้าม path ที่ไม่ผ่านโดยไม่ล้ม build | 4.3 | Containment ที่ขอบการอ่าน (เพิ่มหลัง audit) |
+| reuse signal แบบ `lessonsBlocked` และ `planBlocked` | 5.1 | Signal ของ piece ที่ถูกข้าม |
+| payload มี path, จำนวนและเหตุผลเท่านั้น | 5.2 | Signal ของ piece ที่ถูกข้าม |

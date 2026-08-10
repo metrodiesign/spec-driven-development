@@ -16,6 +16,7 @@ import { Sched } from './Sched.tsx';
 import { Issues } from './Issues.tsx';
 import { Chat } from './Chat.tsx';
 import { Login } from './Login.tsx';
+import { PrQuality } from './PrQuality.tsx';
 
 interface Status {
   disclaimer: string;
@@ -216,6 +217,8 @@ export function App() {
       <Sched />
 
       <Issues />
+
+      <PrQuality />
 
       <Surfaces project={selected} remote={auth.kind === 'data' ? auth.value.remote : true} />
 
