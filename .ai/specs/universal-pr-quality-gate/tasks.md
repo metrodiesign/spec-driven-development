@@ -58,7 +58,17 @@
        - audit: `pnpm audit --prod --audit-level high` -> exit `0`; 1 low and 4 moderate findings remain below the configured blocking threshold
        - viewports: local browser desktop/mobile smoke passed; no horizontal overflow or console errors
        - deviations: live four-provider conformance calls require operator credentials and were not run; injected transports and conformance boundaries remain hermetic
+- [x] 7. Production operations documentation — สร้าง canonical production runbook และปรับเอกสารผู้ใช้, shared protocol, security, package, calibration และ architecture ให้ตรงกับ CLI/API/workflow/trust/state contracts ล่าสุด
+     Satisfies: REQ-8, REQ-9, REQ-10, REQ-11. Depends on: 6. Verify: `scripts/spec-trace.sh universal-pr-quality-gate && pnpm typecheck && pnpm lint && pnpm test`.
+     Evidence:
+       - docs: custom Markdown check -> ไฟล์ Markdown ที่เปลี่ยน 29 ไฟล์มี H1 เดียว, heading hierarchy ถูกต้อง และ local links resolve ครบ
+       - trace: `scripts/spec-trace.sh universal-pr-quality-gate` -> 132/132 requirements covered; EARS lint passed
+       - security: `.ai/bin/check-secrets.sh --all` -> passed; manual high-risk token scan ของ untracked runbook -> no matches; `git diff --check` -> passed
+       - static gates: `pnpm typecheck && pnpm lint` -> passed across 6 workspace packages; ESLint reports no issues
+       - full test: `pnpm test` -> exit `0`; Web 77, Core 612, AAL 192, Adapters 50 และ Backend 436 passed; 0 failed; Core มี 10 capability-gated skips
+       - production audit: GitHub API ณ 2026-08-10 ยืนยัน repo เป็น public, default branch `develop`, rulesets 0, branch protection absent, self-hosted runners 0, Actions secrets 0 และ PR #138 analysis อยู่ใน exact bootstrap-skip path; workflow `uses:` ยังเป็น moving major tags
+       - deviations: ไม่ activate production runner/secrets เพราะยังไม่มี public-repo abuse control, immutable Action refs, finalize workflow บน default branch หรือ conformance records ของ Gemini/OpenCode; runtime ยังไม่มี built-in retention/prune
 
 ## Suggested execution batches
 
-รัน tasks 1–6 แบบ all-in-one เพราะแชร์ contracts, event state และ integration fixtures การแยก session เพิ่ม context reload และเสี่ยง wiring gap
+รัน tasks 1–7 แบบ all-in-one เพราะแชร์ contracts, event state, integration fixtures และ production contract references การแยก session เพิ่ม context reload และเสี่ยง wiring gap

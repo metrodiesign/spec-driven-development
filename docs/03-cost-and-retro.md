@@ -47,8 +47,8 @@ cost ต่อ session/task ที่เชื่อถือได้ดึง�
 
 ## 3.5 Promote บทเรียน
 
-- บทเรียนที่ **reusable + กันความผิดพลาดจริง** เท่านั้น -> เพิ่มใน `../.claude/rules/lessons.md`
-  (ไม่ใช่ CLAUDE.md)
+- บทเรียนที่ **reusable + กันความผิดพลาดจริง** เท่านั้น -> เพิ่มใน
+  `../.ai/shared/LESSONS.md` (single source ทุก harness)
 - บันทึกเต็มอยู่ใน `retrospectives/` — `lessons.md` เก็บแค่ที่ตกผลึกแล้ว, prune ของเก่าที่ stale
 - รูปแบบ: `**Pattern**: ... — **Why**: ...`
 

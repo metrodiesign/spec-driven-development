@@ -27,6 +27,11 @@ a phase's procedure means editing `.claude/skills/<phase>/SKILL.md`, once.
   bin/                 # harness-agnostic check engine (single source for all guards)
   agents/              # per-agent adapters (claude/ codex/ opencode/ pi/)
   templates/           # task-brief / plan / review / handoff / changelog templates
+  policies/            # governed execution/quality/security policies
+  schemas/             # durable contracts รวม PR review/Judge/result
+  governance/          # append-only policy proposal/approval events
+  calibration/         # live per-lineage conformance records/evidence
+  specs/               # approved feature specs + handoffs
 ```
 
 | Dir | One line |
@@ -37,9 +42,14 @@ a phase's procedure means editing `.claude/skills/<phase>/SKILL.md`, once.
 | `bin/` | `check-destructive.sh`, `check-bypass.sh`, `check-secrets.sh`, `gate-task.sh` (exit 2 = block) + `install.sh` |
 | `agents/` | One `AGENT.md` per harness explaining its read order and live hook/role wiring |
 | `templates/` | Fill-in-the-blank artifacts for briefs, plans, reviews, handoffs, changelog |
+| `policies/` | Runtime policy bytes ที่ hash/approve ผ่าน governance |
+| `schemas/` | JSON schemas สำหรับ durable machine-readable artifacts |
+| `governance/` | Proposal/approval log ที่ runtime fail closed เมื่อ policy drift |
+| `calibration/` | P1-P8 records/evidence ต่อ exact adapter lineage |
+| `specs/` | requirements/design/tasks/handoff ต่อ feature |
 
 **Skills standard** — the spec workflow ships once as Agent Skills under
-`/.agents/skills/spec-*/SKILL.md` (frontmatter `name` + `description`, markdown body).
+`.agents/skills/spec-*/SKILL.md` (frontmatter `name` + `description`, markdown body).
 This one set is auto-read by **Codex**, **OpenCode** (which also reads `.claude/skills/`)
 and **Pi**; the bodies route to the authoritative phase steps (`workflows/*` +
 `.claude/skills/spec-*`) and are never duplicated per harness. Claude reads the same
@@ -78,9 +88,10 @@ applicable in this setup. Wiring detail is in each `agents/<harness>/AGENT.md`.
 | Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/config.toml` `[hooks].PostToolUse` -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | floor-only (git pre-commit + CI) |
 | MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`) | native (`opencode.json` `mcp`) | n/a (no MCP host) |
 
-All native task-gate, guard, subagent and skill wiring routes to the same single
-source — `.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
-`.claude/skills/*` — so every harness enforces byte-for-byte identical rules.
+Native task-gate, guard, subagent and skill wiring routes to the shared sources —
+`.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
+`.claude/skills/*`. Enforcement timing/strength still follows the matrix; Pi and
+OpenCode post-write paths do not gain pre-tool hard blocking by sharing source.
 
 ## Golden rules
 
@@ -91,8 +102,8 @@ source — `.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
 
 ## SETUP (one time per clone)
 
-The framework is stack-agnostic — there is no `package.json`/`npm install` to hang a
-`prepare` hook on, so a human wires the Tier 1 local floor once per clone by running:
+Framework protocol ยัง stack-agnostic แต่ repository นี้มี pnpm Node workspaces. การติดตั้ง
+dependency ไม่ควรเปลี่ยน git config เงียบ จึงให้มนุษย์ wire Tier 1 local floor ครั้งเดียวต่อ clone:
 
 ```sh
 ./.ai/bin/install.sh        # sets core.hooksPath=.githooks + marks scripts executable
@@ -115,8 +126,8 @@ git config core.hooksPath .githooks
 This enables `pre-commit` (secret scan + a per-task, scope-aware Evidence check — a
 newly-marked `[x]` task must carry its own `Evidence:` line within its own block and
 cannot borrow a sibling's) and `pre-push` (blocks direct pushes to `main`/`develop` and
-force pushes). CI (`.github/workflows/ci.yml`) is the server-side floor that applies
-regardless.
+force pushes). CI (`.github/workflows/ci.yml`) reports matching events regardless of local
+hook setup; GitHub blocks merge only after a ruleset/branch protection requires exact checks.
 
 **Codex MCP (Codex users only)** — the browser-verify server is wired in
 `.codex/config.toml` under `[mcp_servers.chrome-devtools]` (confirm package/version).
@@ -125,3 +136,4 @@ OpenCode reads its MCP straight from `opencode.json`; Pi has no MCP host.
 ## Related top-level docs (not moved)
 
 - `../claude-code-spec-driven-workflow.md` — the long-form spec-driven workflow guide.
+- `../docs/08-pr-quality-gate-production.md` — production activation/operation ของ Universal PR Quality Gate.

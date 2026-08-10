@@ -54,7 +54,7 @@ CLAUDE_FLAGS="" scripts/pane-loop.sh <feature-name> 8
 
 ## 2.6 เกี่ยวข้อง
 
-- บทเรียน automation: `../.claude/rules/lessons.md` (headless buffer, prod-build verify,
+- บทเรียน automation: `../.ai/shared/LESSONS.md` (headless buffer, prod-build verify,
   resume-pane `cd` trap, rtk proxy ดู raw log)
 - cost ของ session ที่ loop สร้าง: ดู [03-cost-and-retro.md](03-cost-and-retro.md)
 - อีกครึ่งของ automation = ชั้น **hooks** (guardrail แบบ deterministic ที่ block/warn รอบ tool

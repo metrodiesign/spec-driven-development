@@ -162,9 +162,10 @@ Verify each is present and current before relying on it.
   be buffered, so a quiet run is not necessarily stuck — check disk state, not the
   terminal; untracked files are invisible to `git diff --stat`, so cross-check
   `git status`; no persistent memory beyond what is written to disk.
-- The durable enforcement floor is Tier 1 (committed git hooks via `core.hooksPath`
-  + CI), which gates every agent and human at commit and PR — the plugin is an
-  in-session convenience on top of it.
+- The durable floor is Tier 1 (committed git hooks via `core.hooksPath` + CI). Hooks
+  enforce configured clones; CI reports matching PRs. Server-side merge blocking also
+  needs a repository ruleset/branch protection requiring exact checks. The plugin is
+  an in-session convenience.
 
 > Verify the exact version/feature-flags of this agent before relying on hook/MCP
 > support.

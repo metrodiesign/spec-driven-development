@@ -50,8 +50,9 @@ relying on it.
   The root `AGENTS.md` is your entry point; do not duplicate its content here.
 - **Pre-tool guard** — Pi's **core has no pre-tool hook**. There is no automatic gate
   on shell commands. You therefore depend on two things:
-  1. The Tier 1 floor: committed git hooks (`core.hooksPath`) + CI gate every commit
-     and PR for every agent. This is the real, unbypassable enforcement for Pi.
+  1. The Tier 1 floor: committed git hooks (`core.hooksPath`) enforce configured clones;
+     CI reports matching PRs. Server-side merge blocking also needs a repository
+     ruleset/branch protection that requires the exact checks.
   2. Self-discipline: **before any potentially destructive bash command, run
      `../../bin/check-destructive.sh '<cmd>'` yourself** (and `../../bin/check-bypass.sh`
      when relevant) and obey a non-zero exit. The check engine accepts the command
@@ -72,10 +73,10 @@ relying on it.
   reviewer or investigator stance. This is the floor-only equivalent of Codex's
   `.codex/agents/*.toml` and OpenCode's `.opencode/agents/*` native subagents.
 - **Task-gate** — Pi has no PostToolUse / `file.edited` hook, so there is no native,
-  in-session task-gate. The gate is enforced by the Tier 1 floor only: the committed
-  `pre-commit` git hook + CI run the same typecheck / test / `Evidence:` checks that
-  `../../bin/gate-task.sh` carries, blocking a `[x]` flip that is not green at commit
-  and PR. Optionally run `../../bin/gate-task.sh` yourself before marking a task done.
+  in-session task-gate. Tier 1 checks the durable handoff: pre-commit validates the
+  staged `Evidence:` block and CI runs repository checks. GitHub blocks merge only
+  when rules require those checks. Run `../../bin/gate-task.sh` yourself before
+  marking a task done.
 - **MCP / browser-verify** — not applicable: Pi does not host MCP servers in this
   setup, so the chrome-devtools browser-verify recipe is not available natively.
   Verify UI changes manually or defer browser-verify to a Codex/OpenCode session.
@@ -133,9 +134,9 @@ relying on it.
   be buffered, so a quiet run is not necessarily stuck — check disk state, not the
   terminal; untracked files are invisible to `git diff --stat`, so cross-check
   `git status`; no persistent memory beyond what is written to disk.
-- The durable enforcement floor is Tier 1 (committed git hooks via `core.hooksPath`
-  + CI), which gates every agent and human at commit and PR. For Pi this is the
-  primary safety net, with the manual `.ai/bin/check-*` run as the in-session layer.
+- The durable floor is Tier 1 (committed git hooks via `core.hooksPath` + CI). Hooks
+  enforce configured clones; CI reports matching PRs; repository rules decide whether
+  failed/missing checks block merge. For Pi, manual `.ai/bin/check-*` remains in-session layer.
 
 > Verify the exact version/feature-flags of this agent before relying on hook/MCP
 > support.

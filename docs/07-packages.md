@@ -66,9 +66,9 @@ Ring 0 — deterministic core ที่เป็น "เจ้าของคว
 
 ### รับผิดชอบอะไร
 
-execution จริง (รันคำสั่ง/เขียนไฟล์ในsandbox), state + event log, gates, audit, evidence
-store, orchestrator loop, lease, security policy การ execute action ทุกชนิดเกิดที่นี่ **ที่เดียว**
-— ทั้ง `aal` และ `adapters` ห้ามรันอะไรเอง
+execution จริง (รันคำสั่ง/เขียนไฟล์ใน sandbox), state + event log, gates, audit, evidence
+store, orchestrator loop, lease, security policy และ vendor-neutral PR gate decision kernel.
+การ execute action ทุกชนิดเกิดที่นี่ **ที่เดียว** — ทั้ง `aal` และ `adapters` ห้ามรันอะไรเอง
 
 ข้อห้ามที่บังคับจริง: **`core/` (และ `aal/`) ห้ามปรากฏชื่อ vendor** — regex
 `claude|anthropic|codex|glm|openai` (case-insensitive ทั้งต้นไม้ รวม comment และ test) บังคับด้วย
@@ -77,12 +77,12 @@ store, orchestrator loop, lease, security policy การ execute action ทุ
 
 ### โครงภายใน
 
-`core/src/` แตกเป็นราว 19 โฟลเดอร์ตามหน้าที่ กลุ่มที่หนักสุดคือ `executor/` (`executor.ts`,
+`core/src/` แยกโฟลเดอร์ตามหน้าที่ กลุ่มที่หนักสุดคือ `executor/` (`executor.ts`,
 `command-executor.ts`, `mutation-path.ts`, `path-policy.ts`) และ `gates/` (`runner.ts`,
 `frozen-tree.ts`, `red-provenance.ts`, `golden.ts`) ที่เหลือได้แก่ `state/` (`event-log.ts`,
 `lease.ts`), `orchestrator/` (`loop.ts`, `machine.ts`), `context/` (`builder.ts`), `evidence/`,
 `security/`, `merge/`, `graph/`, `audit/`, `repair/`, `governance/`, `deploy/`, `budget/` และ
-ไฟล์ราก `types.ts`, `index.ts`, `ports.ts` รวม source (ไม่รวม test) ราว 16k บรรทัด
+`pr-gate/` (`types.ts`, `kernel.ts`, `checks.ts`) รวมถึงไฟล์ราก `types.ts`, `index.ts`, `ports.ts`
 
 ### entry point / public API
 
@@ -99,7 +99,8 @@ store, orchestrator loop, lease, security policy การ execute action ทุ
 `core/src/index.ts:1` ประกาศตัวเองว่า `// Ring 0 public surface (vendor-neutral — INV-7).`
 export หน้าบ้านสำคัญ: `createExecutor`, `runTaskLoop`, `createGateRunner`, `openEventLog`,
 `acquireTaskLease`/`createLeaseManager`, `createEvidenceStore`, `buildContext`,
-`createDefaultPathPolicy`
+`createDefaultPathPolicy` และ PR gate exports เช่น `mergeEffectivePolicy`, `decideQuality`,
+`transitionPrGateState`, `runPlannedChecks`
 
 ### ตัวอย่างจากโค้ดจริง
 
@@ -141,10 +142,9 @@ const result = await runTaskLoop({
 - **ไม่เหมาะ**: อะไรก็ตามที่ต้องรู้จักชื่อ vendor หรือ wire format — นั่นต้องอยู่ `adapters`;
   protocol/routing/breaker — อยู่ `aal`
 
-**test**: `*.test.ts` วางข้าง source (~47 ไฟล์ รวม `core/test/`) รันด้วย `pnpm --filter core test`
-(`node --test --test-reporter spec 'src/**/*.test.ts' 'test/**/*.test.ts'`) มี `test(...)` ราว 492 จุด
-pattern คือ `import assert from 'node:assert/strict'` + `{ test } from 'node:test'` แบบ flat
-**ไม่ใช้ `describe()` เลยสักครั้งใน `core/src`**
+**test**: `*.test.ts` วางข้าง source 49 ไฟล์รวม `core/test/`, รันด้วย
+`pnpm --filter core test`. Pattern คือ `node:test` + `node:assert/strict`; PR gate มี
+table-driven policy/decision/check tests ใน `core/src/pr-gate/`.
 
 ---
 
@@ -161,7 +161,8 @@ Agent Abstraction Layer — ชั้นกลางระหว่าง core �
 ### รับผิดชอบอะไร
 
 protocol envelope กลาง (`AgentRequest`/`AgentResponse`), capability manifest + fallback,
-conformance P1-P8, routing/breaker/rate-limit, provenance check, repair loop และ Fusion plane
+conformance P1-P8, routing/breaker/rate-limit, provenance check, repair loop, Fusion plane และ
+blind PR review panel + Evidence Judge
 เส้นแบ่งที่ต้องจำ:
 
 - **protocol / routing / breaker / repair / provenance อยู่ `aal`**
@@ -188,7 +189,8 @@ for ring in core aal; do
 ไฟล์ใหญ่สุดคือ `source.ts` (orchestrate หนึ่งรอบเต็ม: build context → route → send → repair →
 provenance → บันทึก event) ตามด้วย `router.ts`, `registry.ts`, `shadow.ts`, `breaker.ts`,
 `protocol.ts`, `repair.ts`, `dispatch.ts`, `ratelimit.ts`, `fake-adapter.ts`,
-`conformance/harness.ts` และโฟลเดอร์ `fusion/` (`run.ts`, `resolve.ts`, `profiles.ts`, `schema.ts`)
+`conformance/harness.ts`, `pr-review/panel.ts` และโฟลเดอร์ `fusion/` (`run.ts`, `resolve.ts`,
+`profiles.ts`, `schema.ts`)
 
 หมายเหตุ: `aal/src/fake-adapter.ts` เป็น **product code ไม่ใช่ test helper** — comment ที่
 `fake-adapter.ts:1-3` อธิบายว่า `the composition root's default non-live path uses it, so it must
@@ -211,6 +213,9 @@ export interface AdapterInterface {
   send(req: AgentRequest): Promise<AgentResponse>;
 }
 ```
+
+PR review public surface export `runBlindReviewPanel`, `runEvidenceJudge`,
+`REVIEWER_OUTPUT_SCHEMA` และ `JUDGE_OUTPUT_SCHEMA` จาก `aal/src/index.ts`.
 
 ### ตัวอย่างจากโค้ดจริง
 
@@ -244,11 +249,11 @@ return {
 ### เหมาะกับงานแบบไหน / ไม่เหมาะกับอะไร
 
 - **เหมาะ**: routing policy, breaker/rate-limit, conformance, provenance/repair, Fusion,
-  protocol envelope, capability manifest
+  blind reviewer/Judge orchestration, protocol envelope, capability manifest
 - **ไม่เหมาะ**: การรัน command/เขียนไฟล์ (→ `core`), การแปล wire หรือเรียก SDK (→ `adapters`),
   อะไรที่ต้องรู้ชื่อ vendor (ผิด INV-7)
 
-**test**: 15 ไฟล์ `*.test.ts` ข้าง source (`source.test.ts` ยาวกว่า implementation ของมันเอง)
+**test**: 16 ไฟล์ `*.test.ts` ข้าง source รวม `pr-review/panel.test.ts`
 รันด้วย `pnpm --filter aal test`
 
 ---
@@ -268,15 +273,17 @@ return {
 
 ### รับผิดชอบอะไร
 
-**แปล wire format เท่านั้น**: ประกอบ prompt, normalize action ที่โมเดลตอบกลับ, map error ของ
-transport เป็น typed `AdapterError`, เรียก SDK ของ vendor ห้ามมี business logic ห้าม import
+**แปล wire format/transport เท่านั้น**: ประกอบ prompt, normalize action/structured review,
+map error ของ transport เป็น typed `AdapterError`, เรียก SDK/CLI ของ vendor, scrub environment,
+link timeout/cancellation ห้ามมี business logic ห้าม import
 `core/executor` หรือ internal ของ `aal` เกิน public protocol types (INV-8) — และ **ห้าม
 execute อะไรเอง** (การรันเป็นของ core) ทุก action ที่ normalize ออกมาเป็นแค่ *ข้อเสนอ* ให้ core
 
 ### โครงภายใน
 
-`anthropic.ts` (adapter หลัก), `codex.ts`, `wire.ts` (helper ร่วม), `codex-live.ts`, `live.ts`
-และ `_template.ts` `wire.ts` รวม vocabulary กลาง: `buildProposePrompt`, `normalizeActions`
+`anthropic.ts`, `codex.ts`, `reasoning-cli.ts`, live transports (`live.ts`, `codex-live.ts`,
+`reasoning-cli-live.ts`), `control.ts`, `wire.ts` และ `_template.ts`. `wire.ts` รวม vocabulary กลาง:
+`buildProposePrompt`, `normalizeActions`
 (`wire.ts:22`), `classifyAdapterError`, `unfence` และ `protocolBlock()` (`wire.ts:55`) ที่สอน
 action DSL ให้โมเดล
 
@@ -291,9 +298,10 @@ stub path never touch this, so no quota is spent in tests` — live wiring ถ�
 
 ### entry point / public API
 
-`adapters/src/index.ts` เป็น public surface (ประกาศ `RING = 2`) และ export adapter ที่ register
-ได้จริง (`anthropic`, `codex`) — แต่ **ไม่** export `_template.ts` แต่ละ adapter implement
-`AdapterInterface` ของ `aal`
+`adapters/src/index.ts` เป็น public surface (ประกาศ `RING = 2`) และ export live adapter ที่ใช้จริง
+สำหรับ Claude, Codex, Gemini CLI และ OpenCode DeepSeek รวม `providerEnvironment`/
+`linkCallControl` — แต่ **ไม่** export `_template.ts`. แต่ละ adapter implement
+`AdapterInterface` ของ `aal`.
 
 ### ตัวอย่างจากโค้ดจริง
 
@@ -316,14 +324,13 @@ for await (const msg of opts.query({
 
 ### เหมาะกับงานแบบไหน / ไม่เหมาะกับอะไร
 
-- **เหมาะ**: เพิ่ม vendor/adapter ใหม่, ปรับ prompt vocabulary (`wire.ts`), map error ของ SDK,
-  ปรับ normalize ของ wire format
+- **เหมาะ**: เพิ่ม vendor/adapter ใหม่, ปรับ prompt vocabulary (`wire.ts`), map error ของ SDK/CLI,
+  ปรับ structured-output transport, environment allowlist และ cancellation
 - **ไม่เหมาะ**: routing/breaker (→ `aal`), execution/gate (→ `core`), business logic ใด ๆ
   (ผิด INV-8)
 
-**test**: 6 ไฟล์ `*.test.ts` (`anthropic.test.ts`, `codex.test.ts` เป็นตัวหลัก) รันด้วย
-`pnpm --filter adapters test` — `live.ts`/`codex-live.ts` ไม่มี test คู่โดยเจตนา (verify แบบ
-live-run แยก ไม่ผ่าน CI mock)
+**test**: 7 ไฟล์ `*.test.ts` รวม `reasoning-cli.test.ts`, รันด้วย
+`pnpm --filter adapters test`. Live provider behavior ยืนยันด้วย manual conformance แยกจาก CI.
 
 ---
 
@@ -331,15 +338,16 @@ live-run แยก ไม่ผ่าน CI mock)
 
 ### คืออะไร
 
-Fastify 5 server ที่เป็น surface สำหรับคน มีสองหน้าที่: (1) interactive surface — spawn binary
-`claude` จริงผ่าน PTY (`node-pty`) แล้วสตรีมผ่าน WebSocket และ (2) client ของ Human Plane API
-ของ core (Console ไม่ own state ของ core — INV-11) package ชื่อ `console-backend`
+Fastify 5 server/composition root มีสามหน้าที่: (1) interactive surface — spawn binary
+`claude` จริงผ่าน PTY/WS, (2) Human Plane API ของ autonomous loop และ (3) Universal PR Quality
+Gate manager/API/CLI/GitHub trust boundary. Package ชื่อ `console-backend`.
 
 ### รับผิดชอบอะไร
 
 เปิด/จัดการ PTY session, สตรีม terminal ผ่าน WS, เป็นหน้า HTTP ให้ loop run (approvals,
-steering, kill, deploy decision), และเป็น CLI dispatcher (`platform`) ที่สั่ง loop/conformance/
-governance/auditor/console ไม่ own execution ของ core — เรียกผ่าน public API ของ core เท่านั้น
+steering, kill, deploy decision), จัดการ PR run/list/detail/cancel/override, pin Git/verify
+workflow artifact/publish Check Run และเป็น CLI dispatcher (`platform`) สำหรับ console, loop,
+conformance, governance, auditor, pr-gate. ไม่ own deterministic decision ของ core.
 
 ### โครงภายใน
 
@@ -347,6 +355,9 @@ governance/auditor/console ไม่ own execution ของ core — เรี�
   เป็น placeholder เปล่า (`export {};`) ไม่ใช่ entry
 - `src/app.ts` มี `buildApp()` ที่ประกอบ route ทั้งหมด (PTY, loop, auth, memory ฯลฯ)
 - `src/loop-run.ts` คือที่ประกอบ core (`createExecutor` + `runTaskLoop` + `createGateRunner`)
+- `src/pr-gate/` คือ composition, manager, GitHub read/report, exact Git/snapshot, policy,
+  context, checks, artifacts และ workflow provenance
+- `src/pr-gate-cli.ts` คือ direct operator command; `app.ts` expose `/api/pr-quality/*`
 
 ### entry point / public API
 
@@ -358,9 +369,9 @@ governance/auditor/console ไม่ own execution ของ core — เรี�
 },
 ```
 
-`main()` ที่ `bin/platform.ts:535` แยก command; `platform console` เริ่ม Fastify default port
-**9119** host **127.0.0.1** (`bin/platform.ts:43-44,565-566`) — bind non-loopback โดยไม่มี auth
-provider จะ refuse start (fail-closed, INV-15)
+`main()` ที่ `bin/platform.ts` แยก command; `platform console` เริ่ม Fastify default port
+**9119** host **127.0.0.1** — bind non-loopback โดยไม่มี valid `0600` auth config จะ refuse
+start (fail-closed, INV-15). Production invocation ดู `docs/08-pr-quality-gate-production.md`.
 
 ### ตัวอย่างจากโค้ดจริง
 
@@ -385,11 +396,12 @@ app.post<{ Body: Partial<CreateSessionInput> }>('/api/term/sessions', async (req
 
 ### เหมาะกับงานแบบไหน / ไม่เหมาะกับอะไร
 
-- **เหมาะ**: route ใหม่ของ Console, การจัดการ PTY/WS, CLI subcommand ใหม่ของ `platform`,
-  การต่อ Console เข้า Human Plane ของ core
+- **เหมาะ**: route ใหม่ของ Console, PTY/WS, CLI subcommand, Git/GitHub/provider composition,
+  PR gate lifecycle และการต่อ Console เข้า Human Plane ของ core
 - **ไม่เหมาะ**: execution/gate logic (→ `core`), routing ของ agent (→ `aal`), UI (→ `console/web`)
 
-**test**: 42 ไฟล์ `*.test.ts` ใต้ `src/` รันด้วย `pnpm --filter console-backend test`
+**test**: 58 ไฟล์ `*.test.ts` ใต้ `src/`/`test/` รวม PR gate acceptance/trust/fault cases,
+รันด้วย `pnpm --filter console-backend test`.
 
 ---
 
@@ -410,11 +422,11 @@ presentation)`
 ### โครงภายใน
 
 - component ระดับบน (`.tsx`): `App.tsx`, `Chat.tsx`, `I18nContext.tsx`, `Issues.tsx`,
-  `Login.tsx`, `Loop.tsx`, `Sched.tsx`, `Surfaces.tsx`, `TerminalPanel.tsx`, `main.tsx`,
+  `Login.tsx`, `Loop.tsx`, `PrQuality.tsx`, `Sched.tsx`, `Surfaces.tsx`, `TerminalPanel.tsx`, `main.tsx`,
   และ hook `useFetch.ts`
-- `src/logic/` — pure logic module 13 ตัว (`auth`, `chat`, `fetchState`, `format`, `govern`,
-  `i18n`, `issues`, `loop`, `observe`, `sched`, `surfaces`, `term`, `theme`) แต่ละตัวมี `.test.ts`
-  คู่ + `smoke.test.ts`
+- `src/logic/` — pure logic module 14 ตัว (`auth`, `chat`, `fetchState`, `format`, `govern`,
+  `i18n`, `issues`, `loop`, `observe`, `pr-quality`, `sched`, `surfaces`, `term`, `theme`) แต่ละตัว
+  มี `.test.ts` คู่ + `smoke.test.ts`
 
 ### entry point / public API
 
@@ -438,7 +450,7 @@ export function interpretAuthProbe(status: number): AuthGateState {
   การต่อ API ของ backend
 - **ไม่เหมาะ**: logic ฝั่ง server (→ `console/backend`), agent/execution (→ `aal`/`core`)
 
-**test**: `console/web/package.json:7` จำกัด scope ไว้ที่ `src/logic/**/*.test.ts` (14 ไฟล์)
+**test**: `console/web/package.json:7` จำกัด scope ไว้ที่ `src/logic/**/*.test.ts` (15 ไฟล์)
 รันด้วย `pnpm --filter console-web test` เหตุผล: `node --test` ไม่มี DOM และรีโปนี้ไม่มี test
 runner สำหรับ component จึงแยก pure logic ออกมาให้ทดสอบได้โดยไม่ต้องพึ่ง DOM — **ไฟล์ `.tsx`
 ไม่มี unit test ในรีโปนี้** (ไม่มี `*.test.tsx` เลย)
@@ -514,8 +526,9 @@ guard regression test ที่ `.claude/hooks/tests/*.test.sh` ซึ่ง CI 
 | ชนิดงาน | ลำดับไฟล์ที่ต้องแตะ |
 |---|---|
 | **เพิ่ม action type ใหม่** | ดูรายละเอียดด้านล่าง |
-| **เพิ่ม vendor/adapter ใหม่** | 1) copy `adapters/src/_template.ts` → 2) implement `AdapterInterface` (`aal/src/protocol.ts:104`) โดย COMPOSE helper จาก `adapters/src/wire.ts` → 3) ตั้ง `lineage` ใน manifest → 4) export จาก `adapters/src/index.ts` → 5) ผ่าน `runConformanceSuite` (P1-P8, ของ `aal`) → 6) register ที่ composition root (`console/backend/bin/platform.ts` — จุด `adapterFactory` ที่ `:452` สำหรับ live และ `:493` สำหรับ FakeAdapter default) โดย **ไม่แตะ Ring 0/1** |
+| **เพิ่ม vendor/adapter ใหม่** | 1) เริ่มจาก `adapters/src/_template.ts` หรือ reuse `reasoning-cli.ts` → 2) implement `AdapterInterface` ด้วย helper `wire.ts`/`control.ts` → 3) ตั้ง exact lineage → 4) export จาก `adapters/src/index.ts` → 5) ผ่าน P1-P8 → 6) register เฉพาะ composition root ที่ใช้มัน; ห้ามเพิ่ม vendor logic ใน Ring 0/1 |
 | **เพิ่ม route ใหม่ใน Console** | 1) เพิ่ม route ใน `buildApp()` ที่ `console/backend/src/app.ts` (ฝั่ง server) → 2) ถ้ามี UI: เพิ่ม pure logic ใน `console/web/src/logic/` (+ `.test.ts`) แล้วต่อ component `.tsx` → ไม่แตะ core/aal/adapters |
+| **แก้ PR quality gate** | decision/policy/state → `core/src/pr-gate/`; panel/Judge → `aal/src/pr-review/`; provider transport → `adapters/src/`; Git/GitHub/manager/API → `console/backend/src/pr-gate/` + `app.ts`; UI → `console/web/src/{PrQuality.tsx,logic/pr-quality.ts}`; production workflow/policy เปลี่ยนผ่าน approved spec + governance |
 
 ### เพิ่ม action type ใหม่ (ลำดับเต็ม)
 

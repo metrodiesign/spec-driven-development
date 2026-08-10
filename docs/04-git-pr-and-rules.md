@@ -1,24 +1,35 @@
 # 4. Git / PR + Rules
 
-ต้นทางกฎทั้งหมด: `../CLAUDE.md` + `../.claude/rules/`. ที่นี่สรุปเชิงปฏิบัติ.
+ต้นทางกฎทั้งหมด: `../AGENTS.md` + `../.ai/shared/SECURITY_RULES.md`. ที่นี่สรุปเชิงปฏิบัติ.
 
 ## 4.1 Git / branch / PR
 
 - **ห้าม push ตรงเข้า `main` / `develop`** — ต้องผ่าน PR เสมอ
 - **ห้าม force push**, **ห้าม commit ตรงโดยไม่มี review**
-- commit message ลงท้ายด้วย:
-  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+- commit trailer ใช้ identity ของ harness/ผู้ร่วมเขียนจริงตาม workflow ปัจจุบัน; ห้าม hardcode
+  model/vendor ที่ไม่ได้ร่วมสร้าง commit
 - ฟีเจอร์/chore ทำบน branch แยก (เช่น `feat/<feature-name>`, `docs/...`) -> เปิด PR เข้า
   **`develop`** (base จริงของ work branch); `develop` -> `main` เป็นอีกชั้น
 - `destructive-guard` hook block `git commit`/`push` ขณะอยู่บน main/develop + force push ให้
   อัตโนมัติ (ดู [05-hooks.md](05-hooks.md))
 
-## 4.2 CI gate
+## 4.2 CI และ PR quality gate
 
-- PR merge ได้เมื่อ CI ผ่าน (test + lint) เป็น required check
-- ห้าม merge ข้าม failing check
+Workflow ปัจจุบันสร้าง check สามชื่อที่ production ruleset ต้อง require:
+
+| Check | พิสูจน์อะไร |
+|---|---|
+| `platform (vendor check + typecheck + lint + tests)` | frozen install, high+ audit, vendor check, typecheck, lint, tests |
+| `guards + spec-trace` | guard regression, lessons, secret scan, spec trace |
+| `Universal PR Quality Gate` | exact-head deterministic evidence + four-lineage review/Judge |
+
+- ห้าม merge ข้าม failing/missing required check
 - ห้าม commit `.only` / `.skip` ค้างใน test
 - coverage ห้ามต่ำกว่าเกณฑ์
+- Workflow file อย่างเดียวไม่ block merge; ต้องมี server-side ruleset/branch protection
+- สถานะตรวจ 2026-08-10: `develop` ยังไม่ protected และ rulesets ว่าง จึงยังเป็น advisory
+- เปิด custom check หลัง real canary เท่านั้น; ขั้น production เต็มอยู่ใน
+  [08-pr-quality-gate-production.md](08-pr-quality-gate-production.md)
 
 ## 4.3 Secrets
 
@@ -55,10 +66,10 @@
 
 | ด้าน            | สรุป                                                            | ไฟล์                            |
 | --------------- | --------------------------------------------------------------- | ------------------------------- |
-| โครงไฟล์/naming | โครงไฟล์ + convention การตั้งชื่อตามที่ project กำหนด           | `../.claude/rules/structure.md` |
-| tech stack      | stack + hard constraints ที่ project เลือก                     | `../.claude/rules/tech.md`      |
-| product         | ตัวผลิตภัณฑ์คืออะไรและทำไม                                      | `../.claude/rules/product.md`   |
-| บทเรียนสะสม     | กับดักจริงที่เจอแล้ว (อ่านก่อนงานคล้ายกัน)                     | `../.claude/rules/lessons.md`   |
+| โครงไฟล์/naming | โครงไฟล์ + convention การตั้งชื่อตามที่ project กำหนด | `../.ai/shared/ARCHITECTURE.md` |
+| tech stack | stack + hard constraints ที่ project เลือก | `../.ai/shared/CODING_STANDARDS.md` |
+| product | ตัวผลิตภัณฑ์คืออะไรและทำไม | `../.ai/shared/PROJECT_CONTEXT.md` |
+| บทเรียนสะสม | กับดักจริงที่เจอแล้ว | `../.ai/shared/LESSONS.md` |
 
 ## 4.8 Language / markdown
 
