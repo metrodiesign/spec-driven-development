@@ -10,17 +10,17 @@ only for harnesses that support pre-tool hooks.
 
 | Tier | Mechanism | Covers | Notes |
 |---|---|---|---|
-| 1. Git + CI (the floor) | `.githooks/` (enabled via `core.hooksPath`) + `.github/workflows/ci.yml`, both calling `.ai/bin/check-*.sh` | **ALL agents + humans** | Cannot be bypassed by choosing a different agent. This is the real, cross-agent enforcement. |
+| 1. Git + CI (the floor) | `.githooks/` (enabled via `core.hooksPath`) + `.github/workflows/ci.yml`, both calling `.ai/bin/check-*.sh` | **ALL agents + humans** | Shared across harnesses; local blocking needs hook setup, merge blocking needs repository ruleset. |
 | 2. Harness pre-tool hook | Claude: `.claude/hooks/*` -> `.ai/bin/`; Codex: `.codex/config.toml` `[hooks]` -> `.codex/hooks/*` -> `.ai/bin/` (single source `config.toml`; the legacy `.codex/hooks.json` was removed — Codex 0.139 loaded both, see issue #26 — and these in-session hooks fire only after interactive `/hooks` trust); OpenCode: `.opencode/plugins/ai-guard.js` -> `.ai/bin/` | Claude, Codex, OpenCode | Pre-execution interception. Pi has no core pre-tool hook, so it falls back to Tier 1 + Tier 3. |
 | 3. Procedural | root `AGENTS.md` + `.ai/roles/` + `.ai/workflows/` instruct the agent to run `.ai/bin/check-*` before risky commands | ALL agents (the only AI-side layer Pi has) | Advisory; relies on the agent following instructions. The git+CI floor backstops it. |
 
-**Hooks are Claude/Codex/OpenCode-only. The git + CI floor is the enforcement that
-spans every agent.** When in doubt about whether a harness layer caught something,
-trust Tier 1: a clean commit and a green CI run are the proof.
+**Hooks are Claude/Codex/OpenCode-only. The git + CI floor is the mechanism that spans every
+agent when configured.** A clean commit + green CI run เป็น evidence; repository-side merge
+enforcement ต้องตรวจ ruleset แยก ห้าม infer จาก workflow green อย่างเดียว.
 
 All three tiers call the SAME single-source check logic in `.ai/bin/`
-(`check-destructive.sh`, `check-bypass.sh`, `check-secrets.sh`, `gate-task.sh`). Do not
-fork or weaken these checks per harness.
+(`check-destructive.sh`, `check-bypass.sh`, `check-secrets.sh`, `check-evidence.sh`,
+`gate-task.sh`). Do not fork or weaken these checks per harness.
 
 ## The rules
 
@@ -110,19 +110,49 @@ fork or weaken these checks per harness.
 
 ### CI gate
 
-- A PR may merge only when CI passes as a required check.
+- Policy requires every PR to merge only when configured required checks pass.
 - Never merge past a failing check.
 - Never leave `.only` / `.skip` in committed tests.
 - Coverage must not drop below the project threshold.
 - Repo นี้มี Node workspace tests จริงและ CI รันผ่าน `scripts/ci-test-scope.sh`; downstream
   projects ยังประกาศ runner เพิ่มได้ผ่าน `SDD_TEST_CMD`
-- **Enforced by:** `.github/workflows/ci.yml` as a required check for ALL contributors
-  (Tier 1), triggered on both `pull_request` and `push` to `main` AND `develop`.
-  Server-side branch protection is the gate that cannot be skipped locally.
+- **Workflow floor:** `.github/workflows/ci.yml` รันทั้ง `pull_request` และ `push` ไป `main`/
+  `develop`. Server-side enforcement เกิดเมื่อ repository ruleset/branch protection require
+  check เท่านั้น; workflow file เองเป็นหลักฐานแต่ยังไม่ block merge.
+- **Current operational state (2026-08-10):** `develop` ตอบ `404 Branch not protected` และ
+  repository rulesets เป็น `[]`. จึงยังมี enforcement gap ฝั่ง GitHub ที่ maintainer ต้องปิด
+  หลัง production canary; local git hooks ยังทำงานตาม clone configuration.
 - **Checks CI actually runs** (ให้เอกสารตรง workflow): vendor-name check, frozen `pnpm`
   install, `pnpm audit --prod --audit-level high`, full typecheck, lint, scoped/full
   workspace tests, guard-regression suite ทุก `.claude/hooks/tests/*.test.sh`, lessons
   coverage, full-tree/diff-range secret scan และ spec-trace coverage
+- Exact CI check names คือ `platform (vendor check + typecheck + lint + tests)` และ
+  `guards + spec-trace`.
+
+### Universal PR Quality Gate
+
+- Production custom check ชื่อ `Universal PR Quality Gate`; เปิดเป็น required หลัง real canary
+  สร้าง check บน exact head ได้จริงเท่านั้น.
+- `pull_request` analysis ถือ PR data เป็น untrusted, ใช้ read credential, รัน deterministic
+  checks และส่ง artifact; ไม่มี provider secret หรือ `checks: write`.
+- Trusted `workflow_run` finalize checkout default branch เท่านั้น, verify workflow run id,
+  repository, event, PR/head, source/policy hashes, manifest/report/evidence integrity ก่อนใช้
+  provider หรือ reporter credential.
+- ห้าม checkout/execute fork head ใน finalize, ห้ามใช้ `pull_request_target` รัน untrusted code
+  และห้ามส่ง GitHub reporter token เข้า provider child. Child env มาจาก explicit allowlist.
+- Self-hosted macOS runner ต้อง dedicated/ephemeral; ห้ามแชร์กับ repository/workload อื่นที่
+  ไม่ได้อยู่ trust domain เดียวกัน.
+- Public-repo trust split ลด exposure โดยไม่ execute head ใน privileged finalize แต่ไม่ลบ
+  ความเสี่ยง public runner, malicious artifact/parser, supply chain หรือ credential misuse.
+  Workflow ยังไม่มี global rate limit, contributor admission หรือ protected environment
+  approval. ห้ามผูก runner + paid secrets จนเพิ่ม abuse control ผ่าน reviewed PR.
+- Third-party GitHub Actions ต้อง pin full commit SHA ที่ review แล้วก่อน production; moving
+  major tags เช่น `@v4`/`@v5` ไม่ใช่ immutable supply-chain boundary.
+- Provider/API keys อยู่ GitHub secrets หรือ secret manager เท่านั้น. Conformance records ไม่มี
+  credential และต้องผ่าน P1-P8 ทุก lineage ก่อน reviewer slot eligible.
+- `systemDecision` เป็น immutable system verdict; human override สร้าง `effectiveDecision` แยก,
+  ผูก exact current head, actor, reason และ idempotency key.
+- Activation, auth, monitoring และ rollback: [production runbook](../../docs/08-pr-quality-gate-production.md).
 
 ### Deploy / release
 

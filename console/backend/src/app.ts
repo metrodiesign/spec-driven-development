@@ -40,8 +40,29 @@ import {
 } from './surfaces.ts';
 import { convertIssue, createIssue, listIssues, rejectIssue, TITLE_MAX, BODY_MAX } from './issues.ts';
 import type { ChatManager, CreateChatSessionInput } from './chat.ts';
+import type { PrGateManager } from './pr-gate/manager.ts';
 
 const execFileAsync = promisify(execFile);
+
+interface HostStats {
+  platform(): string;
+  arch(): string;
+  cpus(): number;
+  totalMem(): number;
+  freeMem(): number;
+  loadAvg(): number[];
+  uptimeS(): number;
+}
+
+const DEFAULT_HOST_STATS: HostStats = {
+  platform: () => os.platform(),
+  arch: () => os.arch(),
+  cpus: () => os.cpus().length,
+  totalMem: () => os.totalmem(),
+  freeMem: () => os.freemem(),
+  loadAvg: () => os.loadavg(),
+  uptimeS: () => os.uptime(),
+};
 
 export interface AppDeps {
   homeDir: string;
@@ -55,6 +76,8 @@ export interface AppDeps {
   cliVersion?(): Promise<string>;
   /** Captured non-interactive `claude doctor` output (REQ-15.1). Overridable for tests. */
   doctorCapture?(): Promise<string>;
+  /** Host metric source. Overridable for deterministic degraded-path tests. */
+  hostStats?: HostStats;
   /** Built SPA directory; when present the app serves it at / (REQ-12.7 UI). */
   webDistDir?: string;
   /**
@@ -83,6 +106,8 @@ export interface AppDeps {
   chat?: ChatManager;
   /** Per-source rate limiter for POST /api/chat/sessions; default allows all (mirrors termRateOk/issuesRateOk). */
   chatRateOk?(): boolean;
+  /** Universal PR quality gate. Absent = routes stay unregistered. */
+  prGateManager?: PrGateManager;
   /**
    * F-Sched (REQ-16): the thin runtime for the one registered child + where its
    * governed inputs live. Absent = routes do not register (mirrors termManager).
@@ -671,15 +696,30 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return { available: false, degraded: true, hint: 'claude doctor unavailable — install the CLI and retry', detail: (err as Error).message };
     }
   });
-  app.get('/api/system/stats', async () => ({
-    platform: os.platform(),
-    arch: os.arch(),
-    cpus: os.cpus().length,
-    totalMem: os.totalmem(),
-    freeMem: os.freemem(),
-    loadAvg: os.loadavg(),
-    uptimeS: os.uptime(),
-  }));
+  app.get('/api/system/stats', async () => {
+    const hostStats = deps.hostStats ?? DEFAULT_HOST_STATS;
+    const unavailableMetrics: string[] = [];
+    const capture = <T>(name: string, read: () => T): T | null => {
+      try {
+        return read();
+      } catch {
+        unavailableMetrics.push(name);
+        return null;
+      }
+    };
+    const stats = {
+      platform: capture('platform', () => hostStats.platform()),
+      arch: capture('arch', () => hostStats.arch()),
+      cpus: capture('cpus', () => hostStats.cpus()),
+      totalMem: capture('totalMem', () => hostStats.totalMem()),
+      freeMem: capture('freeMem', () => hostStats.freeMem()),
+      loadAvg: capture('loadAvg', () => hostStats.loadAvg()),
+      uptimeS: capture('uptimeS', () => hostStats.uptimeS()),
+    };
+    return unavailableMetrics.length === 0
+      ? stats
+      : { ...stats, degraded: true, unavailableMetrics };
+  });
   app.put<{ Body: { scope?: string; project?: string; cleanupPeriodDays?: number; baseHash?: string | null } }>(
     '/api/system/retention',
     async (req, reply) => {
@@ -994,6 +1034,78 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const { pid } = sched.runtime.start('sh', [join(sched.scriptsDir, name)], { cwd: process.cwd(), env: deps.env });
       audit({ event: 'sched_script', name, ...localOperator });
       return { pid, name };
+    });
+  }
+
+  // Universal PR Quality Gate (REQ-10). Same manager backs API and CLI.
+  const prGate = deps.prGateManager;
+  if (prGate !== undefined) {
+    app.post<{ Body: { repository?: unknown; pullRequest?: unknown } }>('/api/pr-quality/runs', async (req, reply) => {
+      const repository = req.body?.repository;
+      const pullRequest = req.body?.pullRequest;
+      if (typeof repository !== 'string' || !/^[^/\s]+\/[^/\s]+$/u.test(repository) || !Number.isInteger(pullRequest) || Number(pullRequest) <= 0) {
+        return reply.code(400).send({ error: 'repository and positive pullRequest are required' });
+      }
+      try {
+        const { runId } = prGate.start({ repository: repository as `${string}/${string}`, pullRequest: Number(pullRequest) });
+        return reply.code(202).send({ runId });
+      } catch {
+        return reply.code(400).send({ error: 'invalid PR quality run request' });
+      }
+    });
+
+    app.get<{ Querystring: { limit?: string } }>('/api/pr-quality/runs', async (req, reply) => {
+      const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+      if (!Number.isInteger(limit) || limit <= 0) return reply.code(400).send({ error: 'limit must be a positive integer' });
+      return { runs: prGate.list(Math.min(100, limit)) };
+    });
+
+    app.get<{ Params: { id: string } }>('/api/pr-quality/runs/:id', async (req, reply) => {
+      const detail = prGate.detail(req.params.id);
+      if (detail === null) return reply.code(404).send({ error: 'run not found' });
+      try {
+        return { ...detail, headStatus: await prGate.headStatus(req.params.id) };
+      } catch {
+        return reply.code(503).send({ error: 'current PR head unavailable' });
+      }
+    });
+
+    app.post<{ Params: { id: string } }>('/api/pr-quality/runs/:id/cancel', async (req, reply) => {
+      const projection = await prGate.cancel(req.params.id);
+      return projection === null ? reply.code(404).send({ error: 'run not found' }) : projection;
+    });
+
+    app.post<{
+      Params: { id: string };
+      Body: { headSha?: unknown; action?: unknown; reason?: unknown; findingIds?: unknown };
+    }>('/api/pr-quality/runs/:id/override', async (req, reply) => {
+      const idempotencyKey = req.headers['idempotency-key'];
+      const { headSha, action, reason, findingIds } = req.body ?? {};
+      if (
+        typeof idempotencyKey !== 'string' || idempotencyKey.trim() === '' ||
+        typeof headSha !== 'string' || headSha.trim() === '' ||
+        (action !== 'APPROVE' && action !== 'REJECT') ||
+        typeof reason !== 'string' || reason.trim() === '' ||
+        !Array.isArray(findingIds) || findingIds.some((id) => typeof id !== 'string')
+      ) return reply.code(400).send({ error: 'idempotency key, headSha, action, reason, and findingIds are required' });
+
+      const principal = deps.auth?.verify(req.headers.cookie);
+      if (deps.auth !== undefined && principal === null) return reply.code(401).send({ error: 'unauthorized' });
+      try {
+        return await prGate.override({
+          runId: req.params.id,
+          actor: principal?.sub ?? 'local-operator',
+          idempotencyKey,
+          headSha,
+          action,
+          reason,
+          findingIds: findingIds as string[],
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        const conflict = message.includes('head changed') || message.includes('durable decision');
+        return reply.code(conflict ? 409 : 400).send({ error: conflict ? 'override conflicts with current run state' : 'invalid override' });
+      }
     });
   }
 

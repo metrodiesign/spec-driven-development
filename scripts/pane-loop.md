@@ -147,4 +147,4 @@ CLAUDE_FLAGS="" scripts/pane-loop.sh <feature-name> 8
 - รัฐธรรมนูญ workflow: `CLAUDE.md` (approval gate ต่อ artifact, task sizing)
 - รายละเอียด spec-driven บน Claude Code: `claude-code-spec-driven-workflow.md`
 - skill ที่ถูกพิมพ์เข้า pane: `.claude/skills/spec-implement/`, `.claude/skills/spec-retro/`
-- บทเรียนสะสม: `.claude/rules/lessons.md` (มีเคส headless buffer, prod-build verify ฯลฯ)
+- บทเรียนสะสม: `.ai/shared/LESSONS.md` (มีเคส headless buffer, prod-build verify ฯลฯ)

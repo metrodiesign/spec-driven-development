@@ -46,7 +46,8 @@ Two tiers apply to every agent and human, regardless of harness:
   pushes to `main`/`develop` and force pushes).
 - **CI** — `.github/workflows/ci.yml` runs typecheck, tests, a full-tree secret scan,
   and spec-trace (every REQ must be covered) on every PR targeting `develop` (and pushes
-  to `develop`). A failing check blocks merge.
+  to `develop`). CI reports the result; it blocks merge only when repository
+  ruleset/branch protection requires that exact check. See `docs/08-pr-quality-gate-production.md`.
 
 If your harness lacks a pre-tool hook (e.g. Pi), run the checks yourself before any
 risky bash: `.ai/bin/check-destructive.sh '<cmd>'` and `.ai/bin/check-bypass.sh '<cmd>'`

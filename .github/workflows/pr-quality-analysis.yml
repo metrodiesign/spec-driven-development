@@ -1,0 +1,65 @@
+name: PR Quality Analysis
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  analyze:
+    name: unprivileged snapshot and deterministic checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Control-plane code and dependencies come from trusted base. Analyzer fetches exact PR object separately.
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect trusted control-plane availability
+        id: trusted_gate
+        env:
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BOOTSTRAP_BASE_SHA: 926cc2053115bc358979049499964260d0b77419
+        run: |
+          if grep -Fq "if (rest[0] === 'analyze')" console/backend/bin/platform.ts; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [ "$TRUSTED_BASE_SHA" = "$BOOTSTRAP_BASE_SHA" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Pinned bootstrap: trusted base predates pr-gate; analysis activates after merge."
+          else
+            echo "::error::Trusted base missing pr-gate analyze outside pinned bootstrap commit."
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v4
+        if: steps.trusted_gate.outputs.available == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.trusted_gate.outputs.available == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install without lifecycle scripts
+        if: steps.trusted_gate.outputs.available == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build untrusted analysis artifact
+        if: steps.trusted_gate.outputs.available == 'true'
+        env:
+          PR_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node console/backend/bin/platform.ts pr-gate analyze \
+            --repo "$PR_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --workflow-run-id "$WORKFLOW_RUN_ID" \
+            --out "$RUNNER_TEMP/pr-quality-analysis.json"
+      - uses: actions/upload-artifact@v4
+        if: steps.trusted_gate.outputs.available == 'true'
+        with:
+          name: pr-quality-analysis-${{ github.run_id }}
+          path: ${{ runner.temp }}/pr-quality-analysis.json
+          if-no-files-found: error
+          retention-days: 1

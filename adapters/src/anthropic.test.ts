@@ -164,6 +164,27 @@ test('auth error -> AdapterError auth_unavailable (REQ-4.8)', async () => {
   } finally { h.cleanup(); }
 });
 
+test('AbortSignal reaches SDK transport and maps to cancelled only after iterator stops', async () => {
+  let stopped = false;
+  const query: QueryFn = ({ options }) => (async function* () {
+    await new Promise<void>((resolve) => {
+      options.abortController?.signal.addEventListener('abort', () => {
+        stopped = true;
+        resolve();
+      }, { once: true });
+    });
+    throw new Error('AbortError: cancelled');
+  })();
+  const h = harness(query);
+  const controller = new AbortController();
+  const pending = h.adapter.send(req('cancel'), { signal: controller.signal, timeoutMs: 1000 });
+  controller.abort();
+  try {
+    await assert.rejects(pending, (error: unknown) => error instanceof AdapterError && error.kind === 'cancelled');
+    assert.equal(stopped, true);
+  } finally { h.cleanup(); }
+});
+
 test('injected quotaProbe -> healthProbe maps estimate vs threshold; adapter stays estimation-free (REQ-2.5)', async () => {
   function build(windows: { fiveHourPct: number; weeklyPct: number } | null) {
     const root = mkdtempSync(join(tmpdir(), 'anth-q-'));

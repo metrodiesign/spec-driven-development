@@ -1,5 +1,11 @@
 # Phase 1 — Live Calibration Runbook (task 11)
 
+> Current production note (2026-08-10): เอกสารนี้เป็น historical Phase-1 Claude calibration
+> record. Universal PR Quality Gate ปัจจุบันต้อง conformance สี่ lineage (`claude`, `codex`,
+> `gemini-cli`, `opencode-deepseek`) และใช้ activation/operation procedure จาก
+> [`../08-pr-quality-gate-production.md`](../08-pr-quality-gate-production.md). ห้ามใช้ผล
+> Phase-1 ชุดนี้แทน latest per-lineage eligibility.
+
 The autonomous composition is fully wired and CI-proven with the FakeAdapter (no
 quota). The remaining Phase-1 DoD items are **LIVE and MANUAL by design** — they
 spend real Max quota and need human observation (the `--live` guard refuses in CI /

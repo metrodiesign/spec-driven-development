@@ -5,18 +5,18 @@
 
 ## Purpose
 
-แพลตฟอร์ม self-hosted ตัวเดียวที่รันบนเครื่องของเจ้าของบัญชีเอง ใช้ Claude Code เป็น
-substrate ในการทำงานวิศวกรรมซอฟต์แวร์สองแบบบนฐานเดียว: **Interactive mode** (binary
-`claude` ตัวจริงผ่าน PTY สตรีมขึ้นเว็บ = 100% CLI parity สำหรับงานที่มนุษย์นำ) และ
-**Autonomous mode** (โมเดลเสนอ structured action, deterministic core ลงมือและตรวจเองใน
-sandbox ด้วย golden tests, มนุษย์อนุมัติที่ระดับ task/risk) — อ้างอิง
-`unified-platform-spec.md` §1.1
+แพลตฟอร์ม self-hosted ตัวเดียวที่รันบนเครื่องของเจ้าของระบบ มีสาม capability:
+**Interactive mode** (binary `claude` ตัวจริงผ่าน PTY), **Autonomous mode** (โมเดลเสนอ
+structured action, deterministic core ลงมือและตรวจใน sandbox) และ **Universal PR Quality
+Gate** (exact-head deterministic checks + independent multi-provider review + GitHub Check Run).
+ภาพรวม Interactive/Autonomous อยู่ใน `unified-platform-spec.md`; PR gate contract อยู่ใน
+`.ai/specs/universal-pr-quality-gate/`.
 
 ## Target Users
 
-เจ้าของบัญชี Claude Max 20x subscription รายเดียวที่ต้องการใช้โควตาของตัวเองขับงาน
-engineering ทั้งแบบมีคนนำและแบบรันเองไม่มีคนเฝ้า บนเครื่องของตัวเอง — เป็น single-operator
-โดยเจตนา ไม่มีกลุ่มผู้ใช้หลายคนหรือ role ผู้ใช้ (§1.3)
+เจ้าของระบบรายเดียวที่ต้องการขับงาน engineering ทั้งแบบมีคนนำ, แบบ autonomous และตรวจ
+GitHub PR ผ่าน provider lineage ที่ตนควบคุม บนเครื่อง/runner ของตนเอง. ระบบเป็น
+single-operator โดยเจตนา ไม่มีกลุ่มผู้ใช้หลายคนหรือ role ผู้ใช้.
 
 ## Problem It Solves
 
@@ -26,6 +26,10 @@ engineering ทั้งแบบมีคนนำและแบบรัน�
 สะดวกของ interactive CLI parity และความปลอดภัยของ autonomous loop บน substrate เดียวโดยไม่
 ต้องเลือกอย่างใดอย่างหนึ่ง (§1.1, §1.2)
 
+PR review แบบ model-only ไม่พอเช่นกัน: source/policy/head อาจ stale, model output อาจถูก
+prompt injection และ provider อาจ degrade. PR gate จึง pin exact Git objects, รัน deterministic
+floor, validate structured findings และแยก untrusted analysis จาก credentialed finalize.
+
 ## Key Features
 
 - Interactive surface ที่เป็น binary `claude` ตัวจริงผ่าน PTY (100% CLI parity, INV-17)
@@ -34,6 +38,8 @@ engineering ทั้งแบบมีคนนำและแบบรัน�
 - Egress default-deny ทุก `RUN_COMMAND` ใน autonomous mode + secret scan แบบ block (INV-14)
 - Console เป็น operator surface เดียวสำหรับ sessions, usage, governance และ approval package
 - SDD integration: เชื่อม spec artifacts กับ Goal Contract เป็น traceability สองทาง (Phase 5)
+- Universal PR Quality Gate: exact-head snapshot, immutable evidence, four-lineage blind panel,
+  Evidence Judge, durable override และ trusted GitHub reporting
 
 ## Business Objectives
 
@@ -42,6 +48,8 @@ engineering ทั้งแบบมีคนนำและแบบรัน�
 - Interactive parity วัดจากการรัน slash command / plan mode / attach-detach PTY ได้เท่า CLI
 - แต่ละ phase "เสร็จ" เมื่อผ่าน DoD (fault-injection + calibration + security checklist)
   ไม่ใช่แค่ "เขียนโค้ดครบ" (§0, §14)
+- PR gate production พร้อมเมื่อ abuse control, dedicated runner, secrets, four-lineage
+  conformance, canary และ server-side required checks ผ่าน ไม่ใช่แค่ unit/CI green
 
 ## Non-Goals
 
@@ -49,3 +57,4 @@ engineering ทั้งแบบมีคนนำและแบบรัน�
 - ไม่แตะ/เก็บ/proxy credential token ของ Claude Code — auth ผ่าน credential chain เดิมเท่านั้น (INV-12)
 - ไม่เป็นผลิตภัณฑ์ของ Anthropic — เป็นเครื่องมือ third-party ที่รันบนเครื่อง user เอง
 - ไม่ bridge auth ไปเครื่องมืออื่น (§1.3)
+- PR gate ไม่ให้ model majority override deterministic blocker, stale head หรือ governance floor

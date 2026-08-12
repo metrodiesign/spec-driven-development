@@ -20,8 +20,9 @@ conflicts with the design, fix the requirement — or stop and ask if the design
 itself looks wrong. (Once both artifacts exist, normal two-way sync resumes per
 the constitution.) The derivation already maps each REQ to its design section,
 so backfill design.md AS PART OF WRITING the draft requirements — do NOT defer
-to approval: add the `## Requirement Traceability` table (design element →
-REQ-x.y), update `## Testing Strategy` to cite the new REQ IDs, and re-stamp
+to approval: add the `## Requirement Traceability` table with columns
+`Design element | REQ | Section`, make every `Section` value exactly match a real
+`##` heading in the same design, update `## Testing Strategy` to cite the new REQ IDs, and re-stamp
 design.md's header `> Status: approved <original date>, amended <YYYY-MM-DD>`.
 Backfilling at draft time (not approval) guarantees that a downstream
 `/spec-tasks` — which may be the skill that flips requirements.md to approved —

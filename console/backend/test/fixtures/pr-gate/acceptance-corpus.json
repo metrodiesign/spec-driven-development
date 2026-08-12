@@ -1,0 +1,6 @@
+[
+  { "id": "backend-pr", "paths": ["console/backend/src/app.ts", "console/backend/src/app.test.ts"], "coverage": "FULL", "risk": "MEDIUM", "profiles": ["node-typescript"] },
+  { "id": "docs-only", "paths": ["docs/operator-guide.md"], "coverage": "FULL", "risk": "LOW", "profiles": ["docs-config"] },
+  { "id": "openapi-breaking", "paths": ["api/openapi.yaml"], "coverage": "FULL", "risk": "HIGH", "profiles": ["openapi"] },
+  { "id": "monorepo-partial", "paths": ["packages/api/src/index.ts", "apps/ios/App.swift"], "coverage": "LIMITED", "risk": "MEDIUM", "profiles": ["node-typescript"] }
+]

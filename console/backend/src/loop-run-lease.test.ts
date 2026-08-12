@@ -6,12 +6,18 @@ import { test } from 'node:test';
 
 import { FakeAdapter } from 'aal';
 import { openEventLog, type TaskContract } from 'core';
+
+import { syntheticLoopSandbox } from '../test/helpers/synthetic-loop-sandbox.ts';
 import { runSupervisedLoop } from './loop-run.ts';
 
 const clock = { now: () => 1_000_000 };
 // Explicit test-only synthetic golden seam; operational callers pass operator bytes.
 const runSyntheticLoop = (opts: Parameters<typeof runSupervisedLoop>[0]) =>
-  runSupervisedLoop({ ...opts, syntheticGoldenFixtureForTests: true });
+  runSupervisedLoop({
+    ...opts,
+    syntheticGoldenFixtureForTests: true,
+    syntheticSandboxForTests: syntheticLoopSandbox,
+  });
 const CONTRACT: TaskContract = {
   hash: 'a'.repeat(64),
   goal: { id: 'LEASE-1', title: 'lease', objective: 'validate lease' },

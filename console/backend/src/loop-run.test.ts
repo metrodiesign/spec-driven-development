@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { syntheticLoopSandbox } from '../test/helpers/synthetic-loop-sandbox.ts';
 import { runSupervisedLoop, wrapRouterForShadow } from './loop-run.ts';
 import { createDispatcher, FakeAdapter, type FusionProfile, type RegisteredAdapter, type Registry, type Router } from 'aal';
 import {
@@ -56,11 +57,11 @@ const clock = { now: () => 1_000_000 };
 // Every synthetic target in this legacy harness opts into the named test seam;
 // production/CLI callers must provide operatorGoldenFixtureDir instead.
 const runSyntheticLoop = (opts: Parameters<typeof runSupervisedLoop>[0]) =>
-  runSupervisedLoop({ ...opts, syntheticGoldenFixtureForTests: true });
-
-// Deploy commands run through the REAL sandboxed executor (RUN_COMMAND), same
-// requirement as core/src/deploy/stage.test.ts (D-003).
-const darwinOnly = { skip: process.platform !== 'darwin' ? 'darwin-only RUN_COMMAND sandbox (D-003)' : false };
+  runSupervisedLoop({
+    ...opts,
+    syntheticGoldenFixtureForTests: true,
+    syntheticSandboxForTests: syntheticLoopSandbox,
+  });
 
 interface ApprovalPackageJSON {
   id: string;
@@ -574,14 +575,13 @@ test('E2E (REQ-18.4): an L1 task auto-merges + the sampled audit reproduces -> C
 
 test(
   'E2E (REQ-5 production): an L1 task FAILS, self-repairs via a confirmed hypothesis, then auto-merges -> COMPLETED',
-  { skip: process.platform !== 'darwin' ? 'darwin-only RUN_COMMAND sandbox (D-003)' : false },
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-repair-'));
     try {
       const out = await runSyntheticLoop({
         contract: L1_CONTRACT,
         // `repairable`: writes the wrong marker first (T1 fails -> DIAGNOSING), then the
-        // correct one after the hypothesis is confirmed by a real sandboxed probe.
+        // correct one after the hypothesis is confirmed by a core-owned probe.
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', behavior: 'repairable', putContent: put }),
         clock,
         persistDir,
@@ -609,7 +609,6 @@ test(
 
 test(
   'E2E (REQ-10/11/12): a confirmed hypothesis becomes a pending lesson post-run; offline governance approval + the NEXT run\'s reconciler inject it',
-  darwinOnly,
   async () => {
     const persistDir1 = mkdtempSync(join(tmpdir(), 'loop-lesson-1-'));
     const persistDir2 = mkdtempSync(join(tmpdir(), 'loop-lesson-2-'));
@@ -865,7 +864,6 @@ test('invalid task-approval evidence escalates and releases the pending decision
 
 test(
   'deploy approval package built ALWAYS after COMPLETED; approve -> EXPANDED; never touches the task Map/onDecision (REQ-6.1/6.2/6.4/6.12)',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-approve-'));
     try {
@@ -925,7 +923,6 @@ test(
 
 test(
   'invalid deploy evidence escalates and releases the pending decision wait immediately',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-invalid-evidence-'));
     try {
@@ -969,7 +966,6 @@ test(
 
 test(
   'contract.provenance flows through to the deploy approval package too — direct-literal site, critique D3 (phase5-stage3 REQ-6.2)',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-prov-'));
     try {
@@ -980,15 +976,20 @@ test(
         persistDir,
         autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
         approval: { timeoutMs: 5000 },
-        deploy: { expandedWindowMs: 50 },
+        deploy: { expandedWindowMs: 60_000 },
       });
       const { url, token } = await waitForDiscovery(persistDir);
       const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
       assert.deepEqual(pending.approval?.provenance, PROVENANCE);
 
       await decideDeploy(url, token, 'approve', pending.approval?.attestations ?? []);
+      await waitForDeployState(url, token, 'EXPANDED');
+      const killStartedAt = Date.now();
+      const kill = await fetchRetry(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+      assert.equal(kill.status, 200);
       const out = await resultPromise;
       assert.equal(out.finalState, 'COMPLETED');
+      assert.ok(Date.now() - killStartedAt < 30_000, 'kill releases the remaining expanded window');
     } finally {
       rmSync(persistDir, { recursive: true, force: true });
     }
@@ -997,7 +998,6 @@ test(
 
 test(
   'deploy reject -> DEPLOY_DECISION{decision:reject}, stage skipped, task stays COMPLETED (REQ-6.7)',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-reject-'));
     try {
@@ -1032,7 +1032,6 @@ test(
 
 test(
   'deploy decision timeout -> DEPLOY_DECISION{decision:timeout}, stage skipped, task stays COMPLETED (REQ-6.11)',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-timeout-'));
     try {
@@ -1061,13 +1060,12 @@ test(
 
 test(
   'manual rollback at EXPANDED runs rollback_cmd -> ROLLED_BACK, audited (REQ-6.8/6.10)',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-rollback-'));
     const audited: Record<string, unknown>[] = [];
     try {
       const resultPromise = runSyntheticLoop({
-        contract: L1_CONTRACT_DEPLOY,
+        contract: { ...L1_CONTRACT, deploy: { ...DEPLOY_OK, rollbackCmd: 'sleep 1' } },
         adapterFactory: (put) => new FakeAdapter({ id: 'fake', putContent: put }),
         clock,
         persistDir,
@@ -1083,6 +1081,11 @@ test(
 
       const status = await rollbackDeploy(url, token);
       assert.equal(status, 200);
+      assert.equal(
+        (await fetchDeploy(url, token)).state,
+        'ROLLING_BACK',
+        'Human Plane stays open while the accepted rollback command is running',
+      );
 
       const out = await resultPromise;
       assert.equal(out.finalState, 'COMPLETED', 'a deploy rollback never touches the task finalState');
@@ -1096,6 +1099,7 @@ test(
         );
         assert.equal(states.find((e) => e.payload['state'] === 'ROLLING_BACK')?.payload['trigger'], 'manual_rollback');
         assert.ok(audited.some((e) => e['event'] === 'deploy_manual_rollback'), 'REQ-6.10: manual rollback audited');
+        assert.equal(log.all({ type: 'DEPLOY_WINDOW_CLOSED' }).length, 1, 'window closes after rollback settles');
       } finally {
         log.close();
       }
@@ -1107,7 +1111,6 @@ test(
 
 test(
   'manual rollback whose rollback_cmd FAILS still closes the window cleanly — terminal ESCALATED, run COMPLETED, no dangling ROLLING_BACK (PR #50 review, finding 2)',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-deploy-rbfail-'));
     try {
@@ -1118,7 +1121,7 @@ test(
         persistDir,
         autoMerge: { auditSampleRate: 100, depManifestPatterns: [] },
         approval: { timeoutMs: 5000 },
-        deploy: { expandedWindowMs: 500 },
+        deploy: { expandedWindowMs: 60_000 },
       });
       const { url, token } = await waitForDiscovery(persistDir);
       const pending = await waitForDeployState(url, token, 'PENDING_APPROVAL');
@@ -1126,8 +1129,23 @@ test(
       await waitForDeployState(url, token, 'EXPANDED');
       assert.equal(await rollbackDeploy(url, token), 200);
 
-      // The run must RESOLVE (not reject on a rejecting manualRollback) and close the window.
-      const out = await resultPromise;
+      // Accepted rollback ends the remaining window. A kill only cleans up the RED
+      // path so this regression never leaves the Human Plane server running.
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      const settled = await Promise.race([
+        resultPromise.then((out) => ({ out })),
+        new Promise<null>((resolve) => {
+          deadlineTimer = setTimeout(() => resolve(null), 30_000);
+        }),
+      ]);
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+      if (settled === null) {
+        const kill = await fetchRetry(`${url}/kill`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+        assert.equal(kill.status, 200);
+        await resultPromise;
+        assert.fail('accepted manual rollback did not end the remaining expanded window');
+      }
+      const { out } = settled;
       assert.equal(out.finalState, 'COMPLETED', 'a failed deploy rollback never touches the task finalState');
 
       const log = openEventLog(join(persistDir, 'events.db'), clock);
@@ -1397,7 +1415,6 @@ test('wrapRouterForShadow reuses an injected round stats cache instead of indepe
 
 test(
   'the contract\'s max_hypotheses_per_failure observably bounds the repair cycle — a NON-default cap of 5 evaluates 5 hypotheses, not the static default 3 (REQ-4.1/6.8)',
-  darwinOnly,
   async () => {
     const persistDir = mkdtempSync(join(tmpdir(), 'loop-exhaust-'));
     try {

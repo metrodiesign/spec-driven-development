@@ -20,5 +20,18 @@ export {
   type ExecFn,
 } from './codex.ts';
 export { createLiveCodexAdapter, buildCodexArgv, CODEX_STDIO } from './codex-live.ts';
+export { linkCallControl, providerEnvironment } from './control.ts';
+export {
+  createReasoningCliAdapter,
+  type ReasoningCliAdapterOptions,
+  type ReasoningCliExec,
+  type ReasoningCliResult,
+} from './reasoning-cli.ts';
+export {
+  buildGeminiReviewArgv,
+  buildOpenCodeReviewArgv,
+  createLiveGeminiAdapter,
+  createLiveOpenCodeDeepSeekAdapter,
+} from './reasoning-cli-live.ts';
 // Shared Ring-2 wire helpers (INV-8) — reused by both adapters and any new lineage.
 export { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';

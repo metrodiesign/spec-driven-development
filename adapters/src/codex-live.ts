@@ -18,6 +18,7 @@ import {
   type ExecFn,
 } from './codex.ts';
 import type { AdapterInterface } from 'aal';
+import { providerEnvironment, terminateChild } from './control.ts';
 
 // SPIKE-6 #1: an open stdin makes `codex exec` block forever on "Reading additional
 // input from stdin…". stdin is IGNORED at spawn; the prompt rides argv instead.
@@ -88,7 +89,7 @@ function strictifyForCodex(node: unknown): unknown {
 export function createLiveCodexAdapter(opts: Omit<CodexAdapterOptions, 'exec'>): AdapterInterface {
   const killTimeoutMs = opts.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS;
 
-  const exec: ExecFn = ({ prompt, schema, cwd, model }) =>
+  const exec: ExecFn = ({ prompt, schema, cwd, model, signal, timeoutMs }) =>
     new Promise<CodexExecResult>((resolve) => {
       const tmp = mkdtempSync(join(tmpdir(), 'codex-'));
       const schemaPath = join(tmp, 'schema.json');
@@ -96,31 +97,50 @@ export function createLiveCodexAdapter(opts: Omit<CodexAdapterOptions, 'exec'>):
       writeFileSync(schemaPath, JSON.stringify(strictifyForCodex(schema)));
       const argv = buildCodexArgv(prompt, { schemaPath, outPath, ...(model !== undefined ? { model } : {}) });
 
-      const child = spawn('codex', argv, { cwd, stdio: [...CODEX_STDIO] });
+      const child = spawn('codex', argv, {
+        cwd,
+        stdio: [...CODEX_STDIO],
+        env: providerEnvironment(process.env, ['HOME', 'CODEX_HOME', 'OPENAI_API_KEY']),
+      });
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      let cancelled = false;
+      let finished = false;
+      let forceKill: NodeJS.Timeout | undefined;
       // Hard kill timeout (REQ-2.9): a hung exec is SIGTERM'd -> non-zero exit -> transport.
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
-      }, killTimeoutMs);
+        forceKill ??= terminateChild(child);
+      }, Math.min(killTimeoutMs, timeoutMs ?? killTimeoutMs));
+      const cancel = (): void => {
+        cancelled = true;
+        forceKill ??= terminateChild(child);
+      };
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
 
       child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
       child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
 
       const finish = (result: CodexExecResult): void => {
+        if (finished) return;
+        finished = true;
         clearTimeout(timer);
+        if (forceKill !== undefined) clearTimeout(forceKill);
+        signal?.removeEventListener('abort', cancel);
         rmSync(tmp, { recursive: true, force: true });
         resolve(result);
       };
       child.on('close', (code) => {
         const lastMessage = existsSync(outPath) ? readFileSync(outPath, 'utf8') : '';
         finish({
-          exitCode: timedOut ? 143 : (code ?? 1),
+          exitCode: timedOut || cancelled ? 143 : (code ?? 1),
           lastMessage,
           events: parseCodexEvents(stdout),
-          stderr: timedOut ? `${stderr}\ncodex exec exceeded killTimeoutMs (${killTimeoutMs}ms)` : stderr,
+          stderr: timedOut
+            ? `${stderr}\ncodex exec timed out after ${Math.min(killTimeoutMs, timeoutMs ?? killTimeoutMs)}ms`
+            : cancelled ? `${stderr}\ncodex exec cancelled` : stderr,
         });
       });
       child.on('error', (err) => {

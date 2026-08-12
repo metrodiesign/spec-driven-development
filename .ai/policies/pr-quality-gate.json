@@ -1,0 +1,38 @@
+{
+  "$comment": "Repository PR quality policy read from pinned base SHA. Raw bytes join POLICY_FILES governance. Head edits affect only runs after merge.",
+  "schemaVersion": 1,
+  "requiredReviewerCount": 4,
+  "blockingSeverity": "HIGH",
+  "providerTimeoutMs": 600000,
+  "runDeadlineMs": 1800000,
+  "maxCostUnits": 40,
+  "riskFloor": "LOW",
+  "requireHumanApproval": false,
+  "profiles": [
+    {
+      "id": "node-typescript",
+      "activation": { "technologies": ["node-typescript"] },
+      "checks": [
+        { "id": "node-typecheck", "kind": "build", "command": "pnpm typecheck", "required": true, "timeoutMs": 300000, "network": "none", "install": false, "profiles": ["node-typescript"], "components": [] },
+        { "id": "node-lint", "kind": "lint", "command": "pnpm lint", "required": true, "timeoutMs": 300000, "network": "none", "install": false, "profiles": ["node-typescript"], "components": [] },
+        { "id": "node-test", "kind": "test", "command": "pnpm test", "required": true, "timeoutMs": 300000, "network": "none", "install": false, "profiles": ["node-typescript"], "components": [] }
+      ],
+      "reviewDimensions": ["correctness", "security", "performance", "maintainability"]
+    },
+    {
+      "id": "docs-config",
+      "activation": { "technologies": ["docs-config"] },
+      "checks": [],
+      "reviewDimensions": ["accuracy", "consistency", "security"]
+    },
+    {
+      "id": "openapi",
+      "activation": { "technologies": ["openapi"] },
+      "checks": [
+        { "id": "openapi-contract", "kind": "contract", "command": "builtin:openapi-contract-diff", "required": true, "timeoutMs": 120000, "network": "none", "install": false, "profiles": ["openapi"], "components": [] }
+      ],
+      "reviewDimensions": ["backward compatibility", "schema correctness", "security"],
+      "riskFloor": "HIGH"
+    }
+  ]
+}

@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import { FakeAdapter, type AdapterInterface, type AgentRequest } from 'aal';
 import { createLeaseManager, openEventLog, type TaskContract } from 'core';
 
+import { syntheticLoopSandbox } from '../test/helpers/synthetic-loop-sandbox.ts';
 import { loadGoalContract } from './loop-cli.ts';
 import { runSupervisedLoop } from './loop-run.ts';
 import { validateTaskGraphShape } from './task-graph-schema.ts';
@@ -23,7 +24,11 @@ const clock = { now: () => 1_000_000 };
 
 // Explicit test-only synthetic golden seam; operational callers pass operator bytes.
 const runSyntheticLoop = (opts: Parameters<typeof runSupervisedLoop>[0]) =>
-  runSupervisedLoop({ ...opts, syntheticGoldenFixtureForTests: true });
+  runSupervisedLoop({
+    ...opts,
+    syntheticGoldenFixtureForTests: true,
+    syntheticSandboxForTests: syntheticLoopSandbox,
+  });
 
 /** Two ACs so a graph can split them across two tasks (coverage is total — REQ-3.3). */
 const CONTRACT: TaskContract = {

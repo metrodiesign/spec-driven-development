@@ -21,6 +21,8 @@ const liveQuery: QueryFn = (args) =>
       settingSources: args.options.settingSources as never[],
       systemPrompt: args.options.systemPrompt,
       cwd: args.options.cwd,
+      ...(args.options.abortController !== undefined ? { abortController: args.options.abortController } : {}),
+      ...(args.options.env !== undefined ? { env: args.options.env } : {}),
     },
   }) as AsyncIterable<SdkMessage>;
 

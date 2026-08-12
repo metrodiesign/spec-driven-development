@@ -82,6 +82,7 @@ export {
   type SandboxBackendCapabilities,
   type TrustedCommandContext,
 } from './executor/command-executor.ts';
+export { createDefaultCoreCommandExecutor } from './executor/default-command-executor.ts';
 export { canaryTripped } from './security/canary.ts';
 export {
   checkDataPolicy,
@@ -275,3 +276,27 @@ export {
   proposeLessonFromHypothesis,
   type ConfirmedHypothesis,
 } from './lessons/lessons.ts';
+export * from './pr-gate/types.ts';
+export {
+  applyUsage,
+  classifyReviewerCoverage,
+  decideQuality,
+  groupJudgedFindings,
+  mergeChangeAnalysis,
+  mergeEffectivePolicy,
+  normalizeReviewerResult,
+  PrGatePolicyError,
+  resolveProfiles,
+  transitionPrGateState,
+  validateJudgeResult,
+  validateReviewerFinding,
+  type AnalysisFragment,
+  type DecisionInput,
+  type SnapshotEvidenceIndex,
+} from './pr-gate/kernel.ts';
+export {
+  assertDeterministicReportMatchesPlan,
+  runPlannedChecks,
+  type PlannedCheckExecutor,
+  type PlannedCheckOutcome,
+} from './pr-gate/checks.ts';

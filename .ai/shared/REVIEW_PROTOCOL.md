@@ -38,8 +38,8 @@ state it ("no API surface touched") rather than omitting it silently.
     states (default/hover/focus/active/disabled), accessibility (semantic HTML,
     keyboard, contrast), no horizontal overflow, no empty/placeholder visuals.
 11. **API compatibility (backend changes)** — request/response contract, status codes,
-    versioning, idempotency. (This project ships no real backend; apply only when a
-    change introduces a contract.)
+    versioning, auth, idempotency และ stale-state behavior. Repo นี้มี Fastify Console API,
+    GitHub Check Runs และ PR gate artifact contracts จริง; review boundary เหล่านี้ทุกครั้งที่แตะ.
 
 ## Evidence over assertion
 

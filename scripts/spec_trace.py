@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ตัวตรวจ requirements traceability (deterministic) สำหรับ spec ใต้ .ai/specs/<feature>/.
 
-ตรวจ 2 เรื่อง:
+ตรวจ 3 เรื่อง:
 1. coverage — เกณฑ์ (criterion) ทุกข้อใน requirements.md (บรรทัด `- N.M ...` ใต้หัวข้อ
    `## REQ-N:`) ต้องถูกอ้างถึงทั้งใน design.md (เฉพาะ section `## Requirement Traceability`)
    และใน tasks.md (เฉพาะบรรทัด `Satisfies:`). รูปแบบอ้างอิงที่ขยายให้:
@@ -12,6 +12,8 @@
    วงเล็บกำกับ เช่น `(partial)` ไม่ทำให้ parse พัง.
 2. EARS lint — ทุกเกณฑ์ต้องมี THE SYSTEM SHALL / WHEN / WHILE / WHERE / IF...THEN
    (ดูข้อความเต็มของเกณฑ์รวมบรรทัดต่อเนื่องที่ indent).
+3. sliceability — spec ที่ยังมี unchecked task ต้องมี traceability table ซึ่งมี column
+   `REQ`/`Satisfies` และ `Section`; ค่า `Section` ต้องตรงกับ real `##` heading แบบ exact match.
 
 requirements.md ที่ไม่มีหัวข้อ `## REQ-N:` เลย (เช่น bugfix spec) -> ข้ามการตรวจ, exit 0.
 เกณฑ์ตกหล่น/EARS ไม่ผ่าน -> รายงานเป็นภาษาไทยแล้ว exit 1; ครบหมด -> 1 บรรทัด OK, exit 0.
@@ -109,13 +111,82 @@ def expand_refs(segment, criteria_by_req):
 
 
 def design_traceability_text(design_text):
-    """คืนเนื้อหา section `## Requirement Traceability` (ถึงหัวข้อ ## ถัดไป) หรือ None."""
-    m = re.search(r"^##\s+Requirement Traceability\s*$", design_text, re.MULTILINE)
-    if not m:
-        return None
-    rest = design_text[m.end():]
-    nxt = re.search(r"^## ", rest, re.MULTILINE)
-    return rest[: nxt.start()] if nxt else rest
+    """คืนเนื้อหา `## Requirement Traceability` นอก fenced code block หรือ None."""
+    lines = []
+    started = False
+    fenced = False
+    for line in design_text.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if not started:
+            if line.strip() == "## Requirement Traceability":
+                started = True
+            continue
+        if line.startswith("## "):
+            break
+        lines.append(line)
+    return "\n".join(lines) if started else None
+
+
+def table_cells(row):
+    """คืน cell ที่ trim แล้วของ GFM row; รองรับ row ที่ไม่มี trailing pipe."""
+    cells = row.split("|")[1:]
+    if row.rstrip().endswith("|"):
+        cells = cells[:-1]
+    return [cell.strip() for cell in cells]
+
+
+def traceability_slice_problems(trace, design_text, criteria_by_req):
+    """คืนปัญหา contract ที่ทำให้ `spec-slice` resolve design section ไม่ได้."""
+    table_rows = [line for line in trace.splitlines() if line.startswith("|")]
+    if not table_rows:
+        return ["ไม่พบ table header ที่มี column 'REQ' หรือ 'Satisfies' และ 'Section'"]
+
+    headers = table_cells(table_rows[0])
+    req_col = headers.index("REQ") if "REQ" in headers else (
+        headers.index("Satisfies") if "Satisfies" in headers else None)
+    section_col = headers.index("Section") if "Section" in headers else None
+    found = []
+    if req_col is None:
+        found.append("ไม่มี column 'REQ' หรือ 'Satisfies' ที่ spec-slice รองรับ")
+    if section_col is None:
+        found.append("Section column หาย")
+    if found:
+        return found
+
+    headings = set()
+    fenced = False
+    for line in design_text.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced and line.startswith("## "):
+            headings.add(line[3:].strip())
+
+    column_covered = set()
+    for row_number, row in enumerate(table_rows[1:], start=2):
+        if "---" in row:
+            continue
+        cells = table_cells(row)
+        req_value = cells[req_col] if req_col < len(cells) else ""
+        if not REF_RE.search(req_value):
+            continue
+        column_covered.update(expand_refs(req_value, criteria_by_req))
+        section = cells[section_col] if section_col < len(cells) else ""
+        if not section:
+            found.append(f"row {row_number} ({req_value}): Section ว่าง")
+        elif section not in headings:
+            found.append(f"row {row_number} ({req_value}): '{section}' ไม่มี ## heading "
+                         "ที่ตรงกันแบบ exact match")
+    expected = {(major, minor) for major, minors in criteria_by_req.items() for minor in minors}
+    missing = sorted(expected - column_covered)
+    if missing:
+        found.append("REQ/Satisfies column ไม่ครอบ criterion: "
+                     + ", ".join(f"{major}.{minor}" for major, minor in missing))
+    return found
 
 
 def iter_task_blocks(tasks_text):
@@ -226,7 +297,8 @@ def run(feature, specs_dir):
     if not design_path.is_file():
         print(f"ไม่พบไฟล์ {design_path} (spec แบบ REQ-based ต้องมี design.md)", file=sys.stderr)
         return 1
-    trace = design_traceability_text(design_path.read_text(encoding="utf-8"))
+    design_text = design_path.read_text(encoding="utf-8")
+    trace = design_traceability_text(design_text)
     if trace is None:
         problems.append(("design.md ไม่มี section '## Requirement Traceability' — "
                          "ถือว่าทุกเกณฑ์ยังไม่ถูกอ้าง:", [f"{a}.{b}" for a, b in all_ids]))
@@ -242,11 +314,19 @@ def run(feature, specs_dir):
     if not tasks_path.is_file():
         print(f"ไม่พบไฟล์ {tasks_path} (spec แบบ REQ-based ต้องมี tasks.md)", file=sys.stderr)
         return 1
-    tasks_covered = expand_refs(satisfies_text(tasks_path.read_text(encoding="utf-8")),
-                                criteria_by_req)
+    tasks_text = tasks_path.read_text(encoding="utf-8")
+    tasks_covered = expand_refs(satisfies_text(tasks_text), criteria_by_req)
     missing = [f"{a}.{b}" for a, b in all_ids if (a, b) not in tasks_covered]
     if missing:
         problems.append(("เกณฑ์ที่ไม่ถูกอ้างใน tasks.md (บรรทัด Satisfies:):", missing))
+
+    # Closed specs ไม่ต้อง retrofit; active work ต้องรับรองว่า spec-slice ใช้ table ได้จริง.
+    if trace is not None and any(
+            line.lstrip().startswith("- [ ]") for line in tasks_text.splitlines()):
+        slice_problems = traceability_slice_problems(trace, design_text, criteria_by_req)
+        if slice_problems:
+            problems.append(("Requirement Traceability ใช้กับ spec-slice ไม่ได้:",
+                             slice_problems))
 
     if problems:
         print(f"[{feature}] traceability ไม่ครบ (เกณฑ์ทั้งหมด {len(criteria)} ข้อ):")

@@ -79,9 +79,10 @@ standards — do not re-derive it.
 - Command (`.claude/commands/pane-loop.md`): drives /spec-implement -> /spec-retro
   -> /clear across iTerm panes.
 
-The durable enforcement floor is Tier 1 — committed git hooks (`.githooks/`) + CI,
-which gate every agent and human at commit and PR. The Claude hooks are an early,
-in-session convenience on top of that floor.
+The durable floor is Tier 1 — committed git hooks (`.githooks/`) + CI. Hooks gate a
+configured clone; CI reports every matching PR. GitHub blocks merge only when a
+repository ruleset/branch protection requires those exact checks. Claude hooks are an
+early, in-session convenience on top of that floor.
 
 ## Context discipline (Claude-specific — full rules in `.ai/shared/CONTEXT_MANAGEMENT.md`)
 

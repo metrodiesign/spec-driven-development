@@ -221,6 +221,8 @@ export interface TrustedCommandContext {
   worktreeDir: string;
   role: Role;
   classification: 'artifact_mutation' | 'read_only_probe' | 'gate_check';
+  /** Trusted ignored roots that must join a gate-check's immutable input snapshot. */
+  additionalInputRoots?: readonly string[];
   signal?: AbortSignal;
   /** Public Executor owns this control so outer snapshot and inner lifecycle share one deadline. */
   operation?: FrozenTreeOperationControl;
@@ -1074,6 +1076,7 @@ function typedEvidence(
     sandbox: SandboxWrap;
     artifactPolicy: Readonly<CommandArtifactPolicy>;
     offlineDependencyPolicy?: OfflineDependencyPolicy;
+    additionalInputRoots: readonly string[];
     /** Whether THIS command ran under the relaxed offline-install profile. */
     offlineInstallProfile: boolean;
   },
@@ -1087,6 +1090,7 @@ function typedEvidence(
         : null,
     artifactPolicy: request.artifactPolicy,
     offlineDependencyPolicy: request.offlineDependencyPolicy ?? null,
+    additionalInputRoots: request.additionalInputRoots,
     // Per-command, not per-executor: an auditor must be able to tell which
     // command actually ran with approved-source writes demoted to EPERM.
     offlineInstallProfile: request.offlineInstallProfile,
@@ -1362,11 +1366,18 @@ export function createCoreCommandExecutor(opts: CoreCommandExecutorOptions): Cor
       try {
         phase('freeze_input');
         const persistentRoots = opts.offlineDependencyPolicy?.persistentOutputRoots ?? [];
+        const additionalInputRoots =
+          context.classification === 'gate_check'
+            ? [...new Set(context.additionalInputRoots ?? [])].sort()
+            : [];
         const input = await freezeWorkingTree(
           context.worktreeDir,
           limits,
           tmpdir(),
-          { includeIgnoredRoots: persistentRoots, operation },
+          {
+            includeIgnoredRoots: [...new Set([...persistentRoots, ...additionalInputRoots])].sort(),
+            operation,
+          },
         );
         ownedTrees.push(input);
         attemptRoot = mkdtempSync(
@@ -1448,6 +1459,7 @@ export function createCoreCommandExecutor(opts: CoreCommandExecutorOptions): Cor
                 ...(opts.offlineDependencyPolicy === undefined
                   ? {}
                   : { offlineDependencyPolicy: opts.offlineDependencyPolicy }),
+                additionalInputRoots,
               },
             );
             return {
@@ -1478,6 +1490,7 @@ export function createCoreCommandExecutor(opts: CoreCommandExecutorOptions): Cor
             ...(opts.offlineDependencyPolicy === undefined
               ? {}
               : { offlineDependencyPolicy: opts.offlineDependencyPolicy }),
+            additionalInputRoots,
           },
         );
         if (result.status === 'signaled') {

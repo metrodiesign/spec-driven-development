@@ -4,6 +4,12 @@
 >
 > ข้อมูลทั้งหมดอ้างอิงจากเอกสารทางการของ Claude Code (ดูลิงก์ท้ายไฟล์) ตรวจสอบ ณ มิ.ย. 2026 — Claude Code อัปเดตบ่อย ถ้าคำสั่งไหนไม่ตรง ให้พิมพ์ `/help` ดูเวอร์ชันจริง
 
+> Current repository note (2026-08-10): เอกสารนี้เป็นที่มาของ Claude-specific mapping.
+> Runtime ปัจจุบันใช้ `AGENTS.md` + `.ai/shared/` + `.agents/skills/` เป็น source กลาง และ
+> `.claude/rules/*` เป็น thin pointer เท่านั้น. ใช้ [Operating Manual](docs/README.md) สำหรับ
+> workflow ปัจจุบัน และ [PR gate production runbook](docs/08-pr-quality-gate-production.md)
+> สำหรับ GitHub PR; เมื่อข้อความขัดกันให้ยึด source กลางและ approved feature spec.
+
 ---
 
 ## 0. Kiro → Claude Code: ตารางแปลงโดยตรง
@@ -1031,8 +1037,8 @@ template ดั้งเดิมสั่ง "append บทเรียนเ�
    Dynamics, Seeds Planted, Teaching Moments, Lessons Learned, Next Steps, และ Pre-Save
    Validation (HARD STOP ถ้ากรอกช่องไม่ครบ)
 3. **Promote บทเรียน (token-safe — ดู §10)** — ห้าม append เข้า CLAUDE.md; ใส่เฉพาะบทเรียนที่
-   "ใช้ซ้ำได้จริงและกันพลาด" เข้า `.claude/rules/lessons.md` แบบคัด+ตัดของเก่า
-4. **Commit** — `git add retrospectives/ .claude/rules/lessons.md && git commit -m "docs: session retrospective ..."`
+   "ใช้ซ้ำได้จริงและกันพลาด" เข้า `.ai/shared/LESSONS.md` แบบคัด+ตัดของเก่า
+4. **Commit** — stage `retrospectives/` กับ `.ai/shared/LESSONS.md` ผ่าน branch/PR workflow ปกติ
 
 frontmatter: `disable-model-invocation: true` (manual เท่านั้น ผู้ใช้พิมพ์ `/spec-retro` เอง),
 `allowed-tools: Bash, Read, Write, Glob`. (อยากใช้ชื่อ `/rrr` ตามดีไซน์เดิม ตั้งชื่อโฟลเดอร์เป็น `rrr` ได้)
@@ -1041,7 +1047,7 @@ frontmatter: `disable-model-invocation: true` (manual เท่านั้น �
 > `session_breakdown`/`render_breakdown`), `session-cost.py` (standalone), `inject-cost.py` /
 > `backfill-cost.sh` (เขียน ledger ต่อ session ผ่าน statusline). ledger **ต้องมีก่อน session เริ่ม** —
 > session ปิดแล้ว resume จะ reset cost=0 กู้ไม่ได้. อย่าคูณ token จาก transcript เป็น cost (overcount
-> 1.6–3.7x) — ดู `.claude/rules/lessons.md`
+> 1.6–3.7x) — ดู `.ai/shared/LESSONS.md`
 
 ---
 
@@ -1050,13 +1056,13 @@ frontmatter: `disable-model-invocation: true` (manual เท่านั้น �
 ถ้าจำได้แค่ไม่กี่อย่าง:
 
 - **CLAUDE.md** = พฤติกรรม spec-driven + กฎ EARS + ลิงก์ไป rules (อ่านทุก session)
-- **`.claude/rules/`** = Steering (ไม่มี `paths:` = always, มี `paths:` = fileMatch)
+- **`.ai/shared/`** = canonical steering/protocol; `.claude/rules/` = Claude pointer/conditional adapter
 - **`.claude/skills/spec-*`** = เฟสของ workflow เรียกด้วย `/spec-*` หรือ Claude เรียกเอง
 - **`.claude/agents/`** = ผู้เชี่ยวชาญเฉพาะทาง (architect, debugger, PBT) ในคอนเทกซ์แยก
 - **`.claude/settings.json`** = hooks (`TaskCompleted`/`Stop`/`PostToolUse` = Pre/Post Task & lint/test ของ Kiro)
 - **CLI** = `claude` ทำงาน interactive, `claude -p` headless, `-c`/`-r` ทำงานต่อ — ทุกอย่าง commit ขึ้น git แชร์ทั้งทีมได้
 - **Token discipline** = ตัด noise ไม่ตัดความสามารถ · 1 task = 1 session แล้ว `/clear` โดยมี spec ในไฟล์เป็นความทรงจำถาวร · correctness สำคัญกว่า token เสมอ — ห้ามล้าง/บีบ context กลาง task ที่ state ยังอยู่แค่ในแชต
-- **Session Retrospective** = `/spec-retro` รัน **ก่อน `/clear`** (ตอนประวัติยังอยู่) เก็บลง `retrospectives/` · บทเรียนที่ใช้ซ้ำได้ promote เข้า `.claude/rules/lessons.md` แบบคัด+ตัด ไม่ยัดเข้า CLAUDE.md (กัน bloat ตามข้อ 10)
+- **Session Retrospective** = `/spec-retro` รัน **ก่อน `/clear`** (ตอนประวัติยังอยู่) เก็บลง `retrospectives/` · บทเรียนที่ใช้ซ้ำได้ promote เข้า `.ai/shared/LESSONS.md` แบบคัด+ตัด ไม่ยัดเข้า CLAUDE.md (กัน bloat ตามข้อ 10)
 
 ---
 

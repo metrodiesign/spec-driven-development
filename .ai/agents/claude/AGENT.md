@@ -102,11 +102,10 @@ features; split per pane only for independent work or to isolate accuracy.
 ## Enforcement floor (shared with every agent)
 
 Even with Claude's harness hooks, the durable gates are Tier 1: committed git
-hooks (`.githooks/` via `core.hooksPath`) and CI. They catch secrets, branch/
-force-push violations, typecheck/test failures, and spec REQ-coverage on every
-commit/push (git hooks) and every develop-targeted PR (CI, per `ci.yml` `branches:
-[develop]`) — for every agent and every human. Treat git + CI as the real floor;
-the Claude hooks are an early, in-session convenience on top of it.
+hooks (`.githooks/` via `core.hooksPath`) and CI. Hooks enforce configured clones;
+CI reports secrets, typecheck/test and spec REQ-coverage on matching PRs. Server-side
+merge blocking exists only when a repository ruleset/branch protection requires the
+exact checks. Claude hooks remain an early, in-session convenience.
 
 ## Capabilities and limitations
 

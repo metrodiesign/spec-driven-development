@@ -2,13 +2,15 @@
 // F-Skill/F-Sys). Testable without a DOM — the views stay thin (ARCHITECTURE).
 
 export interface SysStats {
-  platform: string;
-  arch: string;
-  cpus: number;
-  totalMem: number;
-  freeMem: number;
-  loadAvg: number[];
-  uptimeS: number;
+  platform: string | null;
+  arch: string | null;
+  cpus: number | null;
+  totalMem: number | null;
+  freeMem: number | null;
+  loadAvg: number[] | null;
+  uptimeS: number | null;
+  degraded?: true;
+  unavailableMetrics?: string[];
 }
 
 function gib(bytes: number): string {
@@ -17,11 +19,18 @@ function gib(bytes: number): string {
 
 /** One line per host stat for the F-Sys card. */
 export function statsRows(s: SysStats): string[] {
+  const platform = s.platform ?? 'unavailable';
+  const arch = s.arch ?? 'unavailable';
+  const cpus = s.cpus === null ? 'unavailable' : `${s.cpus} CPUs`;
+  const freeMem = s.freeMem === null ? 'unavailable' : gib(s.freeMem);
+  const totalMem = s.totalMem === null ? 'unavailable' : gib(s.totalMem);
+  const load = s.loadAvg === null ? 'unavailable' : (s.loadAvg[0] ?? 0).toFixed(2);
+  const uptime = s.uptimeS === null ? 'unavailable' : `${Math.floor(s.uptimeS / 3600)}h`;
   return [
-    `host: ${s.platform}/${s.arch} · ${s.cpus} CPUs`,
-    `memory: ${gib(s.freeMem)} free of ${gib(s.totalMem)}`,
-    `load (1m): ${(s.loadAvg[0] ?? 0).toFixed(2)}`,
-    `uptime: ${Math.floor(s.uptimeS / 3600)}h`,
+    `host: ${platform}/${arch} · ${cpus}`,
+    `memory: ${freeMem} free of ${totalMem}`,
+    `load (1m): ${load}`,
+    `uptime: ${uptime}`,
   ];
 }
 

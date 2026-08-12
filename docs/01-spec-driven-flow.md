@@ -1,7 +1,8 @@
 # 1. Spec-Driven Flow + Gates
 
 โปรเจกต์นี้ทำ **strict spec-driven development**: spec มาก่อนโค้ดเสมอ ห้ามกระโดดไป implement
-ฟีเจอร์ที่ไม่ trivial. ต้นทาง: `../CLAUDE.md`.
+ฟีเจอร์ที่ไม่ trivial. ต้นทาง: `../.ai/shared/TASK_PROTOCOL.md` และ
+`../.ai/shared/EARS.md`.
 
 ## 1.1 สาม artifact + approval gate
 
@@ -17,8 +18,8 @@ tasks.md          discrete implementation steps
 implement         ลงมือทีละ task
 ```
 
-หลังสร้างแต่ละ artifact -> **STOP** ขอ review ก่อนไปขั้นถัดไป. ข้อยกเว้นเดียว: `/spec-quick`
-(รันทุก phase ไม่มี gate — ระบุใน CLAUDE.md).
+หลังสร้างแต่ละ artifact -> **STOP** ขอ review ก่อนไปขั้นถัดไป. ข้อยกเว้นเดียว: `spec-quick`
+(รันทุก phase ไม่มี approval gate ตาม skill contract).
 
 แต่ละ artifact มี header `> Status: draft|approved <YYYY-MM-DD>` — gate = flip `draft` ->
 `approved` เมื่อได้รับอนุมัติ. Status นี้เป็นสัญญาณที่ `spec-edit-guard` hook และ `/spec-tasks`
@@ -45,7 +46,7 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
 - **ห้าม** pre-split เป็น 1.1/1.2 ใน tasks.md — โมเดลแตกขั้นย่อยเองตอน execute ด้วย TODO ภายใน
 - เน้น vertical slice (model -> API -> validation -> tests) ไม่ใช่ horizontal layer ที่ใช้เดี่ยวไม่ได้
 
-## 1.4 Slash command ทั้งหมด
+## 1.4 Commands/skills ทั้งหมด
 
 | คำสั่ง                             | หน้าที่                                        |
 | ---------------------------------- | ---------------------------------------------- |
@@ -57,14 +58,18 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
 | `/spec-implement <id\|range\|all>` | ลงมือ task เดียว/ช่วง/ทั้งหมด end-to-end       |
 | `/spec-bugfix <bug>`               | workflow แก้บั๊กแบบ root-cause-first           |
 | `/spec-pbt`                        | สกัด property + เขียน property-based test      |
+| `/spec-quick <idea>`               | requirements -> design -> tasks -> implement สำหรับงานเล็ก โดยไม่หยุด approval gate |
+| `/spec-sync-github <feature>`      | mirror tasks เป็น Epic + native sub-issues แบบ idempotent |
 | `/spec-retro`                      | retrospective — รันตอนจบ session ก่อน `/clear` |
 
-นิยามจริงอยู่ `../.claude/skills/spec-*/SKILL.md`.
+Claude เรียกด้วย slash command; Codex/OpenCode/Pi เรียก Agent Skills จาก
+`../.agents/skills/spec-*/SKILL.md`. Router เหล่านี้อ้าง procedure source ชุดเดียวกันตาม
+`../.ai/README.md`; ห้ามคัดลอก phase logic ไปสร้าง variant ใหม่.
 
 > `spec-architect` เป็น **agent** (ไม่ใช่ slash command) — fresh-context **adversarial reviewer**
 > (default mode = critique). `/spec-design` delegate ให้ critique `design.md` ก่อน STOP;
 > `/spec-analyze` audit `requirements.md`. produce mode (เขียน architecture จริง) เฉพาะ
-> design-first ที่ขอ explicit. นิยาม: `../.claude/agents/spec-architect.md`.
+> design-first ที่ขอ explicit. นิยามกลาง: `../.ai/roles/spec-architect.md`.
 
 ## 1.5 working agreements สำคัญ
 
@@ -89,7 +94,8 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
   tasks.md/design.md — **ห้าม clear/compact กลาง task ที่ state อยู่แต่ในแชต**. `precompact-persist`
   (PreCompact hook) inject เตือน persist state อัตโนมัติก่อน compact — แต่ best-effort เท่านั้น
   โมเดลยังเป็นคนเขียน (ดู [05-hooks.md](05-hooks.md))
-- prefer fresh session ต่อ task (reload ด้วย `@` อ่าน spec) ดีกว่า session ยาว
+- task ที่ coupled สูงให้รัน all-in-one ตาม dependency เพื่อลด context reload; ใช้ fresh session
+  เมื่อ isolation/accuracy มีค่ามากกว่าต้นทุน แล้ว persist handoff ก่อนสลับ
 
 ## 1.7 ตัวอย่าง spec ของจริง
 

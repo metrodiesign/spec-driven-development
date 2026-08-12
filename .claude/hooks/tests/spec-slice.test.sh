@@ -304,9 +304,9 @@ cat > "$R/.ai/specs/bad-shared-section-fixture/requirements.md" <<'EOF'
 # Requirements: Bad Shared Section Fixture
 > Status: approved 2099-01-01
 ## REQ-1: First requirement
-Text.
+- 1.1 THE SYSTEM SHALL do the first thing.
 ## REQ-2: Second requirement
-Text.
+- 2.1 THE SYSTEM SHALL do the second thing.
 EOF
 cat > "$R/.ai/specs/bad-shared-section-fixture/design.md" <<'EOF'
 # Design: Bad Shared Section Fixture
@@ -334,6 +334,16 @@ else
   fail=$((fail+1)); echo "FAIL: two REQs sharing one unresolvable Section value should each print their own MISSING, got $COUNT :: rc=$RC :: $OUT"
 fi
 
+echo "=== spec-trace: live spec rejects Section values that do not match a real ## heading ==="
+OUT=$( cd "$R" && "$SPEC_TRACE" bad-shared-section-fixture .ai/specs 2>&1 ); RC=$?
+if [ "$RC" -eq 1 ] \
+  && printf '%s' "$OUT" | grep -q 'Broken Section Name' \
+  && printf '%s' "$OUT" | grep -q '## heading'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-trace should reject an unresolvable Section value :: rc=$RC :: $OUT"
+fi
+
 echo "=== spec-slice: table with no Section column at all -> each matched row MISSING distinctly, not collapsed (REQ-3.9) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/no-section-column-fixture"
@@ -341,9 +351,9 @@ cat > "$R/.ai/specs/no-section-column-fixture/requirements.md" <<'EOF'
 # Requirements: No Section Column Fixture
 > Status: approved 2099-01-01
 ## REQ-1: First requirement
-Text.
+- 1.1 THE SYSTEM SHALL do the first thing.
 ## REQ-2: Second requirement
-Text.
+- 2.1 THE SYSTEM SHALL do the second thing.
 EOF
 cat > "$R/.ai/specs/no-section-column-fixture/design.md" <<'EOF'
 # Design: No Section Column Fixture
@@ -372,6 +382,119 @@ if [ "$RC" -eq 0 ] \
   pass=$((pass+1))
 else
   fail=$((fail+1)); echo "FAIL: pre-retrofit table (no Section column) must MISSING each row distinctly, not collapse to one :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-trace: live spec rejects a traceability table with no Section column ==="
+OUT=$( cd "$R" && "$SPEC_TRACE" no-section-column-fixture .ai/specs 2>&1 ); RC=$?
+if [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -q 'Section column'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-trace should reject a missing Section column :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-trace: live spec rejects a traceability table with no REQ or Satisfies column ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/no-req-column-fixture"
+cat > "$R/.ai/specs/no-req-column-fixture/requirements.md" <<'EOF'
+# Requirements: No REQ Column Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+- 1.1 THE SYSTEM SHALL do the thing.
+EOF
+cat > "$R/.ai/specs/no-req-column-fixture/design.md" <<'EOF'
+# Design: No REQ Column Fixture
+> Status: approved 2099-01-01
+## Real Section
+Content.
+## Requirement Traceability
+| Design element | Section |
+|---|---|
+| REQ-1 design | Real Section |
+EOF
+cat > "$R/.ai/specs/no-req-column-fixture/tasks.md" <<'EOF'
+# Tasks: No REQ Column Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+OUT=$( cd "$R" && "$SPEC_TRACE" no-req-column-fixture .ai/specs 2>&1 ); RC=$?
+if [ "$RC" -eq 1 ] \
+  && printf '%s' "$OUT" | grep -q 'REQ' \
+  && printf '%s' "$OUT" | grep -q 'Satisfies'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-trace should reject a missing REQ/Satisfies column :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-trace: live spec rejects REQ coverage placed outside the named REQ column ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/misplaced-req-fixture"
+cat > "$R/.ai/specs/misplaced-req-fixture/requirements.md" <<'EOF'
+# Requirements: Misplaced REQ Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+- 1.1 THE SYSTEM SHALL do the thing.
+EOF
+cat > "$R/.ai/specs/misplaced-req-fixture/design.md" <<'EOF'
+# Design: Misplaced REQ Fixture
+> Status: approved 2099-01-01
+## Real Section
+Content.
+## Requirement Traceability
+| Design element | REQ | Section |
+|---|---|---|
+| REQ-1 design | | Real Section |
+EOF
+cat > "$R/.ai/specs/misplaced-req-fixture/tasks.md" <<'EOF'
+# Tasks: Misplaced REQ Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+OUT=$( cd "$R" && "$SPEC_TRACE" misplaced-req-fixture .ai/specs 2>&1 ); RC=$?
+if [ "$RC" -eq 1 ] \
+  && printf '%s' "$OUT" | grep -q 'REQ/Satisfies column' \
+  && printf '%s' "$OUT" | grep -q '1.1'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-trace should require coverage inside the named REQ/Satisfies column :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-trace: live spec rejects an empty Section cell and names its REQ ==="
+R="$(new_repo)"
+mkdir -p "$R/.ai/specs/empty-section-fixture"
+cat > "$R/.ai/specs/empty-section-fixture/requirements.md" <<'EOF'
+# Requirements: Empty Section Fixture
+> Status: approved 2099-01-01
+## REQ-1: First requirement
+- 1.1 THE SYSTEM SHALL do the thing.
+EOF
+cat > "$R/.ai/specs/empty-section-fixture/design.md" <<'EOF'
+# Design: Empty Section Fixture
+> Status: approved 2099-01-01
+## Real Section
+Content.
+## Requirement Traceability
+| Design element | REQ | Section |
+|---|---|---|
+| Real Section design | REQ-1 | |
+EOF
+cat > "$R/.ai/specs/empty-section-fixture/tasks.md" <<'EOF'
+# Tasks: Empty Section Fixture
+> Status: approved 2099-01-01
+- [ ] 1. Only task
+     Satisfies: REQ-1
+     Verify: something
+EOF
+OUT=$( cd "$R" && "$SPEC_TRACE" empty-section-fixture .ai/specs 2>&1 ); RC=$?
+if [ "$RC" -eq 1 ] \
+  && printf '%s' "$OUT" | grep -q 'Section' \
+  && printf '%s' "$OUT" | grep -q 'REQ-1'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-trace should reject an empty Section cell and name its REQ :: rc=$RC :: $OUT"
 fi
 
 echo "=== spec-slice: a heading-shaped line inside a fenced code block is never a boundary, in requirements.md, design.md, or the traceability table itself (REQ-3.11) ==="
@@ -641,7 +764,7 @@ cat > "$R/.ai/specs/satisfies-header-fixture/requirements.md" <<'EOF'
 # Requirements: Satisfies Header Fixture
 > Status: approved 2099-01-01
 ## REQ-1: First requirement
-Text.
+- 1.1 THE SYSTEM SHALL do the thing.
 EOF
 cat > "$R/.ai/specs/satisfies-header-fixture/design.md" <<'EOF'
 # Design: Satisfies Header Fixture
@@ -649,9 +772,9 @@ cat > "$R/.ai/specs/satisfies-header-fixture/design.md" <<'EOF'
 ## Real Section
 Content reached via a table headed "Satisfies", not "REQ".
 ## Requirement Traceability
-| Design element | Satisfies | Section |
+| Section | Design element | Satisfies |
 |---|---|---|
-| Real Section design | REQ-1 | Real Section |
+| Real Section | Real Section design | REQ-1 |
 EOF
 cat > "$R/.ai/specs/satisfies-header-fixture/tasks.md" <<'EOF'
 # Tasks: Satisfies Header Fixture
@@ -671,6 +794,14 @@ else
   fail=$((fail+1)); echo "FAIL: 'Satisfies'-headed traceability table should still match REQ column :: rc=$RC :: $OUT"
 fi
 
+echo "=== spec-trace: valid reordered Satisfies table passes ==="
+OUT=$( cd "$R" && "$SPEC_TRACE" satisfies-header-fixture .ai/specs 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-trace should accept reordered columns and Satisfies header :: rc=$RC :: $OUT"
+fi
+
 echo "=== spec-slice: header row without a trailing pipe still resolves its last column (header_col() off-by-one) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/no-trailing-pipe-fixture"
@@ -678,7 +809,7 @@ cat > "$R/.ai/specs/no-trailing-pipe-fixture/requirements.md" <<'EOF'
 # Requirements: No Trailing Pipe Fixture
 > Status: approved 2099-01-01
 ## REQ-1: First requirement
-Text.
+- 1.1 THE SYSTEM SHALL do the thing.
 EOF
 cat > "$R/.ai/specs/no-trailing-pipe-fixture/design.md" <<'EOF'
 # Design: No Trailing Pipe Fixture
@@ -706,6 +837,14 @@ if [ "$RC" -eq 0 ] \
   pass=$((pass+1))
 else
   fail=$((fail+1)); echo "FAIL: header row without a trailing pipe should still resolve its last (Section) column :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-trace: valid table without trailing pipes passes ==="
+OUT=$( cd "$R" && "$SPEC_TRACE" no-trailing-pipe-fixture .ai/specs 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-trace should accept a valid table without trailing pipes :: rc=$RC :: $OUT"
 fi
 
 echo "=== spec-slice: a second header/separator-shaped row in the traceability table still resolves correctly or fails loud, never silently wrong (regression coverage for the header-detection rewrite) ==="

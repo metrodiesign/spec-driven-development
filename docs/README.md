@@ -1,7 +1,7 @@
 # คู่มือการทำงาน (Operating Manual)
 
-คู่มือปฏิบัติของโปรเจกต์นี้ — spec-driven development บน Claude Code พร้อม automation,
-cost tracking และ retrospective. อ่านตามลำดับสำหรับคนใหม่ หรือกระโดดเข้าหัวข้อที่ต้องการ.
+คู่มือปฏิบัติของโปรเจกต์นี้ — spec-driven development, automation, cost/retro และ
+Universal PR Quality Gate. อ่านตามลำดับสำหรับคนใหม่ หรือกระโดดเข้าหัวข้อที่ต้องการ.
 
 ## สารบัญ
 
@@ -19,19 +19,23 @@ cost tracking และ retrospective. อ่านตามลำดับส�
    epic + sub-issue, label, ผูก PR, CI gate
 7. [Packages / workspace guide](07-packages.md) — แต่ละ workspace (core/aal/adapters/console/scripts)
    คืออะไร รับผิดชอบอะไร งานแบบไหนลงที่ไหน พร้อมตัวอย่างโค้ดจริง + ตาราง "งานแบบนี้ลงที่ไหน"
+8. [Universal PR Quality Gate production](08-pr-quality-gate-production.md) — activation gate,
+   GitHub Actions, CLI, Console, REST API, conformance, monitoring, troubleshooting และ rollback
 
 ## แหล่งความจริง (source of truth) — ห้ามขัดกับไฟล์เหล่านี้
 
-| เรื่อง                   | ไฟล์                                           |
-| ------------------------ | ---------------------------------------------- |
-| รัฐธรรมนูญ workflow      | `../CLAUDE.md`                                 |
-| มาตรฐานโปรเจกต์          | `../.claude/rules/{product,tech,structure}.md` |
-| บทเรียนสะสม              | `../.claude/rules/lessons.md`                  |
-| spec ของแต่ละฟีเจอร์     | `../.ai/specs/<feature>/`                  |
-| นิยาม skill (slash)      | `../.claude/skills/spec-*/`                    |
-| hooks (guardrails)       | `../.claude/hooks/` + `../.claude/settings.json` |
-| agent definitions        | `../.claude/agents/`                           |
-| อ้างอิง Kiro->CC ละเอียด | `../claude-code-spec-driven-workflow.md`       |
+| เรื่อง | ไฟล์ |
+|---|---|
+| Front door ทุก agent | `../AGENTS.md` |
+| Product/architecture/standards/protocol | `../.ai/shared/` |
+| บทเรียนสะสม | `../.ai/shared/LESSONS.md` |
+| Spec ของแต่ละฟีเจอร์ | `../.ai/specs/<feature>/` |
+| Spec skills ที่ทุก harness เรียกได้ | `../.agents/skills/spec-*/` |
+| Check engine กลาง | `../.ai/bin/` |
+| Git enforcement floor | `../.githooks/` + `../.github/workflows/` |
+| Per-agent adapters | `../.ai/agents/` + `../.{claude,codex,opencode}/` |
+| PR gate production contract | `08-pr-quality-gate-production.md` |
+| อ้างอิง Kiro gap ล่าสุด | `kiro-current-gap-analysis.md` |
 
-> เอกสารใน `docs/` เป็นคู่มือ "วิธีทำงาน" — เมื่อเนื้อหาขัดกับ `CLAUDE.md` หรือ `.claude/rules/`
-> ให้ยึดไฟล์ต้นทางเสมอ แล้วอัปเดต docs ตาม.
+> เอกสารใน `docs/` เป็นคู่มือวิธีทำงาน. เมื่อขัดกับ approved feature spec, `.ai/shared/`,
+> policy/workflow หรือ source runtime ให้ยึด contract เหล่านั้น แล้วอัปเดต docs ตาม.

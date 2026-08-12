@@ -11,9 +11,9 @@
   runner.
 - Unit tests cover **pure logic** only, co-located with the logic under test in the project
   test directory; that is where headless tests go.
-- A project has an integration-test tier against a real service only if it actually ships a
-  DB / backend — otherwise there is none. UI behavior, when the project ships a UI, is
-  verified in its target runtime (see below), not by the headless test runner.
+- A project has an integration-test tier against a real service only if it ships that boundary.
+  Repo นี้มี `console/backend`, SQLite event logs, GitHub/provider ports และ Console SPA จึงมี
+  backend/integration/fault tests จริง; external live provider calls ยังแยกเป็น manual conformance.
 
 ## Pure-logic-first
 
@@ -37,10 +37,10 @@ layering in [ARCHITECTURE.md](ARCHITECTURE.md).
 - For a bugfix, validation is three-dimensional: (a) a repro test that is RED before the
   fix and GREEN after (the F-IDs), (b) a 1:1 assertion for every B-ID, (c) each
   assertion checks the observable failure mode.
-- No `.only` / `.skip` may be committed. Coverage must not fall below the project
-  threshold. (Both are wired by the DOWNSTREAM project's CI — the framework provides the
-  `SDD_TEST_CMD` hook pattern; this framework repo ships no app tests, so its own CI does
-  not gate them. See [SECURITY_RULES.md](SECURITY_RULES.md) for what its CI does run.)
+- No `.only` / `.skip` may be committed. Coverage must not fall below the project threshold.
+  Repo นี้รัน tests ของทุก Node workspace ผ่าน `scripts/ci-test-scope.sh`; downstream project
+  ยังใช้ `SDD_TEST_CMD`/`SDD_TYPECHECK_CMD` ผ่าน task gate. ดู exact CI และ required-check
+  activation ใน [SECURITY_RULES.md](SECURITY_RULES.md).
 
 ## UI verification
 

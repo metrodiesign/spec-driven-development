@@ -4,7 +4,7 @@
 // to start; --insecure is never a default and always warns loudly.
 
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -38,6 +38,9 @@ const HELP = `usage:
   platform conformance --live
   platform governance list | platform governance approve <id>
   platform auditor run --db <path> --repo <dir> [--rate <pct>]
+  platform pr-gate run --repo <owner/name> --pr <number>
+  platform pr-gate analyze --repo <owner/name> --pr <number> --workflow-run-id <id> --out <file>
+  platform pr-gate finalize --artifact <file> --repo <owner/name> --workflow-run-id <id> --source-head <sha>
 
   console:
     --port      port to listen on (default 9119)
@@ -58,7 +61,7 @@ const HELP = `usage:
   conformance:
     --live      run P1-P8 against the REAL adapter (~10 requests) and persist the
                 ConformanceRecord to .ai/calibration/ — same structural guards as loop --live
-    --lineage   which real adapter to probe: claude (default) | codex
+    --lineage   adapter to probe: claude (default) | codex | gemini-cli | opencode-deepseek
     --force-quota-override  bypass the automation quota guard's refusal ONLY
   auditor run:
     --db        path to the events.db to audit (its own EventLog handle — a separate process, REQ-14.7)
@@ -179,6 +182,89 @@ async function runAuditor(rest: string[]): Promise<void> {
   process.exit(result.code);
 }
 
+async function runPrGate(rest: string[]): Promise<void> {
+  const repositoryPath = process.cwd();
+  const policyDir = join(repositoryPath, '.ai', 'policies');
+  const governanceLogPath = join(repositoryPath, '.ai', 'governance', 'events.jsonl');
+  if (rest[0] === 'analyze') {
+    const { values } = parseArgs({
+      args: rest.slice(1),
+      options: { repo: { type: 'string' }, pr: { type: 'string' }, 'workflow-run-id': { type: 'string' }, out: { type: 'string' } },
+    });
+    const pullRequest = Number(values.pr);
+    const workflowRunId = Number(values['workflow-run-id']);
+    if (values.repo === undefined || !/^[^/\s]+\/[^/\s]+$/u.test(values.repo) || !Number.isInteger(pullRequest) || pullRequest <= 0 || !Number.isInteger(workflowRunId) || workflowRunId <= 0 || values.out === undefined) {
+      process.stderr.write('platform pr-gate analyze: invalid or missing --repo, --pr, --workflow-run-id, or --out\n');
+      process.exitCode = 1;
+      return;
+    }
+    const { createUntrustedAnalysisArtifact } = await import('../src/pr-gate/untrusted-analysis.ts');
+    const githubReadToken = process.env['GITHUB_TOKEN'];
+    delete process.env['GITHUB_TOKEN'];
+    const artifact = await createUntrustedAnalysisArtifact({
+      repositoryPath,
+      stateRoot: join(homedir(), '.platform', 'pr-gate-analysis', String(workflowRunId)),
+      repository: values.repo as `${string}/${string}`,
+      pullRequest,
+      workflowRunId,
+      env: process.env,
+      ...(githubReadToken === undefined ? {} : { token: githubReadToken }),
+    });
+    writeFileSync(values.out, `${JSON.stringify(artifact)}\n`, { flag: 'wx', mode: 0o600 });
+    process.stdout.write(`PR quality analysis artifact: ${values.out}\n`);
+    return;
+  }
+
+  const approved = ensureGovernanceApproved({ policyDir, logPath: governanceLogPath, clock: { now: () => Date.now() } });
+  if (!approved.ok) {
+    process.stderr.write(`platform pr-gate: policy_unapproved\n  approve with: ${approved.approveCommand}\n`);
+    process.exitCode = 5;
+    return;
+  }
+  const { createLivePrGateRuntime } = await import('../src/pr-gate/composition.ts');
+  const { runPrGateCommand } = await import('../src/pr-gate-cli.ts');
+  const runtime = createLivePrGateRuntime({
+    repositoryPath,
+    stateRoot: join(homedir(), '.platform', 'pr-gate'),
+    policyDir,
+    governanceLogPath,
+    calibrationDir: join(repositoryPath, '.ai', 'calibration'),
+    env: process.env,
+  });
+  try {
+    if (rest[0] === 'finalize') {
+      const { values } = parseArgs({
+        args: rest.slice(1),
+        options: {
+          artifact: { type: 'string' }, repo: { type: 'string' },
+          'workflow-run-id': { type: 'string' }, 'source-head': { type: 'string' },
+        },
+      });
+      const workflowRunId = Number(values['workflow-run-id']);
+      if (values.artifact === undefined || values.repo === undefined || !/^[^/\s]+\/[^/\s]+$/u.test(values.repo) || !Number.isInteger(workflowRunId) || workflowRunId <= 0 || values['source-head'] === undefined || !/^[0-9a-f]{40,64}$/u.test(values['source-head'])) {
+        process.stderr.write('platform pr-gate finalize: invalid or missing artifact provenance arguments\n');
+        process.exitCode = 1;
+        return;
+      }
+      if (statSync(values.artifact).size > 90 * 1024 * 1024) throw new Error('PR quality analysis artifact exceeds 90 MiB');
+      const artifact = JSON.parse(readFileSync(values.artifact, 'utf8')) as import('../src/pr-gate/workflow-artifact.ts').TrustedAnalysisArtifact;
+      const projection = await runtime.runTrustedArtifact(artifact, {
+        workflowRunId, repository: values.repo as `${string}/${string}`, event: 'pull_request', sourceWorkflowHeadSha: values['source-head'],
+      });
+      process.stdout.write(`${JSON.stringify(projection)}\n`);
+      process.exitCode = projection.systemDecision === 'PASS' || projection.systemDecision === 'PASS_WITH_WARNINGS'
+        ? 0 : projection.systemDecision === 'HUMAN_REVIEW_REQUIRED' ? 2 : projection.systemDecision === 'FAIL' ? 3 : 4;
+    } else {
+      const result = await runPrGateCommand({ argv: rest, manager: runtime.manager });
+      if (result.out !== '') process.stdout.write(result.out);
+      if (result.err !== '') process.stderr.write(result.err);
+      process.exitCode = result.code;
+    }
+  } finally {
+    runtime.close();
+  }
+}
+
 /** Append-only console audit trail (REQ-18.3): pre-run guard decisions + loop operability calls. */
 function auditAppend(entry: Record<string, unknown>): void {
   const p = join(homedir(), '.platform', 'audit.jsonl');
@@ -277,10 +363,10 @@ async function runConformance(rest: string[]): Promise<void> {
       lineage: { type: 'string', default: 'claude' },
     },
   });
-  if (values.lineage !== 'claude' && values.lineage !== 'codex') {
+  if (!['claude', 'codex', 'gemini-cli', 'opencode-deepseek'].includes(values.lineage)) {
     // A typo must refuse before any live spend, never silently fall back to
     // claude (Codex review finding on PR #47).
-    process.stderr.write(`platform conformance: --lineage must be "claude" or "codex", got ${JSON.stringify(values.lineage)}\n`);
+    process.stderr.write(`platform conformance: unsupported --lineage ${JSON.stringify(values.lineage)}\n`);
     process.exit(1);
   }
   const lineage = values.lineage;
@@ -316,27 +402,37 @@ async function runConformance(rest: string[]): Promise<void> {
   const evidence = createEvidenceStore(join(calDir, 'evidence'));
   const initiatorRef = evidence.put(initiatorRecord(`conformance --live --lineage ${lineage}`));
   mkdirSync(agentSessionsCwd(), { recursive: true });
-  const { createLiveAnthropicAdapter, createLiveCodexAdapter } = await import('adapters');
+  const {
+    createLiveAnthropicAdapter,
+    createLiveCodexAdapter,
+    createLiveGeminiAdapter,
+    createLiveOpenCodeDeepSeekAdapter,
+  } = await import('adapters');
+  const common = {
+    cwd: agentSessionsCwd(),
+    replayDir: join(calDir, 'replay', stamp),
+    putEvidence: (s: string) => evidence.put(s),
+  };
   const adapter =
     lineage === 'codex'
       ? createLiveCodexAdapter({
+          ...common,
           id: 'codex',
-          cwd: agentSessionsCwd(),
           // PER-RUN dir (gitignored): every conformance run must probe the REAL model —
           // a reusable/committed replay dir would let a "live" record mint from canned
           // responses (gate theater, defeats the drift canary). P8's within-run retry
           // still replays from this dir at zero extra quota.
-          replayDir: join(calDir, 'replay', stamp),
-          putEvidence: (s) => evidence.put(s),
         })
+      : lineage === 'gemini-cli'
+        ? createLiveGeminiAdapter({ ...common, ...(process.env['PR_GATE_GEMINI_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_GEMINI_MODEL'] }) })
+        : lineage === 'opencode-deepseek'
+          ? createLiveOpenCodeDeepSeekAdapter({ ...common, ...(process.env['PR_GATE_DEEPSEEK_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_DEEPSEEK_MODEL'] }) })
       : createLiveAnthropicAdapter({
+          ...common,
           id: 'claude',
           model: cfg.autonomousModel, // policy default (Sonnet); Opus stays interactive (§10.2, REQ-16.3)
           systemPrompt: LIVE_SYSTEM_PROMPT,
-          cwd: agentSessionsCwd(),
-          replayDir: join(calDir, 'replay', stamp),
           transcriptDir: agentTranscriptDir(),
-          putEvidence: (s) => evidence.put(s),
         });
   const { runConformanceSuite } = await import('aal');
   const record = await runConformanceSuite(adapter, { put: (s) => evidence.put(s) }, ranAt);
@@ -554,6 +650,10 @@ async function main(): Promise<void> {
     await runAuditor(rest);
     return;
   }
+  if (command === 'pr-gate') {
+    await runPrGate(rest);
+    return;
+  }
   if (command !== 'console') {
     process.stderr.write(HELP);
     process.exit(command === undefined || command === '--help' ? 0 : 1);
@@ -652,6 +752,15 @@ async function main(): Promise<void> {
     homeDir: homedir(),
   });
 
+  const { createLivePrGateRuntime } = await import('../src/pr-gate/composition.ts');
+  const prGateRuntime = createLivePrGateRuntime({
+    repositoryPath: process.cwd(),
+    stateRoot: join(dataDir, 'pr-gate'),
+    policyDir: join(process.cwd(), '.ai', 'policies'),
+    governanceLogPath: join(process.cwd(), '.ai', 'governance', 'events.jsonl'),
+    calibrationDir: join(process.cwd(), '.ai', 'calibration'),
+    env: process.env,
+  });
   const app = buildApp({
     homeDir: homedir(),
     env: process.env,
@@ -672,6 +781,7 @@ async function main(): Promise<void> {
     issuesRateOk: createSpawnRateLimiter(10),
     chat: chatRuntime.manager,
     chatRateOk: createSpawnRateLimiter(10),
+    prGateManager: prGateRuntime.manager,
     audit: auditAppend,
     ...(behindProxyHost !== undefined ? { behindProxyHost } : {}),
     ...(authProvider ? { auth: authProvider } : {}),
@@ -686,6 +796,7 @@ async function main(): Promise<void> {
       rateOk: createSpawnRateLimiter(10),
     },
   });
+  app.addHook('onClose', async () => prGateRuntime.close());
 
   await app.listen({ host, port });
   if (termRuntime !== undefined) termRuntime.attachWs(app.server);
