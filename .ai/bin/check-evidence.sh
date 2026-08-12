@@ -8,6 +8,7 @@
 #
 # usage: check-evidence.sh --strict            < content
 #        check-evidence.sh --added-only FILE   < content
+#        check-evidence.sh --lines-strict FILE < content
 #
 # --strict      every `[x]` task region in stdin needs its OWN non-trivial Evidence
 #               (inline value or block bullet) — gate-task.sh's semantics, verbatim.
@@ -18,34 +19,48 @@
 #               this to the --strict non-trivial check.
 #               FILE empty -> exit 0 (no newly-added tasks this diff; ARC-F7).
 #               FILE missing/unreadable -> exit 2 (caller bug; fail closed).
+# --lines-strict FILE lists positive, unique physical line numbers. Only completed-task
+#               regions opening on those lines are checked with --strict semantics.
+#               Invalid numbers or lines that are not completed-task openings exit 2.
 #
 # stdout: opening line of each failing task (only on exit 1)
 # exit:   0 pass · 1 evidence-fail · 2 usage/engine error
 set -u
 
 MODE="${1:-}"
-ADDED_FILE=""
+SELECT_FILE=""
 case "$MODE" in
   --strict) ;;
-  --added-only)
-    ADDED_FILE="${2:-}"
-    [ -n "$ADDED_FILE" ] || { echo "usage: check-evidence.sh --added-only FILE" >&2; exit 2; }
-    [ -r "$ADDED_FILE" ] || exit 2
+  --added-only|--lines-strict)
+    SELECT_FILE="${2:-}"
+    [ -n "$SELECT_FILE" ] || { echo "usage: check-evidence.sh $MODE FILE" >&2; exit 2; }
+    [ -r "$SELECT_FILE" ] || exit 2
     ;;
-  *) echo "usage: check-evidence.sh --strict|--added-only FILE" >&2; exit 2 ;;
+  *) echo "usage: check-evidence.sh --strict|--added-only FILE|--lines-strict FILE" >&2; exit 2 ;;
 esac
 
-if [ "$MODE" = "--added-only" ] && [ -z "$(cat "$ADDED_FILE")" ]; then
+if [ "$MODE" != "--strict" ] && [ ! -s "$SELECT_FILE" ]; then
   exit 0
 fi
 
 CONTENT="$(cat)"
 
-EV_FAIL=$(printf '%s\n' "$CONTENT" | awk -v mode="$MODE" -v added_file="$ADDED_FILE" '
+EV_FAIL=$(printf '%s\n' "$CONTENT" | awk -v mode="$MODE" -v select_file="$SELECT_FILE" '
   BEGIN {
     if (mode == "--added-only") {
-      while ((getline aline < added_file) > 0) added[aline] = 1
-      close(added_file)
+      while ((getline value < select_file) > 0) selected[value] = 1
+      close(select_file)
+    } else if (mode == "--lines-strict") {
+      while ((getline value < select_file) > 0) {
+        if (value !~ /^[1-9][0-9]*$/ || (value in selected)) {
+          print "invalid or duplicate selected line: " value > "/dev/stderr"
+          selection_error=1
+        } else {
+          selected[value]=1
+        }
+      }
+      close(select_file)
+      if (selection_error) exit 2
     }
   }
   # non-trivial = real content, not empty / a bare placeholder. Used (in --strict mode
@@ -63,7 +78,9 @@ EV_FAIL=$(printf '%s\n' "$CONTENT" | awk -v mode="$MODE" -v added_file="$ADDED_F
     if (in_x && needs_check && !have_ev) { print prev_task; failed=1 }
     in_x=1; have_ev=0; ev_open=0
     prev_task=$0
-    needs_check = (mode == "--strict") || (mode == "--added-only" && ($0 in added))
+    needs_check = (mode == "--strict") || (mode == "--added-only" && ($0 in selected)) || \
+                  (mode == "--lines-strict" && (NR in selected))
+    if (mode == "--lines-strict" && needs_check) seen[NR]=1
     next
   }
   /^[[:space:]]*-[[:space:]]\[[[:space:]]\]/ {
@@ -101,11 +118,23 @@ EV_FAIL=$(printf '%s\n' "$CONTENT" | awk -v mode="$MODE" -v added_file="$ADDED_F
       }
     }
   }
-  END { if (in_x && needs_check && !have_ev) { print prev_task; failed=1 } exit (failed?1:0) }
+  END {
+    if (selection_error) exit 2
+    if (in_x && needs_check && !have_ev) { print prev_task; failed=1 }
+    if (mode == "--lines-strict") {
+      for (line_no in selected) {
+        if (!(line_no in seen)) {
+          print "selected line is not a completed-task opening: " line_no > "/dev/stderr"
+          selection_error=1
+        }
+      }
+    }
+    exit (selection_error ? 2 : (failed ? 1 : 0))
+  }
 ')
 RC=$?
-if [ "$RC" -eq 1 ]; then
-  printf '%s\n' "$EV_FAIL"
-  exit 1
-fi
-exit 0
+case "$RC" in
+  0) exit 0 ;;
+  1) printf '%s\n' "$EV_FAIL"; exit 1 ;;
+  *) exit 2 ;;
+esac

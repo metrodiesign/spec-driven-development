@@ -212,6 +212,42 @@ else
   pass=$((pass + 1))
 fi
 
+echo "=== TASK 4 REQ-5.3/5.5-5.7: line-selected strict mode ==="
+LINE_SBX="$(new_sandbox)"
+LINE_FILE="$LINE_SBX/selected-lines"
+LINE_CONTENT="$(printf '%s\n' \
+  '# Tasks' \
+  '- [x] 1. Duplicate opening' \
+  '     Evidence: historical pass' \
+  '- [ ] separator' \
+  '- [x] 1. Duplicate opening' \
+  '     Evidence: TODO' \
+  '- [x] 3. Inline evidence' \
+  '     Evidence: suite passed' \
+  '- [x] 4. Multiline evidence' \
+  '     Evidence:' \
+  '       - test: integration suite passed')"
+
+check_lines_strict() { # $1=expected rc, $2=description, $3=selection
+  local expected="$1" description="$2" selection="$3" result rc
+  printf '%s' "$selection" > "$LINE_FILE"
+  result=$(printf '%s\n' "$LINE_CONTENT" | "$EVIDENCE_ENGINE" --lines-strict "$LINE_FILE" 2>&1)
+  rc=$?
+  if [ "$rc" -eq "$expected" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1)); echo "FAIL [lines-strict] $description -> exit $rc (want $expected) :: $result"
+  fi
+}
+
+check_lines_strict 0 "duplicate text selects evidenced physical line only" $'2\n'
+check_lines_strict 1 "duplicate text selects placeholder physical line only" $'5\n'
+check_lines_strict 0 "inline and multiline Evidence pass together" $'7\n9\n'
+check_lines_strict 2 "unchecked line is invalid selection" $'4\n'
+check_lines_strict 2 "zero is invalid selection" $'0\n'
+check_lines_strict 2 "duplicate line number is invalid selection" $'2\n2\n'
+check_lines_strict 0 "empty selection checks no historical task" ''
+
 echo "---"
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

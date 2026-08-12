@@ -32,7 +32,8 @@ Read these before doing any work, in this order:
 10. `../../shared/CONTEXT_MANAGEMENT.md` — when to persist state
 11. `../../shared/AGENT_HANDOFF_PROTOCOL.md` — how to hand off to the next session
 12. `../../shared/LESSONS.md` — promoted process lessons (read every session)
-13. `../../shared/stack/nextjs.md` — stack-specific lessons (when touching matching files)
+13. `../../shared/stack/` — optional stack-specific profiles; read a `<stack>.md` here
+    when one is present (none bundled by default — see its README)
 
 Also read `../../README.md` for the system map. **The repo-root `AGENTS.md` is
 auto-loaded by OpenCode**: it is the neutral front door that tells you to read
@@ -105,9 +106,8 @@ Verify each is present and current before relying on it.
   the single source. Use them for review, root-cause analysis, property-based testing.
 - **MCP (browser-verify)** — external tool servers are configured under the `mcp` key
   in `opencode.json` (with `"$schema": "https://opencode.ai/config.json"`). The
-  browser-verify server is `chrome-devtools`
-  (`{"type":"local","command":["npx","-y","chrome-devtools-mcp@latest"],"enabled":true}`
-  — confirm package/version), which enables the browser-verify recipes in
+  `chrome-devtools` executable entry is the package-version authority and enables the
+  browser-verify recipes in
   `.claude/skills/spec-implement/references/browser-verify.md`. Use the configured
   servers (e.g. GitHub for the sync workflow) rather than improvising.
 

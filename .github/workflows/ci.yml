@@ -75,6 +75,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
       - name: Setup pnpm
         # ci-scope.test.sh's FILTERED-path fixtures call real `pnpm ls -r --filter` (no
         # `pnpm install` needed — package enumeration only) to prove the scope scripts'
@@ -118,6 +122,10 @@ jobs:
         env:
           SECRET_GUARD_SKIP: ''
         run: scripts/ci-secret-scope.sh "$GITHUB_EVENT_NAME" "$GITHUB_BASE_REF"
+      - name: Diff-aware task Evidence gate
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: scripts/ci-evidence-scope.sh "$GITHUB_EVENT_NAME" "${GITHUB_BASE_REF:-}" "${EVENT_BEFORE:-}"
       - name: Setup Python
         # Pin the interpreter the REQ-coverage step relies on (spec_trace.py) instead of
         # whatever python3 the runner image happens to ship.

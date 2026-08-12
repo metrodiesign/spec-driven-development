@@ -75,23 +75,27 @@ All agents read `.ai/shared/*` in the order listed in the root `AGENTS.md` befor
 ## Parity matrix
 
 How each spec-driven capability lands per harness. **native** = the harness provides
-it as a first-class mechanism wired to the single source; **floor-only** = no native
-mechanism, enforced by the Tier 1 git + CI floor (and self-discipline); **n/a** = not
-applicable in this setup. Wiring detail is in each `agents/<harness>/AGENT.md`.
+it as a first-class mechanism wired to the single source; **project extension** =
+committed Pi `tool_call` interception wired to the same source; **floor-only** = no
+in-session mechanism, enforced by the Tier 1 git + CI floor (and self-discipline);
+**unsupported** = stop that Pi path and route it to Claude Code, Codex or OpenCode.
+Wiring detail is in each `agents/<harness>/AGENT.md`.
 
 | Capability | Claude | Codex | OpenCode | Pi |
 |---|---|---|---|---|
 | spec-* workflow as skills | native (`.claude/skills/spec-*`) | native (`.agents/skills/spec-*`) | native (`.agents/skills/` + `.claude/skills/`) | native (`.agents/skills/spec-*`) |
-| Slash commands | native (`.claude/commands/`) | via skills (prompts deprecated) | native (`.opencode/commands/spec-*`) | via skills |
-| Subagents (fresh-context personas) | native (Task tool -> `.ai/roles/*`) | native (`.codex/agents/*.toml` + `[agents]`) | native (`.opencode/agents/*`) | floor-only (persona via skill / `APPEND_SYSTEM.md`) |
-| Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/config.toml` `[hooks].PreToolUse` -> `guard.sh`; needs interactive `/hooks` trust, see issue #26) | native (`.opencode/plugins/ai-guard.js`) | floor-only (run `.ai/bin/check-*` by hand) |
-| Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/config.toml` `[hooks].PostToolUse` -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | floor-only (git pre-commit + CI) |
-| MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`) | native (`opencode.json` `mcp`) | n/a (no MCP host) |
+| Slash commands | via skills (`.claude/skills/spec-*`) | via skills (prompts deprecated) | native (`.opencode/commands/spec-*`) | via skills |
+| Subagents (fresh-context personas) | native (Task tool -> `.ai/roles/*`) | native (`.codex/agents/*.toml` + `[agents]`) | native (`.opencode/agents/*`) | unsupported; route to another harness |
+| Pre-tool guard (destructive/bypass) | native (`.claude/` hook -> `.ai/bin/check-*`) | native (`.codex/config.toml` `[hooks].PreToolUse` -> `guard.sh`; needs interactive `/hooks` trust, see issue #26) | native (`.opencode/plugins/ai-guard.js`) | project extension (`.pi/extensions/sdd-enforcement.ts`) |
+| Task-gate (`[x]` flip = green + Evidence) | native (`.claude/` hook -> `gate-task.sh`) | native (`.codex/config.toml` `[hooks].PostToolUse` -> `task-gate.sh`) | native-ish (`.opencode/plugins/task-gate.js` on `file.edited`, no hard-block) | project extension (pre-write `write` / `edit`) |
+| MCP browser-verify (chrome-devtools) | native (MCP) | native (`.codex/config.toml` `[mcp_servers]`) | native (`opencode.json` `mcp`) | unsupported; route to another harness |
 
-Native task-gate, guard, subagent and skill wiring routes to the shared sources —
+Task-gate, guard, subagent and skill wiring routes to the shared sources —
 `.ai/bin/{check-*,gate-task}.sh`, `.ai/roles/*`, `.ai/workflows/*` +
-`.claude/skills/*`. Enforcement timing/strength still follows the matrix; Pi and
-OpenCode post-write paths do not gain pre-tool hard blocking by sharing source.
+`.claude/skills/*`. Enforcement timing/strength still follows the matrix. Pi blocks
+literal shell access to spec `tasks.md` and gates Pi `write` / `edit` before execution;
+dynamic or obfuscated shell paths remain backed by Tier 1. OpenCode task-gating remains
+post-write advisory.
 
 ## Golden rules
 
@@ -130,8 +134,9 @@ force pushes). CI (`.github/workflows/ci.yml`) reports matching events regardles
 hook setup; GitHub blocks merge only after a ruleset/branch protection requires exact checks.
 
 **Codex MCP (Codex users only)** — the browser-verify server is wired in
-`.codex/config.toml` under `[mcp_servers.chrome-devtools]` (confirm package/version).
-OpenCode reads its MCP straight from `opencode.json`; Pi has no MCP host.
+`.codex/config.toml` under `[mcp_servers.chrome-devtools]`; that executable entry is
+the package-version authority. OpenCode's authority is its executable MCP entry in
+`opencode.json`; Pi has no MCP host.
 
 ## Related top-level docs (not moved)
 
