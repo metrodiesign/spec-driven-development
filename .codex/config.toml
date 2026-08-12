@@ -67,7 +67,7 @@ command = "jq -n --arg b \"$(git branch --show-current 2>/dev/null)\" --arg s \"
 type = "command"
 command = ".codex/hooks/precompact-persist.sh"
 
-# Browser-verify MCP (confirm package/version). Enables the browser-verify recipes for Codex.
+# Browser-verify MCP. This executable config is the package-version authority for Codex.
 [mcp_servers.chrome-devtools]
 command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
+args = ["-y", "chrome-devtools-mcp@1.7.0"]

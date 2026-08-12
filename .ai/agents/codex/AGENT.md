@@ -32,7 +32,8 @@ Read these before doing any work, in this order:
 10. `../../shared/CONTEXT_MANAGEMENT.md` — when to persist state
 11. `../../shared/AGENT_HANDOFF_PROTOCOL.md` — how to hand off to the next session
 12. `../../shared/LESSONS.md` — promoted process lessons (read every session)
-13. `../../shared/stack/nextjs.md` — stack-specific lessons (when touching matching files)
+13. `../../shared/stack/` — optional stack-specific profiles; read a `<stack>.md` here
+    when one is present (none bundled by default — see its README)
 
 Also read `../../README.md` for the system map. **The repo-root `AGENTS.md` is
 auto-loaded by Codex** (root-down concatenation of `AGENTS.md` files): it is the
@@ -129,9 +130,8 @@ and current before relying on it.
   `/agent` or "spawn agent". Use them for fresh-context review, root-cause analysis,
   and property-based testing.
 - **MCP (browser-verify)** — external tool servers live under `[mcp_servers.*]` in
-  `.codex/config.toml`. The browser-verify server (`chrome-devtools`, launched `npx -y
-  chrome-devtools-mcp@latest` — confirm package/version) is already wired there and
-  enables the browser-verify recipes in
+  `.codex/config.toml`. Its `chrome-devtools` executable entry is the package-version
+  authority and enables the browser-verify recipes in
   `.claude/skills/spec-implement/references/browser-verify.md` for Codex. Add other
   MCP servers the same way rather than improvising. (Note: `spec-retro` and
   `spec-sync-github` now ship as vendor-neutral skills in `.agents/skills/`, routing to

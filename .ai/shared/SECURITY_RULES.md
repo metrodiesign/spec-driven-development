@@ -6,17 +6,18 @@
 ## Enforcement model: a cross-agent floor + a per-harness layer
 
 Enforcement is layered. The bottom layer is the same for everyone; the top layer exists
-only for harnesses that support pre-tool hooks.
+for harnesses that support native hooks or project extensions.
 
 | Tier | Mechanism | Covers | Notes |
 |---|---|---|---|
 | 1. Git + CI (the floor) | `.githooks/` (enabled via `core.hooksPath`) + `.github/workflows/ci.yml`, both calling `.ai/bin/check-*.sh` | **ALL agents + humans** | Shared across harnesses; local blocking needs hook setup, merge blocking needs repository ruleset. |
-| 2. Harness pre-tool hook | Claude: `.claude/hooks/*` -> `.ai/bin/`; Codex: `.codex/config.toml` `[hooks]` -> `.codex/hooks/*` -> `.ai/bin/` (single source `config.toml`; the legacy `.codex/hooks.json` was removed — Codex 0.139 loaded both, see issue #26 — and these in-session hooks fire only after interactive `/hooks` trust); OpenCode: `.opencode/plugins/ai-guard.js` -> `.ai/bin/` | Claude, Codex, OpenCode | Pre-execution interception. Pi has no core pre-tool hook, so it falls back to Tier 1 + Tier 3. |
-| 3. Procedural | root `AGENTS.md` + `.ai/roles/` + `.ai/workflows/` instruct the agent to run `.ai/bin/check-*` before risky commands | ALL agents (the only AI-side layer Pi has) | Advisory; relies on the agent following instructions. The git+CI floor backstops it. |
+| 2. Harness interception | Claude: `.claude/hooks/*` -> `.ai/bin/`; Codex: `.codex/config.toml` `[hooks]` -> `.codex/hooks/*` -> `.ai/bin/` (single source `config.toml`; the legacy `.codex/hooks.json` was removed — Codex 0.139 loaded both, see issue #26 — and these in-session hooks fire only after interactive `/hooks` trust); OpenCode: `.opencode/plugins/ai-guard.js` -> `.ai/bin/`; Pi: `.pi/extensions/sdd-enforcement.ts` `tool_call` -> `.ai/bin/` | Claude, Codex, OpenCode, Pi | Pre-execution interception. Pi support is project-local and requires launch from repository root. |
+| 3. Procedural | root `AGENTS.md` + `.ai/roles/` + `.ai/workflows/` instruct the agent to run `.ai/bin/check-*` before risky commands | ALL agents | Advisory fallback; relies on the agent following instructions. The git+CI floor backstops it. |
 
-**Hooks are Claude/Codex/OpenCode-only. The git + CI floor is the mechanism that spans every
-agent when configured.** A clean commit + green CI run เป็น evidence; repository-side merge
-enforcement ต้องตรวจ ruleset แยก ห้าม infer จาก workflow green อย่างเดียว.
+**Native hooks are Claude/Codex/OpenCode-only; Pi uses a committed project extension.
+The git + CI floor spans every agent when configured.** A clean commit + green CI run
+เป็น evidence; repository-side merge enforcement ต้องตรวจ ruleset แยก ห้าม infer จาก
+workflow green อย่างเดียว.
 
 All three tiers call the SAME single-source check logic in `.ai/bin/`
 (`check-destructive.sh`, `check-bypass.sh`, `check-secrets.sh`, `check-evidence.sh`,
@@ -36,8 +37,9 @@ All three tiers call the SAME single-source check logic in `.ai/bin/`
 - If a secret leaks: rotate/revoke it immediately. Deleting the commit or force-pushing
   is NOT enough — history still holds it.
 - **Enforced by:** `.githooks/pre-commit` -> `.ai/bin/check-secrets.sh` and the CI
-  secret-scan job, for ALL agents and humans (Tier 1). Claude/Codex/OpenCode also get
-  pre-execution interception via their harness hook (Tier 2).
+  secret-scan job, for ALL agents and humans (Tier 1). Harness layers add the command
+  and task-gate interception documented above; secret detection remains a universal
+  git + CI floor.
 - **Detection details** (so the rule and the engine agree): the generic detector
   inspects the matched `key=VALUE` substring, not the whole line — a placeholder word
   in a trailing comment no longer whitelists a real secret; only a placeholder VALUE
@@ -63,8 +65,8 @@ All three tiers call the SAME single-source check logic in `.ai/bin/`
 - DB migrations require a rollback plan and a backup before running on production.
 - Any destructive command on production must be confirmed by a human.
 - **Enforced by:** `.ai/bin/check-destructive.sh` (exit 2 = block), invoked by the
-  harness pre-tool hook for Claude/Codex/OpenCode (Tier 2). Pi and humans rely on the
-  procedural instruction in `AGENTS.md` (Tier 3) plus the git + CI floor (Tier 1).
+  native hook for Claude/Codex/OpenCode or Pi project extension (Tier 2). Humans and
+  any disabled extension rely on `AGENTS.md` (Tier 3) plus the git + CI floor (Tier 1).
 - **What the engine actually blocks** (so docs and the engine agree exactly):
   - `rm` recursive+force in every spelling — `-rf`/`-fr`/`-r -f`/`--recursive --force`,
     and the same when written `\rm`, `"rm"`, `'rm'`, or wrapped in `sh -c '...'` /
@@ -89,7 +91,8 @@ All three tiers call the SAME single-source check logic in `.ai/bin/`
   `--no-verify`, no overriding `core.hooksPath`, no `HUSKY=0`-style escapes, no editing
   the guards to weaken them).
 - **Enforced by:** `.ai/bin/check-bypass.sh` (exit 2 = block) via the harness pre-tool
-  hook (Tier 2); the git + CI floor (Tier 1) re-checks on the server side regardless.
+  hook or Pi project extension (Tier 2); the git + CI floor (Tier 1) re-checks on the
+  server side regardless.
 - **What the bypass engine catches** (expanded — superseding the old "only inspects
   git commands" description): a `-n`/`--no-verify` skip-verify flag written UNQUOTED at
   any position in a `git commit` — including preceded by git global options
@@ -119,9 +122,11 @@ All three tiers call the SAME single-source check logic in `.ai/bin/`
 - **Workflow floor:** `.github/workflows/ci.yml` รันทั้ง `pull_request` และ `push` ไป `main`/
   `develop`. Server-side enforcement เกิดเมื่อ repository ruleset/branch protection require
   check เท่านั้น; workflow file เองเป็นหลักฐานแต่ยังไม่ block merge.
-- **Current operational state (2026-08-10):** `develop` ตอบ `404 Branch not protected` และ
-  repository rulesets เป็น `[]`. จึงยังมี enforcement gap ฝั่ง GitHub ที่ maintainer ต้องปิด
-  หลัง production canary; local git hooks ยังทำงานตาม clone configuration.
+- **Current operational state (2026-08-12):** active ruleset
+  `protected-main-develop` (ID `20737973`) covers `main` and `develop`, requires linear
+  history, pull requests with review-thread resolution, squash-only merge, and exact
+  strict checks `platform (vendor check + typecheck + lint + tests)` and
+  `guards + spec-trace`. Local git hooks still depend on clone configuration.
 - **Checks CI actually runs** (ให้เอกสารตรง workflow): vendor-name check, frozen `pnpm`
   install, `pnpm audit --prod --audit-level high`, full typecheck, lint, scoped/full
   workspace tests, guard-regression suite ทุก `.claude/hooks/tests/*.test.sh`, lessons

@@ -41,6 +41,7 @@ for floor in \
   'pnpm typecheck' \
   'pnpm lint' \
   'scripts/ci-test-scope.sh' \
+  'scripts/ci-evidence-scope.sh' \
   '.claude/hooks/tests/*.test.sh' \
   'scripts/lessons-coverage-check.sh' \
   'scripts/ci-secret-scope.sh' \

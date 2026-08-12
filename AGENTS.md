@@ -49,9 +49,10 @@ Two tiers apply to every agent and human, regardless of harness:
   to `develop`). CI reports the result; it blocks merge only when repository
   ruleset/branch protection requires that exact check. See `docs/08-pr-quality-gate-production.md`.
 
-If your harness lacks a pre-tool hook (e.g. Pi), run the checks yourself before any
-risky bash: `.ai/bin/check-destructive.sh '<cmd>'` and `.ai/bin/check-bypass.sh '<cmd>'`
-(exit 2 = blocked).
+Pi auto-loads `.pi/extensions/sdd-enforcement.ts` when launched from the repository
+root. If a harness extension is unavailable or disabled, run the checks yourself before
+any risky bash: `.ai/bin/check-destructive.sh '<cmd>'` and
+`.ai/bin/check-bypass.sh '<cmd>'` (exit 2 = blocked).
 
 ## Golden rules
 
