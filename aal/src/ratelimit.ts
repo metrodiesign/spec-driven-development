@@ -15,6 +15,8 @@ export interface TokenBucket {
   tryTake(n?: number): boolean;
   /** Current token count after refilling to `now()` — fractional. */
   available(): number;
+  /** Current token count without refilling, reading the clock, or changing state. */
+  peekAvailable(): number;
 }
 
 export function createTokenBucket(opts: TokenBucketOptions, now: () => number): TokenBucket {
@@ -41,6 +43,9 @@ export function createTokenBucket(opts: TokenBucketOptions, now: () => number): 
     },
     available() {
       refill();
+      return tokens;
+    },
+    peekAvailable() {
       return tokens;
     },
   };

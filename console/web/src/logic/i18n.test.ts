@@ -50,3 +50,11 @@ test('translate: no params returns the template as-is (non-templated keys)', () 
   assert.equal(translate('en', 'loading'), 'loading…');
   assert.equal(translate('th', 'loading'), 'กำลังโหลด…');
 });
+
+test('Thai UI keeps technical paths, identifiers, enums, and provider values verbatim (REQ-9.9/9.12)', () => {
+  const path = '/Users/operator/.claude/settings.json';
+  const id = 'RUN-01JZ/adapter:openai';
+  assert.match(translate('th', 'shellInvalidItem', { value: id }), new RegExp(id));
+  assert.match(translate('th', 'shellReadFailed', { reason: `ENOENT ${path}` }), new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal(translate('th', 'governanceScopedSettings', { scope: 'managed' }).includes('managed'), true);
+});

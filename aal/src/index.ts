@@ -29,6 +29,11 @@ export {
 export { createRouter, wrapRouterForOutcome, NoCapacityError, type Router, type RouteHints } from './router.ts';
 export { createTokenBucket, type TokenBucket, type TokenBucketOptions } from './ratelimit.ts';
 export {
+  evaluateEligibility,
+  type EligibilityInput,
+  type EligibilityResult,
+} from './eligibility.ts';
+export {
   shadowWouldChoose,
   shadowFrozen,
   compareShadow,
@@ -47,6 +52,8 @@ export {
   type DispatcherOptions,
   type DispatchItem,
   type DispatchResult,
+  type RateObservation,
+  type RateObserver,
 } from './dispatch.ts';
 export {
   loadRoutingConfig,

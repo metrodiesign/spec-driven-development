@@ -76,6 +76,8 @@ export interface PermRule {
   action: PermAction;
   /** Tool name or `Tool(path-glob)` — matched by a simple prefix/glob. */
   pattern: string;
+  /** Optional source scope supplied to the simulator for provenance display. */
+  scope?: string;
 }
 
 function globToRe(glob: string): RegExp {
@@ -101,13 +103,16 @@ export function permissionDecision(
   rules: PermRule[],
   tool: string,
   path: string,
-): { decision: PermAction; rule: PermRule | null } {
+): { decision: PermAction; rule: PermRule | null; provenance: { scope: string; source: string } | null } {
   const matched = rules.filter((r) => ruleMatches(r.pattern, tool, path));
   for (const action of ['deny', 'allow', 'ask'] as const) {
     const r = matched.find((x) => x.action === action);
-    if (r !== undefined) return { decision: action, rule: r };
+    if (r !== undefined) {
+      const scope = r.scope ?? 'provided';
+      return { decision: action, rule: r, provenance: { scope, source: `${scope} simulator input` } };
+    }
   }
-  return { decision: 'ask', rule: null };
+  return { decision: 'ask', rule: null, provenance: null };
 }
 
 /** Deny rules that protect the golden set + worktrees from interactive sessions too (§4). */

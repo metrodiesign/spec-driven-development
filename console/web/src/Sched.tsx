@@ -2,11 +2,13 @@
 // script under the same quota guard `platform loop run --live` uses. Thin
 // view — status/automation interpretation lives in logic/sched.ts.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { automationHint, interpretStartResponse, schedStatusLabel, type SchedStatus } from './logic/sched.ts';
-import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
 import { useI18n } from './I18nContext.tsx';
+import { destructiveConfirmationText } from './logic/mutation.ts';
+import { usePendingMutation } from './usePendingMutation.ts';
+import { protectedFetch } from './useFetch.ts';
 
 const box: React.CSSProperties = {
   border: '1px solid var(--color-border)',
@@ -19,73 +21,122 @@ const POLL_MS = 3000;
 
 export function Sched(): React.JSX.Element {
   const { t } = useI18n();
-  const [status, setStatus] = useState<FetchState<SchedStatus>>(FETCH_LOADING);
+  const [status, setStatus] = useState<SchedStatus | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [lastReadAt, setLastReadAt] = useState<string | null>(null);
   const [goal, setGoal] = useState('');
   const [task, setTask] = useState('');
   const [live, setLive] = useState(false);
   const [scriptName, setScriptName] = useState('');
   const [confirm, setConfirm] = useState<{ hint: string; confirmToken: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const controller = useRef<AbortController | null>(null);
+  const mutations = usePendingMutation();
 
-  const refreshStatus = (): void => {
-    fetch('/api/sched/status')
-      .then((r) => r.json().then((s: SchedStatus) => setStatus(fetchStateFromResponse(r.ok, s))))
-      .catch(() => setStatus(FETCH_ERROR));
+  const refreshStatus = async (): Promise<void> => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    controller.current = new AbortController();
+    try {
+      const response = await protectedFetch('/api/sched/status', { signal: controller.current.signal });
+      if (!response.ok) throw new Error(String(response.status));
+      setStatus(await response.json() as SchedStatus);
+      setReadError(null);
+      setLastReadAt(new Date().toISOString());
+    } catch (error) {
+      if (controller.current?.signal.aborted !== true) {
+        setReadError(error instanceof Error ? error.message : t('fetchUnavailable'));
+      }
+    } finally {
+      controller.current = null;
+      inFlight.current = false;
+    }
   };
   useEffect(() => {
-    refreshStatus();
-    const id = setInterval(refreshStatus, POLL_MS);
-    return () => clearInterval(id);
+    const poll = (): void => { if (document.visibilityState === 'visible') void refreshStatus(); };
+    poll();
+    const id = setInterval(poll, POLL_MS);
+    document.addEventListener('visibilitychange', poll);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', poll);
+      controller.current?.abort();
+    };
   }, []);
 
   async function start(confirmToken?: string): Promise<void> {
-    const body: Record<string, unknown> = { goal, live };
-    if (task.trim().length > 0) body['task'] = task.trim();
-    if (confirmToken !== undefined) body['confirmToken'] = confirmToken;
-    const res = await fetch('/api/sched/start', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+    await mutations.run({ action: 'scheduler-start', target: goal, concurrencyKey: confirmToken ?? null }, async () => {
+      try {
+        const body: Record<string, unknown> = { goal, live };
+        if (task.trim().length > 0) body['task'] = task.trim();
+        if (confirmToken !== undefined) body['confirmToken'] = confirmToken;
+        const res = await protectedFetch('/api/sched/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const outcome = interpretStartResponse(res.status, await res.json());
+        if (outcome.kind === 'started') {
+          setNote(t('schedStarted', { pid: outcome.pid }));
+          setConfirm(null);
+          void refreshStatus();
+        } else if (outcome.kind === 'needs_confirmation') {
+          setConfirm({ hint: automationHint(outcome.automation), confirmToken: outcome.confirmToken });
+        } else {
+          setNote(t('schedStartRefused', { reason: outcome.reason }));
+          setConfirm(null);
+        }
+      } catch {
+        setNote(t('fetchUnavailable'));
+      }
     });
-    const outcome = interpretStartResponse(res.status, await res.json());
-    if (outcome.kind === 'started') {
-      setNote(t('schedStarted', { pid: outcome.pid }));
-      setConfirm(null);
-      refreshStatus();
-    } else if (outcome.kind === 'needs_confirmation') {
-      setConfirm({ hint: automationHint(outcome.automation), confirmToken: outcome.confirmToken });
-    } else {
-      setNote(t('schedStartRefused', { reason: outcome.reason }));
-      setConfirm(null);
-    }
   }
 
   async function stop(): Promise<void> {
-    const res = await fetch('/api/sched/stop', { method: 'POST' });
-    const { stopped } = (await res.json()) as { stopped: boolean };
-    setNote(stopped ? t('schedStopped') : t('schedNothingRunning'));
-    refreshStatus();
+    await mutations.run({ action: 'scheduler-stop', target: status?.running === true ? String(status.pid) : 'child-process', concurrencyKey: null }, async () => {
+      try {
+        const res = await protectedFetch('/api/sched/stop', { method: 'POST' });
+        const { stopped } = (await res.json()) as { stopped: boolean };
+        setNote(stopped ? t('schedStopped') : t('schedNothingRunning'));
+        void refreshStatus();
+      } catch {
+        setNote(t('fetchUnavailable'));
+      }
+    });
   }
 
   async function runScript(): Promise<void> {
-    const res = await fetch('/api/sched/script', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: scriptName }),
+    await mutations.run({ action: 'scheduler-script', target: scriptName, concurrencyKey: null }, async () => {
+      try {
+        const res = await protectedFetch('/api/sched/script', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: scriptName }),
+        });
+        const body = (await res.json()) as { error?: string; pid?: number };
+        setNote(res.ok ? t('schedScriptStarted', { pid: body.pid ?? 0 }) : t('schedScriptRefused', { error: body.error ?? '' }));
+        void refreshStatus();
+      } catch {
+        setNote(t('fetchUnavailable'));
+      }
     });
-    const body = (await res.json()) as { error?: string; pid?: number };
-    setNote(res.ok ? t('schedScriptStarted', { pid: body.pid ?? 0 }) : t('schedScriptRefused', { error: body.error ?? '' }));
-    refreshStatus();
   }
 
-  const running = status.kind === 'data' ? status.value.running : false;
+  const running = status?.running ?? false;
 
   return (
     <section aria-label="F-Sched">
       <h2>{t('schedHeading')}</h2>
       <p role="status">
-        {status.kind === 'loading' ? t('loading') : status.kind === 'error' ? t('fetchUnavailable') : schedStatusLabel(status.value)}
+        {status === null ? t('loading') : schedStatusLabel(status)}
       </p>
+      {readError !== null && (
+        <p role="alert">
+          {status === null ? t('fetchUnavailable') : t('consoleStaleAt', { time: lastReadAt ?? 'unknown' })}{' '}
+          <button type="button" onClick={() => void refreshStatus()}>{t('shellRetry')}</button>
+        </p>
+      )}
       {note !== null && <p role="status">{note}</p>}
 
       <div style={box} aria-label={t('schedLoopRunHeading')}>
@@ -110,17 +161,32 @@ export function Sched(): React.JSX.Element {
           </label>
         </p>
         <p>
-          <button type="button" disabled={running || goal.trim().length === 0} onClick={() => void start()}>
+          <button
+            type="button"
+            disabled={running || goal.trim().length === 0 || mutations.isPending({ action: 'scheduler-start', target: goal, concurrencyKey: null })}
+            onClick={() => void start()}
+          >
             {t('schedStartButton')}
           </button>{' '}
-          <button type="button" disabled={!running} onClick={() => void stop()}>
+          <button
+            type="button"
+            disabled={!running || mutations.isPending({ action: 'scheduler-stop', target: status?.running === true ? String(status.pid) : 'child-process', concurrencyKey: null })}
+            onClick={() => {
+              const target = status?.running === true ? `pid ${status.pid}` : 'child-process';
+              if (window.confirm(destructiveConfirmationText(t('schedStopButton'), target))) void stop();
+            }}
+          >
             {t('schedStopButton')}
           </button>
         </p>
         {confirm !== null && (
           <div style={box} role="alert" aria-label={t('schedConfirmStartAriaLabel')}>
             <p>{confirm.hint}</p>
-            <button type="button" onClick={() => void start(confirm.confirmToken)}>
+            <button
+              type="button"
+              disabled={mutations.isPending({ action: 'scheduler-start', target: goal, concurrencyKey: confirm.confirmToken })}
+              onClick={() => void start(confirm.confirmToken)}
+            >
               {t('schedConfirmAndStartButton')}
             </button>{' '}
             <button type="button" onClick={() => setConfirm(null)}>
@@ -142,7 +208,11 @@ export function Sched(): React.JSX.Element {
               style={{ width: '14rem' }}
             />
           </label>{' '}
-          <button type="button" disabled={running || scriptName.trim().length === 0} onClick={() => void runScript()}>
+          <button
+            type="button"
+            disabled={running || scriptName.trim().length === 0 || mutations.isPending({ action: 'scheduler-script', target: scriptName, concurrencyKey: null })}
+            onClick={() => void runScript()}
+          >
             {t('schedRunButton')}
           </button>
         </p>

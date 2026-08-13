@@ -9,6 +9,7 @@
 // stay synchronous over the cached snapshot so routing never blocks (AZ-14).
 
 import { breakerKey, type Breaker } from './breaker.ts';
+import { evaluateEligibility, type RouteHints } from './eligibility.ts';
 import { PASS_FAIL_PROBES } from './protocol.ts';
 import type { AdapterHealth, AdapterInterface, ConformanceRecord } from './protocol.ts';
 import type { Role as CoreRole } from 'core/types';
@@ -38,7 +39,7 @@ export interface Registry {
     healthProbe?: () => Promise<AdapterHealth>,
   ): void;
   recordConformance(adapterId: string, record: ConformanceRecord): void;
-  eligible(role: CoreRole): RegisteredAdapter[];
+  eligible(role: CoreRole, hints?: RouteHints): RegisteredAdapter[];
   /**
    * Every registered adapter INCLUDING stale ones (REQ-4.3). `eligible()` filters
    * stale out, so "any adapter stale" is unobservable through it — shadow-freeze
@@ -58,25 +59,6 @@ export interface RegistryOptions {
   breaker?: Breaker;
   /** Per-probe timeout inside refreshHealth (policy-pinned; AZ-14). */
   healthProbeTimeoutMs?: number;
-}
-
-/** Which capabilities each role requires (§7.4). Phase-1 minimal; extended later. */
-function roleRequires(role: CoreRole): (m: RegisteredAdapter) => boolean {
-  switch (role) {
-    case 'implementer':
-    case 'test_designer':
-      return (r) => r.adapter.manifest().structuredOutput;
-    case 'planner':
-      return () => true;
-    // Diagnostician is reasoning-only (REQ-4.2): schema conformance already
-    // gates registration; no extra capability bit beyond what every adapter has.
-    case 'diagnostician':
-      return () => true;
-    // Reviewer (fusion blind judge, REQ-4.2) is a reasoning role like planner —
-    // any conformant adapter qualifies.
-    case 'reviewer':
-      return () => true;
-  }
 }
 
 /** True iff every pass/fail probe is present AND passing. */
@@ -180,13 +162,21 @@ export function createRegistry(opts: RegistryOptions = {}): Registry {
     },
 
     // Filter order (§7.4): !stale -> capability -> breaker not-open -> health.ok.
-    eligible(role) {
-      const wants = roleRequires(role);
+    eligible(role, hints) {
       return [...byId.values()].filter((r) => {
-        if (r.stale || !wants(r)) return false;
         const key = keyOf(r);
-        if (opts.breaker !== undefined && opts.breaker.state(key) === 'open') return false;
-        return health.get(key)?.ok !== false;
+        const observedHealth = health.get(key);
+        return evaluateEligibility({
+          role,
+          manifest: r.adapter.manifest(),
+          conformancePasses: recordPasses(r.record),
+          stale: r.stale,
+          breakerState: opts.breaker?.state(key) ?? 'unconfigured',
+          health: r.healthProbe === undefined ? 'unconfigured' : (observedHealth ?? 'unknown'),
+          susceptibilityScore: r.susceptibilityScore,
+          lineage: r.lineage,
+          ...(hints === undefined ? {} : { hints }),
+        }).state !== 'ineligible';
       });
     },
 

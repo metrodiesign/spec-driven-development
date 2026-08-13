@@ -3,6 +3,14 @@
 export const RING = 2 as const;
 
 export {
+  describeAnthropicAdapter,
+  describeCodexAdapter,
+  describeReasoningCliAdapter,
+  type AdapterDescriptor,
+  type AdapterTransport,
+} from './descriptors.ts';
+
+export {
   createAnthropicAdapter,
   type AnthropicAdapterOptions,
   type QueryFn,

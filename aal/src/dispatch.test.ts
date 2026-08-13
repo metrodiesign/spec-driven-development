@@ -120,3 +120,38 @@ test('ceiling absent or above maxParallel changes nothing (dormant, not dead)', 
   assert.equal(createDispatcher({ buckets: new Map(), maxParallel: 2, ceiling: 5 }).effectiveMaxParallel, 2);
   assert.equal(createDispatcher({ buckets: new Map(), maxParallel: 4, ceiling: 0 }).effectiveMaxParallel, 1, 'floor stays 1 — dispatcher never deadlocks');
 });
+
+test('rate observer records limited transitions and final pre-send tokens without changing dispatch', async () => {
+  let t = 0;
+  const bucket = createTokenBucket({ capacity: 1, refillPerSec: 1 }, () => t);
+  assert.equal(bucket.tryTake(), true, 'pre-drain bucket so dispatch first observes limited');
+  const adapter: AdapterInterface = { manifest: () => manifestOf('a'), send: () => Promise.resolve(respOf('a')) };
+  const observed: { limited: boolean; availableTokens: number | null }[] = [];
+  const dispatcher = createDispatcher({
+    buckets: new Map([['a', bucket]]),
+    maxParallel: 1,
+    sleep: async () => { t += 1_000; },
+    observeRate: ({ limited, availableTokens }) => observed.push({ limited, availableTokens }),
+  });
+  const result = await dispatcher.dispatchAll([{ adapter, request: req('r') }]);
+  assert.equal(result[0]?.outcome.ok, true);
+  assert.deepEqual(observed, [
+    { limited: true, availableTokens: 0 },
+    { limited: false, availableTokens: 0 },
+  ]);
+});
+
+test('a throwing rate observer never changes wait, send, or result', async () => {
+  let sends = 0;
+  const adapter: AdapterInterface = {
+    manifest: () => manifestOf('a'),
+    send: () => { sends += 1; return Promise.resolve(respOf('a')); },
+  };
+  const result = await createDispatcher({
+    buckets: new Map(),
+    maxParallel: 1,
+    observeRate: () => { throw new Error('observer failed'); },
+  }).dispatchAll([{ adapter, request: req('r') }]);
+  assert.equal(sends, 1);
+  assert.equal(result[0]?.outcome.ok, true);
+});

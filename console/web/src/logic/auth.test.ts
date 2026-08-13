@@ -3,10 +3,11 @@ import { test } from 'node:test';
 
 import { interpretAuthProbe, interpretLoginResponse, interpretProviderProbe } from './auth.ts';
 
-test('interpretAuthProbe: 401 is unauthed, everything else is authed (REQ-19.3)', () => {
+test('interpretAuthProbe: only 200 is authed; errors fail closed before protected reads (REQ-8.1)', () => {
   assert.equal(interpretAuthProbe(401), 'unauthed');
   assert.equal(interpretAuthProbe(200), 'authed');
-  assert.equal(interpretAuthProbe(500), 'authed');
+  assert.equal(interpretAuthProbe(500), 'unauthed');
+  assert.equal(interpretAuthProbe(204), 'unauthed');
 });
 
 test('interpretLoginResponse: 200 is ok; failure carries the generic error message (REQ-19.6)', () => {

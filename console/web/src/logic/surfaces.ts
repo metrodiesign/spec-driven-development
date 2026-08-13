@@ -1,6 +1,8 @@
 // Pure display logic for the Phase-2 governance surfaces (F-MCP/F-Hook/F-Sub/
 // F-Skill/F-Sys). Testable without a DOM — the views stay thin (ARCHITECTURE).
 
+import { translate, type Locale } from './i18n.ts';
+
 export interface SysStats {
   platform: string | null;
   arch: string | null;
@@ -18,7 +20,7 @@ function gib(bytes: number): string {
 }
 
 /** One line per host stat for the F-Sys card. */
-export function statsRows(s: SysStats): string[] {
+export function statsRows(s: SysStats, locale: Locale = 'en'): string[] {
   const platform = s.platform ?? 'unavailable';
   const arch = s.arch ?? 'unavailable';
   const cpus = s.cpus === null ? 'unavailable' : `${s.cpus} CPUs`;
@@ -27,10 +29,10 @@ export function statsRows(s: SysStats): string[] {
   const load = s.loadAvg === null ? 'unavailable' : (s.loadAvg[0] ?? 0).toFixed(2);
   const uptime = s.uptimeS === null ? 'unavailable' : `${Math.floor(s.uptimeS / 3600)}h`;
   return [
-    `host: ${platform}/${arch} · ${cpus}`,
-    `memory: ${freeMem} free of ${totalMem}`,
-    `load (1m): ${load}`,
-    `uptime: ${uptime}`,
+    translate(locale, 'systemStatsHost', { platform, arch, cpus }),
+    translate(locale, 'systemStatsMemory', { free: freeMem, total: totalMem }),
+    translate(locale, 'systemStatsLoad', { load }),
+    translate(locale, 'systemStatsUptime', { uptime }),
   ];
 }
 
