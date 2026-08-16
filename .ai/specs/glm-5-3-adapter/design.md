@@ -1,6 +1,6 @@
 # Design: GLM-5.3 OpenAI-compatible adapter
 
-> Status: draft 2026-08-16
+> Status: approved 2026-08-16, amended 2026-08-16 (traceability row added for REQ-2.5 after spec-trace flagged the gap)
 > Mode: requirements-first — every design element cites its REQ in the traceability table.
 
 ## Architecture Overview
@@ -305,6 +305,7 @@ governance preflight on the next live run.
 | `fenceGuard: true` prompt construction | 1.3 | Data Models & Interfaces |
 | `buildGlmRequestBody` (thinking always-on, `reasoning_effort`) | 2.3 | Data Models & Interfaces |
 | `createLiveGlmAdapter` + factory-time key guard + `ZAI_BASE_URL` | 2.1, 2.2 | Data Models & Interfaces |
+| Live transport call-control wiring (`linkCallControl` → fetch signal/timeout; classified per REQ-1.6 in core tests) | 2.5 | Data Models & Interfaces |
 | `parseGlmHttpBody` (status+body in message; 2xx shape guard) | 2.4, 2.6 | Data Models & Interfaces |
 | Live module isolation + fetchFn caveat | 2.7 | Testing Strategy |
 | Key-only-in-live-closure + no `providerEnvironment` change | 3.1, 3.2 | Technology Decisions |

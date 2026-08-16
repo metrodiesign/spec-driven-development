@@ -1,6 +1,6 @@
 # Requirements: glm-5-3-adapter — GLM-5.3 via an OpenAI-compatible Ring-2 adapter
 
-> Status: approved 2026-08-16 (D1–D4 agent defaults accepted as-is at the gate)
+> Status: approved 2026-08-16, amended 2026-08-16 (EARS grammar fixes required by spec-trace — 2.7/5.4/8.2/8.3 reworded, no semantic change)
 > Upstream: unified-platform-spec.md v1.11 §7.4/§7.6 (GLM deferral lifted) + invariants §2
 > (INV-5 no self-retry, INV-7 vendor-free Ring 0/1, INV-8 adapter = wire translation only).
 > User decisions binding: clarifications.md (D1–D4 are flagged agent defaults, overridable at this gate).
@@ -51,7 +51,7 @@ deliberately imported.
 - 2.4 WHEN the endpoint answers non-2xx THE SYSTEM SHALL throw an error whose message contains the HTTP status and response body text, so `classifyAdapterError` maps 429 → `quota_limited`, 401/403 → `auth_unavailable`, context-length errors → `context_limited`, and anything unmatched → `transport`
 - 2.5 THE SYSTEM SHALL forward `control`'s AbortSignal/timeout to the fetch and classify abort/timeout per REQ-1.6
 - 2.6 THE SYSTEM SHALL read the reply from `choices[0].message.content` and usage from the `usage` object (`prompt_tokens`, `completion_tokens`, plus unknown extra fields passed through as raw); WHEN the body is 2xx but has no usable choice THE SYSTEM SHALL throw `AdapterError('invalid_response')`
-- 2.7 THE live module SHALL be import-free from every CI test path (same discipline as `codex-live.ts`)
+- 2.7 THE SYSTEM SHALL keep the live module import-free from every CI test path (same discipline as `codex-live.ts`)
 
 ## REQ-3: Credential hygiene
 
@@ -82,7 +82,7 @@ without spending provider quota.
 - 5.1 THE SYSTEM SHALL pass conformance probes P1–P8 for the glm adapter against a compliant fake transport in `adapters/src/openai-compatible-conformance.test.ts`
 - 5.2 WHEN a sabotaged fake transport returns prose without actions THE SYSTEM SHALL fail exactly probe P2 and no other
 - 5.3 WHEN a conformance record is re-registered after a regressed re-run THE SYSTEM SHALL mark the adapter `stale` via the registry gate (same discrimination self-test as codex)
-- 5.4 Unit tests (`openai-compatible.test.ts`) SHALL cover: manifest shape, replay idempotency (transport called once), usage math, the error matrix (429/401/403/context-length/unmatched non-2xx), abort/timeout, non-JSON → `{ raw }`, and WRITE_FILE inline content → `contentRef`
+- 5.4 THE SYSTEM SHALL provide unit tests in `openai-compatible.test.ts` covering: manifest shape, replay idempotency (transport called once), usage math, the error matrix (429/401/403/context-length/unmatched non-2xx), abort/timeout, non-JSON → `{ raw }`, and WRITE_FILE inline content → `contentRef`
 
 ## REQ-6: Conformance CLI support
 
@@ -111,8 +111,8 @@ unbounded.
 
 **Acceptance Criteria (EARS):**
 - 8.1 WHEN a Z.ai API key with quota is available THE OPERATOR SHALL run `platform conformance --live --lineage zai` (TTY, confirmation phrase) and the task SHALL record per-probe results + the persisted record path as evidence
-- 8.2 IF no key/quota is available THE task SHALL remain open (phase-3 LIVE pattern) and REQ-5 CI readiness is this round's delivered evidence
-- 8.3 THE §7.4 routing-default flip (Test Designer → GLM-5.3, Reviewer ensemble + GLM-5.3) SHALL happen only after REQ-8.1 lands, as follow-up work outside this spec's code scope (D2)
+- 8.2 IF no key/quota is available THEN THE SYSTEM SHALL record the task as remaining open (phase-3 LIVE pattern) with REQ-5 CI readiness as this round's delivered evidence
+- 8.3 WHEN REQ-8.1 lands THE SYSTEM SHALL treat the §7.4 routing-default flip (Test Designer → GLM-5.3, Reviewer ensemble + GLM-5.3) as follow-up work outside this spec's code scope (D2)
 
 ## Edge Cases & Open Questions
 
