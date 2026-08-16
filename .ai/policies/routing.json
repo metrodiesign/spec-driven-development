@@ -4,7 +4,8 @@
   "maxParallel": 2,
   "tokenBuckets": {
     "claude": { "capacity": 4, "refillPerSec": 0.5 },
-    "codex": { "capacity": 4, "refillPerSec": 0.5 }
+    "codex": { "capacity": 4, "refillPerSec": 0.5 },
+    "glm": { "capacity": 4, "refillPerSec": 0.5 }
   },
   "sched": { "scriptAllowlist": [] }
 }
