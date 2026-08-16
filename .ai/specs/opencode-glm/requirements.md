@@ -1,6 +1,6 @@
 # Requirements: opencode-glm — GLM-5.3 through the OpenCode CLI (fifth lineage)
 
-> Status: approved 2026-08-16 (D1–D3 + identity decisions accepted at the gate)
+> Status: approved 2026-08-16, amended 2026-08-16 (7.1 reworded to EARS grammar required by spec-trace — no semantic change)
 > Upstream: unified-platform-spec.md v1.11 §7.4/§7.6 (multi-lineage routing, INV-8) + §5.4 quota-survivability rationale.
 > Sibling spec: glm-5-3-adapter (PR #142, direct-API zai lineage). User decisions binding: clarifications.md (D1–D3 answered in-session; identity decisions follow existing conventions).
 
@@ -93,7 +93,7 @@ the OpenCode Go gateway, so "GLM-5.3 works in this platform" is evidence,
 not assertion.
 
 **Acceptance Criteria (EARS):**
-- 7.1 THE OPERATOR SHALL run `platform conformance --live --lineage opencode-glm` (TTY, confirmation phrase, `--force-quota-override` per the automation guard) and the task SHALL record per-probe results + the persisted record path as evidence
+- 7.1 WHEN tasks implementing REQ-1 through REQ-6 have landed THE OPERATOR SHALL run `platform conformance --live --lineage opencode-glm` (TTY, confirmation phrase, `--force-quota-override` per the automation guard) and the task SHALL record per-probe results + the persisted record path as evidence
 - 7.2 IF the OpenCode Go gateway is unavailable or its quota exhausted THEN THE OPERATOR SHALL record the failure shape and the task SHALL remain open with the CI conformance (REQ-4) as this round's evidence
 - 7.3 WHEN REQ-7.1 lands THE SYSTEM SHALL treat PR-gate slotting, loop composition, and any §7.4 routing-default change as follow-up work outside this spec's code scope (D2)
 

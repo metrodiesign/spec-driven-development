@@ -1,6 +1,6 @@
 # Design: opencode-glm — GLM-5.3 through the OpenCode CLI
 
-> Status: draft 2026-08-16
+> Status: approved 2026-08-16
 > Mode: requirements-first — every design element cites its REQ in the traceability table.
 
 ## Architecture Overview
