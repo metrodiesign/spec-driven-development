@@ -1,6 +1,6 @@
 # Requirements: glm-5-3-adapter — GLM-5.3 via an OpenAI-compatible Ring-2 adapter
 
-> Status: draft 2026-08-16
+> Status: approved 2026-08-16 (D1–D4 agent defaults accepted as-is at the gate)
 > Upstream: unified-platform-spec.md v1.11 §7.4/§7.6 (GLM deferral lifted) + invariants §2
 > (INV-5 no self-retry, INV-7 vendor-free Ring 0/1, INV-8 adapter = wire translation only).
 > User decisions binding: clarifications.md (D1–D4 are flagged agent defaults, overridable at this gate).
