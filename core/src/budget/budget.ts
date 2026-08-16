@@ -14,7 +14,17 @@ export interface BudgetTracker {
   exceeded(): false | { limit: 'iterations' | 'costUnits' | 'wallclock' };
   /** Cost units still available (never negative) — the real remaining budget (REQ-6.3). */
   remaining(): number;
+  /** Read current counters without changing time, usage, or a budget decision. */
+  snapshot(): BudgetUsageSnapshot;
 }
+
+export interface BudgetUsageSnapshot {
+  used: { iterations: number; costUnits: number; activeWallclockMs: number };
+  cap: { iterations: number; costUnits: number; wallclockMs: number };
+}
+
+export type BudgetObservationPhase = 'init' | 'charge' | 'excluded-time';
+export type BudgetObserver = (phase: BudgetObservationPhase, snapshot: BudgetUsageSnapshot) => void;
 
 export type CostValidationReason = 'non_finite' | 'negative' | 'overflow';
 
@@ -58,13 +68,33 @@ export class BudgetUsageError extends Error {
   }
 }
 
-export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker {
+export function createBudget(limits: BudgetLimits, clock: Clock, observe?: BudgetObserver): BudgetTracker {
   const startedAt = clock.now();
   let iterations = 0;
   let costUnits = 0;
   let excludedMs = 0;
 
-  return {
+  const snapshot = (): BudgetUsageSnapshot => ({
+    used: {
+      iterations,
+      costUnits,
+      activeWallclockMs: Math.max(0, clock.now() - startedAt - excludedMs),
+    },
+    cap: {
+      iterations: limits.maxIterations,
+      costUnits: limits.maxCostUnits,
+      wallclockMs: limits.maxWallclockMs,
+    },
+  });
+  const emit = (phase: BudgetObservationPhase): void => {
+    try {
+      observe?.(phase, snapshot());
+    } catch {
+      // Observation is a side channel; budget decisions remain authoritative.
+    }
+  };
+
+  const tracker: BudgetTracker = {
     noteIteration(cost) {
       const next = addCostUnits(costUnits, cost);
       if (!next.ok) throw new BudgetUsageError(next);
@@ -72,9 +102,13 @@ export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker 
       // iteration or alter the accumulated cost.
       iterations += 1;
       costUnits = next.value;
+      emit('charge');
     },
     noteExcludedMs(ms) {
-      if (ms > 0) excludedMs += ms;
+      if (ms > 0) {
+        excludedMs += ms;
+        emit('excluded-time');
+      }
     },
     exceeded() {
       if (iterations >= limits.maxIterations) return { limit: 'iterations' };
@@ -85,5 +119,8 @@ export function createBudget(limits: BudgetLimits, clock: Clock): BudgetTracker 
     remaining() {
       return Math.max(0, limits.maxCostUnits - costUnits);
     },
+    snapshot,
   };
+  emit('init');
+  return tracker;
 }

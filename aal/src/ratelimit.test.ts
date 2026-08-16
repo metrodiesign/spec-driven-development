@@ -38,3 +38,16 @@ test('tryTake(n) takes n atomically; refillPerSec 0 never refills', () => {
   t = 10_000;
   assert.equal(b.available(), 2, 'refillPerSec 0 -> static');
 });
+
+test('peekAvailable reads current tokens without refilling or reading the clock', () => {
+  let reads = 0;
+  let t = 0;
+  const b = createTokenBucket({ capacity: 2, refillPerSec: 1 }, () => { reads += 1; return t; });
+  assert.equal(reads, 1, 'construction reads initial time once');
+  assert.equal(b.tryTake(), true);
+  assert.equal(reads, 2, 'tryTake performs the normal refill read');
+  t = 10_000;
+  assert.equal(b.peekAvailable(), 1, 'peek does not refill elapsed time');
+  assert.equal(reads, 2, 'peek does not read the clock');
+  assert.equal(b.available(), 2, 'normal available still refills');
+});

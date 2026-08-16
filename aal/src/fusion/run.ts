@@ -18,7 +18,7 @@ import type { ResolveRule } from './profiles.ts';
 import type { AdapterInterface, AgentRequest } from '../protocol.ts';
 import type { RegisteredAdapter } from '../registry.ts';
 import type { Router } from '../router.ts';
-import type { createDispatcher, DispatchItem } from '../dispatch.ts';
+import type { createDispatcher, DispatchItem, RateObservation } from '../dispatch.ts';
 import { addCostUnits, validateCostUnits } from 'core';
 import type { Action, ContextBundle, EventLog, EvidenceStore, GateReport } from 'core';
 
@@ -196,7 +196,30 @@ export async function runFusion(deps: FusionDeps, profile: FusionProfile, base: 
   });
 
   const items: DispatchItem[] = slots.map((s) => ({ adapter: s.adapter, request: s.request }));
-  const results = await deps.dispatcher.dispatchAll(items);
+  const results = await deps.dispatcher.dispatchAll(items, (record: RateObservation) => {
+    try {
+      deps.log.append({
+        runId: deps.runId,
+        taskId: deps.taskId,
+        type: 'RATE_LIMIT_OBSERVED',
+        payload: { ...record },
+      });
+    } catch (error) {
+      try {
+        deps.log.append({
+          runId: deps.runId,
+          taskId: deps.taskId,
+          type: 'ERROR',
+          payload: {
+            reason: 'rate_limit_observation_append_failed',
+            detail: error instanceof Error ? error.message : String(error),
+          },
+        });
+      } catch {
+        // Observation failure never changes fusion dispatch or resolution.
+      }
+    }
+  });
 
   const candidates: PanelCandidate[] = [];
   let usage = 0;

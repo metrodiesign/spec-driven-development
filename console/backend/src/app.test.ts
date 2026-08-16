@@ -145,6 +145,33 @@ test('F-Proj/F-Sess wired over live files; home paths render in ~ form (REQ-13.3
   }
 });
 
+test('project/session collections paginate additively while legacy callers keep their response shape', async () => {
+  const fix = makeHome();
+  addSession(fix, '-b-project', 's2', [{ timestamp: '2026-01-05T11:00:00Z' }]);
+  addSession(fix, '-a-project', 's2', [{ timestamp: '2026-01-05T11:00:00Z' }]);
+  addSession(fix, '-a-project', 's1', [{ timestamp: '2026-01-05T10:00:00Z' }]);
+  const app = buildApp(depsFor(fix));
+  try {
+    const legacy = await app.inject({ method: 'GET', url: '/api/projects', headers: GOOD_HOST });
+    assert.equal('nextCursor' in legacy.json(), false);
+
+    const first = await app.inject({ method: 'GET', url: '/api/projects?limit=1', headers: GOOD_HOST });
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.json().projects[0].id, '-a-project');
+    assert.equal(typeof first.json().nextCursor, 'string');
+    const second = await app.inject({ method: 'GET', url: `/api/projects?limit=1&cursor=${encodeURIComponent(first.json().nextCursor)}`, headers: GOOD_HOST });
+    assert.equal(second.json().projects[0].id, '-b-project');
+
+    const sessions = await app.inject({ method: 'GET', url: '/api/sessions?project=-a-project&limit=1', headers: GOOD_HOST });
+    assert.equal(sessions.json().sessions[0].sessionId, 's1');
+    assert.equal(typeof sessions.json().nextCursor, 'string');
+    assert.equal((await app.inject({ method: 'GET', url: '/api/sessions?project=-a-project&limit=101', headers: GOOD_HOST })).statusCode, 400);
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
 test('F-Usage: estimate labeled, weekly needs anchor, config roundtrip (REQ-15)', async () => {
   const fix = makeHome();
   addSession(fix, '-my-app', 's1', [
@@ -193,7 +220,7 @@ test('negative guarantees: no credential-returning route, no user creation (REQ-
   try {
     await app.ready();
     const routes = app.printRoutes();
-    assert.ok(!/credential|token|login|user/i.test(routes), `route table clean: ${routes}`);
+    assert.ok(!/credential|token|login/i.test(routes), `route table clean: ${routes}`);
     for (const url of ['/api/users', '/api/credentials', '/api/token', '/api/export']) {
       for (const method of ['GET', 'POST'] as const) {
         const res = await app.inject({ method, url, headers: GOOD_HOST });

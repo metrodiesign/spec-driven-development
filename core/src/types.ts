@@ -222,6 +222,10 @@ export type EventType =
   // right after the event log opens and before any adapter is built.
   | 'TASK_GRAPH_FROZEN'
   | 'TASK_GRAPH_REJECTED'
+  // Operator control-center observations (append-only; never consumed by decisions).
+  | 'RUN_DESCRIPTOR'
+  | 'BUDGET_SNAPSHOT'
+  | 'RATE_LIMIT_OBSERVED'
   // P0-08 operator golden provenance (append-only; REQ-8.11).
   | 'GOLDEN_FIXTURE_PROVISIONED'
   // PR quality gate additions (append-only; event payloads contain refs/hashes only).

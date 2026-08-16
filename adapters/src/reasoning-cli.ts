@@ -6,6 +6,7 @@ import type { AdapterInterface, AgentCallControl, AgentRequest, AgentResponse, C
 import type { Action } from 'core';
 
 import { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';
+import { describeReasoningCliAdapter } from './descriptors.ts';
 
 export interface ReasoningCliResult {
   exitCode: number;
@@ -41,15 +42,7 @@ export function createReasoningCliAdapter(opts: ReasoningCliAdapterOptions): Ada
   const per1k = opts.costUnitsPer1k ?? 1;
   return {
     manifest(): CapabilityManifest {
-      return {
-        adapterId: opts.id,
-        structuredOutput: true,
-        toolCalling: false,
-        contextWindowTokens: opts.contextWindowTokens,
-        executionBackend: false,
-        determinism: 'none',
-        lineage: opts.lineage,
-      };
+      return describeReasoningCliAdapter(opts).manifest;
     },
     async send(req: AgentRequest, control?: AgentCallControl): Promise<AgentResponse> {
       const rfile = replayPath(req.requestId);

@@ -31,6 +31,17 @@ test('window summary: open window shows remaining time, closed/none degrade (REQ
   assert.equal(windowSummary(null, now), 'No open 5h window — the next prompt starts one.');
 });
 
+test('window summary derives Thai UI text without changing numeric evidence', () => {
+  const now = Date.parse('2026-01-05T12:00:00Z');
+  const text = windowSummary(
+    { start: '2026-01-05T10:00:00Z', end: '2026-01-05T15:00:00Z', entryCount: 7 },
+    now,
+    'th',
+  );
+  assert.match(text, /7/u);
+  assert.match(text, /3 ชม\./u);
+});
+
 test('project label marks loop-managed projects (spec §8 F-Proj banner)', () => {
   assert.equal(
     projectLabel({ id: '-x', cwd: '~/work/app', loopManaged: true }),

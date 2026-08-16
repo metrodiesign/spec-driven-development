@@ -11,19 +11,19 @@ test('isTheme: only "light"/"dark" are valid, everything else (incl. null) is no
   assert.equal(isTheme(''), false);
 });
 
-test('resolveInitialTheme: a stored value wins over prefers-color-scheme in both directions (REQ-20.2)', () => {
+test('resolveInitialTheme: a stored value wins in both directions (REQ-9.1)', () => {
   assert.equal(resolveInitialTheme('dark', false), 'dark', 'stored dark wins even when OS prefers light');
   assert.equal(resolveInitialTheme('light', true), 'light', 'stored light wins even when OS prefers dark');
 });
 
-test('resolveInitialTheme: no stored value follows prefers-color-scheme (REQ-20.2)', () => {
+test('resolveInitialTheme: no stored value defaults dark regardless of prefers-color-scheme (REQ-9.1)', () => {
   assert.equal(resolveInitialTheme(null, true), 'dark');
-  assert.equal(resolveInitialTheme(null, false), 'light');
+  assert.equal(resolveInitialTheme(null, false), 'dark');
 });
 
 test('resolveInitialTheme: a malformed stored value is treated as absent, not trusted', () => {
   assert.equal(resolveInitialTheme('blue', true), 'dark');
-  assert.equal(resolveInitialTheme('', false), 'light');
+  assert.equal(resolveInitialTheme('', false), 'dark');
 });
 
 test('toggleTheme: flips both directions', () => {

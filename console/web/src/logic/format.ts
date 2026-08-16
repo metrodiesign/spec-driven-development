@@ -1,6 +1,8 @@
 // Pure display logic for the console views — testable without a DOM
 // (ARCHITECTURE: logic separate from presentation).
 
+import { translate, type Locale } from './i18n.ts';
+
 export interface AuthInfo {
   shadowing: boolean;
   shadowingVars: string[];
@@ -28,13 +30,13 @@ export interface WindowInfo {
   entryCount: number;
 }
 
-export function windowSummary(w: WindowInfo | null, nowMs: number): string {
-  if (w === null) return 'No open 5h window — the next prompt starts one.';
+export function windowSummary(w: WindowInfo | null, nowMs: number, locale: Locale = 'en'): string {
+  if (w === null) return translate(locale, 'usageNoOpenWindow');
   const remainingMs = Date.parse(w.end) - nowMs;
-  if (Number.isNaN(remainingMs) || remainingMs <= 0) return 'Window just closed.';
+  if (Number.isNaN(remainingMs) || remainingMs <= 0) return translate(locale, 'usageWindowClosed');
   const h = Math.floor(remainingMs / 3_600_000);
   const m = Math.round((remainingMs % 3_600_000) / 60_000);
-  return `Open 5h window: ${w.entryCount} entries, resets in ~${h}h ${m}m (estimate).`;
+  return translate(locale, 'usageOpenWindow', { count: w.entryCount, hours: h, minutes: m });
 }
 
 export function projectLabel(p: { id: string; cwd: string | null; loopManaged: boolean }): string {

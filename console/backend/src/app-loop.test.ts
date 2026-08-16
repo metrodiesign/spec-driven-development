@@ -148,6 +148,28 @@ test('GET /api/loop/runs lists live + ended runs, never leaks the Bearer token (
   }
 });
 
+test('GET /api/loop/runs adds stable keyset pages only when requested', async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
+  mkdirSync(join(runsRoot, 'RUN-B'));
+  mkdirSync(join(runsRoot, 'RUN-A'));
+  const app = buildApp(deps(runsRoot));
+  try {
+    const legacy = await app.inject({ method: 'GET', url: '/api/loop/runs', headers: GOOD_HOST });
+    assert.equal('nextCursor' in legacy.json(), false);
+    const first = await app.inject({ method: 'GET', url: '/api/loop/runs?limit=1', headers: GOOD_HOST });
+    assert.equal(first.json().runs[0].runId, 'RUN-A');
+    const second = await app.inject({
+      method: 'GET',
+      url: `/api/loop/runs?limit=1&cursor=${encodeURIComponent(first.json().nextCursor)}`,
+      headers: GOOD_HOST,
+    });
+    assert.equal(second.json().runs[0].runId, 'RUN-B');
+  } finally {
+    await app.close();
+    rmSync(runsRoot, { recursive: true, force: true });
+  }
+});
+
 test('GET /api/loop/:run/approvals: unknown run -> 404; ended run -> 409; live run -> proxied 200 (REQ-15.2/15.6)', async () => {
   const runsRoot = mkdtempSync(join(tmpdir(), 'loop-runs-'));
   const live = await makeLiveRun(runsRoot, 'RUN-LIVE');
@@ -223,6 +245,10 @@ test('GET /api/loop/:run/events?since= filters by seq (REQ-15.8, since-based pag
     const filtered = since.json() as { seq: number }[];
     assert.equal(filtered.length, 1);
     assert.ok((filtered[0]?.seq ?? 0) > lastSeq);
+
+    const bounded = await app.inject({ method: 'GET', url: '/api/loop/RUN-LIVE/events?since=0&limit=1', headers: GOOD_HOST });
+    assert.equal((bounded.json() as { seq: number }[]).length, 1);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/loop/RUN-LIVE/events?limit=101', headers: GOOD_HOST })).statusCode, 400);
   } finally {
     await live.close();
     await app.close();

@@ -70,3 +70,37 @@ test('accepts zero usage as a valid charge (REQ-7.6)', () => {
   assert.doesNotThrow(() => b.noteIteration(0));
   assert.equal(b.remaining(), 10);
 });
+
+test('snapshot and observer expose exact counters without changing budget decisions', () => {
+  const clock = makeClock(100);
+  const observed: { phase: string; snapshot: ReturnType<ReturnType<typeof createBudget>['snapshot']> }[] = [];
+  const b = createBudget(
+    { maxIterations: 3, maxCostUnits: 10, maxWallclockMs: 1_000 },
+    clock,
+    (phase, snapshot) => observed.push({ phase, snapshot }),
+  );
+  clock.tick(250);
+  b.noteIteration(4);
+  clock.tick(100);
+  b.noteExcludedMs(100);
+
+  assert.deepEqual(observed.map((entry) => entry.phase), ['init', 'charge', 'excluded-time']);
+  assert.deepEqual(b.snapshot(), {
+    used: { iterations: 1, costUnits: 4, activeWallclockMs: 250 },
+    cap: { iterations: 3, costUnits: 10, wallclockMs: 1_000 },
+  });
+  assert.equal(b.remaining(), 6);
+  assert.equal(b.exceeded(), false);
+});
+
+test('a throwing budget observer never changes usage, exceptions, or return values', () => {
+  const b = createBudget(
+    { maxIterations: 2, maxCostUnits: 10, maxWallclockMs: 1_000 },
+    makeClock(),
+    () => { throw new Error('observer failed'); },
+  );
+  assert.doesNotThrow(() => b.noteIteration(3));
+  assert.doesNotThrow(() => b.noteExcludedMs(5));
+  assert.deepEqual(b.snapshot().used, { iterations: 1, costUnits: 3, activeWallclockMs: 0 });
+  assert.equal(b.remaining(), 7);
+});

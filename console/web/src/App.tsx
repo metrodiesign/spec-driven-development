@@ -1,274 +1,427 @@
-// Console SPA — Phase 0 dashboard: F-Status, F-Proj, F-Sess (read), F-Auth,
-// F-Usage mini card (spec §8). Views stay thin; display logic lives in
-// src/logic/ with unit tests. Deep-linkable via ?project= (spec §8 principles).
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 
-import { useEffect, useState } from 'react';
-
-import { authBanner, projectLabel, windowSummary, type AuthInfo, type WindowInfo } from './logic/format.ts';
-import { interpretAuthProbe, type AuthGateState } from './logic/auth.ts';
-import { isTheme, resolveInitialTheme, themeToggleLabel, toggleTheme, THEME_STORAGE_KEY, type Theme } from './logic/theme.ts';
+import { DraftProvider } from './DraftContext.tsx';
+import { Aal } from './Aal.tsx';
+import { Adapters } from './Adapters.tsx';
+import { Core } from './Core.tsx';
+import { Console } from './Console.tsx';
+import { Dashboard } from './Dashboard.tsx';
+import { openModalDialog } from './dialog.ts';
 import { useI18n } from './I18nContext.tsx';
-import { useFetch } from './useFetch.ts';
-import { TerminalPanel } from './TerminalPanel.tsx';
-import { Surfaces } from './Surfaces.tsx';
-import { Loop } from './Loop.tsx';
-import { Sched } from './Sched.tsx';
-import { Issues } from './Issues.tsx';
-import { Chat } from './Chat.tsx';
 import { Login } from './Login.tsx';
-import { PrQuality } from './PrQuality.tsx';
+import { interpretAuthProbe, type AuthGateState } from './logic/auth.ts';
+import {
+  AREAS,
+  decodeRoute,
+  encodeRoute,
+  routeForArea,
+  validateSelectedItem,
+  type Area,
+  type DecodedRoute,
+  type RouteState,
+  type RouteWarning,
+} from './logic/navigation.ts';
+import type { LocaleKey } from './logic/i18n.ts';
+import { readPreference, writePreference } from './logic/preferences.ts';
+import {
+  isTheme,
+  resolveInitialTheme,
+  themeToggleLabel,
+  toggleTheme,
+  THEME_STORAGE_KEY,
+  type Theme,
+} from './logic/theme.ts';
+import { AUTH_INVALID_EVENT, resetAuthInvalidSignal, useRead, type ReadResult } from './useFetch.ts';
 
-interface Status {
-  disclaimer: string;
-  cli: { available: boolean; version?: string; hint?: string };
-  activeRuns: unknown[];
-}
 interface Project {
-  id: string;
-  cwd: string | null;
-  sessionCount: number;
-  loopManaged: boolean;
-}
-interface Session {
-  sessionId: string;
-  firstTs: string | null;
-  lastTs: string | null;
-  entryCount: number;
-}
-interface Usage {
-  label: string;
-  disclaimer: string;
-  moneyDisclaimer: string;
-  currentWindow: WindowInfo | null;
-  windowsLast7Days: number;
-  weekly:
-    | { available: true; sinceReset: string; entryCount: number; calibratedPercent?: number }
-    | { available: false; needed: string };
+  readonly id: string;
+  readonly cwd: string | null;
+  readonly sessionCount: number;
+  readonly loopManaged: boolean;
 }
 
-// Remote auth gate (REQ-19): probes the ALREADY-fetched /api/auth endpoint's
-// status code — a 401 means no valid session, so the dashboard's own fetches
-// stay unfired below (`ready ? url : null`) until a login flips the cookie.
-function useAuthGate(): AuthGateState {
-  const [state, setState] = useState<AuthGateState>('checking');
+interface ProjectsResponse {
+  readonly projects: readonly Project[];
+  readonly guidance: string | null;
+}
+
+const AREA_LABEL_KEYS: Readonly<Record<Area, LocaleKey>> = {
+  dashboard: 'areaDashboard',
+  core: 'areaCore',
+  aal: 'areaAal',
+  adapters: 'areaAdapters',
+  console: 'areaConsole',
+};
+
+const DEFAULT_VIEWS: Readonly<Record<Area, string>> = {
+  dashboard: 'overview',
+  core: 'runs',
+  aal: 'routing',
+  adapters: 'catalog',
+  console: 'projects',
+};
+
+function useAuthGate(): { readonly gate: AuthGateState; readonly authenticated: () => void } {
+  const [gate, setGate] = useState<AuthGateState>('checking');
+
   useEffect(() => {
-    let alive = true;
-    fetch('/api/auth')
-      .then((r) => {
-        if (alive) setState(interpretAuthProbe(r.status));
-      })
+    const controller = new AbortController();
+    void fetch('/api/auth', { signal: controller.signal })
+      .then((response) => setGate(interpretAuthProbe(response.status)))
       .catch(() => {
-        if (alive) setState('authed'); // network hiccup: don't lock the shell out, let downstream fetches fail gracefully
+        if (!controller.signal.aborted) setGate('unauthed');
       });
-    return () => {
-      alive = false;
-    };
+    return () => controller.abort();
   }, []);
-  return state;
+
+  useEffect(() => {
+    const invalidate = (): void => setGate('unauthed');
+    window.addEventListener(AUTH_INVALID_EVENT, invalidate);
+    return () => window.removeEventListener(AUTH_INVALID_EVENT, invalidate);
+  }, []);
+
+  return {
+    gate,
+    authenticated: useCallback(() => {
+      resetAuthInvalidSignal();
+      setGate('authed');
+    }, []),
+  };
 }
 
-// Theme toggle (REQ-20.2): index.html's inline script already stamps
-// data-theme on <html> before paint, so read that as the source of truth
-// instead of re-resolving prefers-color-scheme a second time here.
-function useTheme(): { theme: Theme; toggle: () => void } {
+function storedTheme(): string | null {
+  return readPreference(localStorage, THEME_STORAGE_KEY);
+}
+
+function useTheme(): { readonly theme: Theme; readonly toggle: () => void } {
   const [theme, setTheme] = useState<Theme>(() => {
     const attr = document.documentElement.getAttribute('data-theme');
     return isTheme(attr)
       ? attr
-      : resolveInitialTheme(localStorage.getItem(THEME_STORAGE_KEY), window.matchMedia('(prefers-color-scheme: dark)').matches);
+      : resolveInitialTheme(storedTheme(), window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
-  const toggle = (): void => {
-    setTheme((prev) => {
-      const next = toggleTheme(prev);
-      document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem(THEME_STORAGE_KEY, next);
-      return next;
-    });
+  return {
+    theme,
+    toggle: () => {
+      setTheme((current) => {
+        const next = toggleTheme(current);
+        document.documentElement.setAttribute('data-theme', next);
+        writePreference(localStorage, THEME_STORAGE_KEY, next);
+        return next;
+      });
+    },
   };
-  return { theme, toggle };
 }
 
-export function App() {
-  const gate = useAuthGate();
-  const ready = gate === 'authed';
+function useRoute(): {
+  readonly decoded: DecodedRoute;
+  readonly navigate: (route: RouteState) => void;
+} {
+  const [decoded, setDecoded] = useState<DecodedRoute>(() => decodeRoute(window.location.search));
+
+  useEffect(() => {
+    const readLocation = (): void => {
+      const next = decodeRoute(window.location.search);
+      const canonical = encodeRoute(next.route);
+      if (window.location.search !== canonical) {
+        window.history.replaceState(null, '', `${window.location.pathname}${canonical}${window.location.hash}`);
+      }
+      setDecoded(next);
+    };
+    readLocation();
+    window.addEventListener('popstate', readLocation);
+    return () => window.removeEventListener('popstate', readLocation);
+  }, []);
+
+  return {
+    decoded,
+    navigate: useCallback((route) => {
+      const search = encodeRoute(route);
+      if (window.location.search !== search) {
+        window.history.pushState(null, '', `${window.location.pathname}${search}${window.location.hash}`);
+      }
+      setDecoded({ route, warning: null });
+    }, []),
+  };
+}
+
+class AreaErrorBoundary extends Component<
+  { readonly children: ReactNode; readonly message: string; readonly retryLabel: string },
+  { readonly failed: boolean }
+> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  override render(): ReactNode {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <section className="area-error" role="alert">
+        <p>{this.props.message}</p>
+        <button type="button" onClick={() => this.setState({ failed: false })}>
+          {this.props.retryLabel}
+        </button>
+      </section>
+    );
+  }
+}
+
+function plainNavigationClick(event: MouseEvent<HTMLAnchorElement>): boolean {
+  return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+}
+
+function AreaNavigation({
+  route,
+  navigate,
+}: {
+  readonly route: RouteState;
+  readonly navigate: (route: RouteState) => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  return (
+    <nav aria-label={t('shellNavigationAriaLabel')}>
+      <ul className="area-nav-list">
+        {AREAS.map((area) => {
+          const next = routeForArea(route, area);
+          return (
+            <li key={area}>
+              <a
+                href={encodeRoute(next)}
+                aria-current={route.area === area ? 'page' : undefined}
+                onClick={(event) => {
+                  if (!plainNavigationClick(event)) return;
+                  event.preventDefault();
+                  navigate(next);
+                }}
+              >
+                {t(AREA_LABEL_KEYS[area])}
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+function routeWarningText(warning: RouteWarning): { readonly key: 'shellInvalidArea' | 'shellInvalidView' | 'shellInvalidItem'; readonly value: string } {
+  if (warning.kind === 'invalid-area') return { key: 'shellInvalidArea', value: warning.value };
+  if (warning.kind === 'invalid-view') return { key: 'shellInvalidView', value: warning.value };
+  return { key: 'shellInvalidItem', value: warning.value };
+}
+
+function Workspace({ decoded }: { readonly decoded: DecodedRoute }): React.JSX.Element {
+  const { t } = useI18n();
+  const { route, warning } = decoded;
+  const warningText = warning === null ? null : routeWarningText(warning);
+  return (
+    <>
+      {warningText !== null && (
+        <p className="route-warning" role="alert">
+          {t(warningText.key, { value: warningText.value })}
+        </p>
+      )}
+      <section aria-labelledby="workspace-heading">
+        <p className="workspace-kicker">
+          {route.area} / {route.view ?? DEFAULT_VIEWS[route.area]}
+        </p>
+        <h1 id="workspace-heading">{t('shellWorkspaceHeading', { area: t(AREA_LABEL_KEYS[route.area]) })}</h1>
+        <p>{t('shellWorkspaceIntro')}</p>
+        <details>
+          <summary>{t('shellRouteDetails')}</summary>
+          <dl className="route-details">
+            <dt>{t('shellRouteArea')}</dt>
+            <dd><code>{route.area}</code></dd>
+            <dt>{t('shellRouteView')}</dt>
+            <dd><code>{route.view ?? DEFAULT_VIEWS[route.area]}</code></dd>
+            <dt>{t('shellRouteProject')}</dt>
+            <dd><code>{route.project ?? '—'}</code></dd>
+          </dl>
+        </details>
+      </section>
+    </>
+  );
+}
+
+function ContextInspector({ decoded }: { readonly decoded: DecodedRoute }): React.JSX.Element | null {
+  const { t } = useI18n();
+  const { route, warning } = decoded;
+  if (route.item === null && warning?.kind !== 'invalid-item') return null;
+  return (
+    <section aria-labelledby="inspector-heading">
+      <h2 id="inspector-heading">{t('shellInspectorAriaLabel')}</h2>
+      {warning?.kind === 'invalid-item' ? (
+        <p role="status">{t('shellInvalidItem', { value: warning.value })}</p>
+      ) : (
+        <>
+          <p>{t('shellSelectedItem')}</p>
+          <code>{route.item}</code>
+          <details>
+            <summary>{t('shellRouteDetails')}</summary>
+            <p><code>{encodeRoute(route)}</code></p>
+          </details>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ProjectControl({
+  route,
+  navigate,
+  result,
+}: {
+  readonly route: RouteState;
+  readonly navigate: (route: RouteState) => void;
+  readonly result: ReadResult<ProjectsResponse>;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const data = result.state.kind === 'data' ? result.state.value : result.state.kind === 'error' ? result.state.previous : result.state.previous;
+  const projects = data?.projects ?? [];
+  const selectedMissing = route.project !== null && !projects.some((project) => project.id === route.project);
+
+  return (
+    <div className="project-control">
+      <label>
+        <span>{t('shellProjectLabel')}</span>
+        <select
+          value={route.project ?? ''}
+          onChange={(event) => navigate({ ...route, project: event.target.value || null, item: null })}
+        >
+          <option value="">{t('shellAllProjects')}</option>
+          {selectedMissing && <option value={route.project ?? ''}>{route.project}</option>}
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>{project.cwd ?? project.id}</option>
+          ))}
+        </select>
+      </label>
+      {result.state.kind === 'loading' && result.state.previous === null && <span role="status">{t('loading')}</span>}
+      {result.state.kind === 'error' && (
+        <div className="read-error" role="alert">
+          <span>{t('shellReadFailed', { reason: result.state.reason })}</span>
+          {result.state.stale && <span>{t('shellStaleRead')}</span>}
+          {result.state.readAt !== null && <span>{t('shellLastRead', { time: result.state.readAt })}</span>}
+          <button type="button" onClick={result.retry}>{t('shellRetry')}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuthenticatedShell(): React.JSX.Element {
+  const { decoded: rawDecoded, navigate: baseNavigate } = useRoute();
+  const knownItems = rawDecoded.route.area === 'console' && rawDecoded.route.view === 'terminal' ? ['mcp-authenticate'] : null;
+  const decoded = validateSelectedItem(rawDecoded, knownItems);
+  const route = decoded.route;
+  const projectRead = useRead<ProjectsResponse>('/api/projects?limit=50');
+  const navDialog = useRef<HTMLDialogElement>(null);
+  const inspectorDialog = useRef<HTMLDialogElement>(null);
   const { theme, toggle: onToggleTheme } = useTheme();
   const { t, locale, onToggleLocale } = useI18n();
 
-  const status = useFetch<Status>(ready ? '/api/status' : null);
-  const auth = useFetch<AuthInfo>(ready ? '/api/auth' : null);
-  const projectsRes = useFetch<{ projects: Project[]; guidance: string | null }>(ready ? '/api/projects' : null);
-  const usage = useFetch<Usage>(ready ? '/api/usage/estimate' : null);
-
-  const params = new URLSearchParams(window.location.search);
-  const selected = params.get('project');
-  const sessionsRes = useFetch<{ sessions: Session[]; warnings: string[] }>(
-    ready && selected !== null ? `/api/sessions?project=${encodeURIComponent(selected)}` : null,
-  );
-
-  if (gate === 'checking') return null;
-  if (gate === 'unauthed') return <Login />;
-
-  const banner = auth.kind === 'data' ? authBanner(auth.value) : null;
+  const navigate = (next: RouteState): void => {
+    navDialog.current?.close();
+    inspectorDialog.current?.close();
+    baseNavigate(next);
+  };
+  const customArea = route.area === 'dashboard' || route.area === 'core' || route.area === 'aal' || route.area === 'adapters' || route.area === 'console';
+  const inspector = customArea ? null : <ContextInspector decoded={decoded} />;
+  const hasInspector = route.area === 'core' || route.area === 'aal' || route.area === 'adapters'
+    ? route.item !== null
+    : inspector !== null;
 
   return (
-    <main
-      style={{
-        maxWidth: 900,
-        margin: '0 auto',
-        padding: '1rem',
-        fontFamily: 'system-ui',
-        overflowWrap: 'anywhere',
-      }}
-    >
+    <div className="control-center">
       <header className="app-header">
-        <h1>{t('appTitle')}</h1>
-        <button type="button" aria-pressed={theme === 'dark'} onClick={onToggleTheme}>
-          {t(themeToggleLabel(theme))}
-        </button>
-        <button type="button" onClick={onToggleLocale}>
-          {locale === 'th' ? t('localeToggleToEnglish') : t('localeToggleToThai')}
-        </button>
+        <a className="skip-link" href="#workspace">{t('shellSkipToWorkspace')}</a>
+        <strong>{t('appTitle')}</strong>
+        <ProjectControl route={route} navigate={navigate} result={projectRead} />
+        <div className="header-actions">
+          <button className="drawer-trigger" type="button" onClick={(event) => openModalDialog(navDialog.current, event.currentTarget)}>
+            {t('shellOpenNavigation')}
+          </button>
+          {inspector !== null && (
+            <button className="drawer-trigger" type="button" onClick={(event) => openModalDialog(inspectorDialog.current, event.currentTarget)}>
+              {t('shellOpenInspector')}
+            </button>
+          )}
+          <button type="button" aria-pressed={theme === 'dark'} onClick={onToggleTheme}>
+            {t(themeToggleLabel(theme))}
+          </button>
+          <button type="button" onClick={onToggleLocale}>
+            {locale === 'th' ? t('localeToggleToEnglish') : t('localeToggleToThai')}
+          </button>
+        </div>
       </header>
-      <p role="note">{(status.kind === 'data' ? status.value.disclaimer : undefined) ?? t('appStatusDisclaimerFallback')}</p>
 
-      {banner !== null && (
-        <section
-          aria-label={t('appAuthStatusAriaLabel')}
-          role={banner.tone === 'red' ? 'alert' : 'status'}
-          style={{
-            padding: '0.75rem',
-            border: '2px solid',
-            borderColor: banner.tone === 'red' ? 'var(--color-danger)' : 'var(--color-success)',
-            color: banner.tone === 'red' ? 'var(--color-danger)' : 'var(--color-success)',
-            marginBottom: '1rem',
-          }}
+      <div className={`shell-grid${hasInspector ? '' : ' shell-grid-without-inspector'}`}>
+        <aside className="shell-nav">
+          <AreaNavigation route={route} navigate={navigate} />
+        </aside>
+        <AreaErrorBoundary
+          key={`${route.area}:${route.view ?? ''}`}
+          message={t('shellAreaError')}
+          retryLabel={t('shellReloadArea')}
         >
-          {banner.text}
-        </section>
-      )}
-
-      <section aria-label={t('appCliStatusAriaLabel')}>
-        <h2>{t('appStatusHeading')}</h2>
-        {status.kind === 'loading' ? (
-          <p>{t('loading')}</p>
-        ) : status.kind === 'error' ? (
-          <p role="status">{t('fetchUnavailable')}</p>
-        ) : status.value.cli.available ? (
-          <p>
-            {t('appCliVersionPrefix')} <code>{status.value.cli.version}</code> {t('appActiveRunsInfix')}{' '}
-            {status.value.activeRuns.length}
-          </p>
-        ) : (
-          <p>{status.value.cli.hint}</p>
-        )}
-      </section>
-
-      <section aria-label={t('appUsageAriaLabel')}>
-        <h2>{t('appUsageHeading')}</h2>
-        {usage.kind === 'loading' ? (
-          <p>{t('loading')}</p>
-        ) : usage.kind === 'error' ? (
-          <p role="status">{t('fetchUnavailable')}</p>
-        ) : (
-          <>
-            <p>{windowSummary(usage.value.currentWindow, Date.now())}</p>
-            <p>{t('appWindowsOpenedLine', { count: usage.value.windowsLast7Days })}</p>
-            {usage.value.weekly.available ? (
-              <p>
-                {t('appWeeklySinceLine', { date: usage.value.weekly.sinceReset, count: usage.value.weekly.entryCount })}
-                {usage.value.weekly.calibratedPercent !== undefined
-                  ? t('appCalibratedSuffix', { percent: usage.value.weekly.calibratedPercent })
-                  : ''}
-              </p>
-            ) : (
-              <p>{usage.value.weekly.needed}</p>
-            )}
-            <p>
-              <small>
-                {usage.value.disclaimer} · {usage.value.moneyDisclaimer}
-              </small>
-            </p>
-          </>
-        )}
-      </section>
-
-      <section aria-label={t('appProjectsHeading')}>
-        <h2>{t('appProjectsHeading')}</h2>
-        {projectsRes.kind === 'loading' ? (
-          <p>{t('loading')}</p>
-        ) : projectsRes.kind === 'error' ? (
-          <p role="status">{t('fetchUnavailable')}</p>
-        ) : projectsRes.value.projects.length === 0 ? (
-          <p>{projectsRes.value.guidance ?? t('appNoProjectsFallback')}</p>
-        ) : (
-          <ul>
-            {projectsRes.value.projects.map((p) => (
-              <li key={p.id}>
-                <a href={`?project=${encodeURIComponent(p.id)}`}>{projectLabel(p)}</a>{' '}
-                <small>{t('appSessionsCountSuffix', { count: p.sessionCount })}</small>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <Loop />
-
-      <Sched />
-
-      <Issues />
-
-      <PrQuality />
-
-      <Surfaces project={selected} remote={auth.kind === 'data' ? auth.value.remote : true} />
-
-      {selected !== null && <TerminalPanel project={selected} />}
-
-      {selected !== null && <Chat project={selected} />}
-
-      {selected !== null && (
-        <section aria-label={t('appSessionsAriaLabel')}>
-          <h2>
-            {t('appSessionsHeadingPrefix')} <code>{selected}</code>
-          </h2>
-          {sessionsRes.kind === 'loading' ? (
-            <p>{t('loading')}</p>
-          ) : sessionsRes.kind === 'error' ? (
-            <p role="status">{t('fetchUnavailable')}</p>
+          {route.area === 'dashboard' ? (
+            <Dashboard route={route} navigate={navigate} />
+          ) : route.area === 'core' ? (
+            <Core route={route} navigate={navigate} />
+          ) : route.area === 'aal' ? (
+            <Aal route={route} navigate={navigate} />
+          ) : route.area === 'adapters' ? (
+            <Adapters route={route} navigate={navigate} />
+          ) : route.area === 'console' ? (
+            <Console route={route} navigate={navigate} />
           ) : (
             <>
-              {sessionsRes.value.warnings.length > 0 && (
-                <p role="status">{sessionsRes.value.warnings.join(' · ')}</p>
+              <main id="workspace" className="shell-workspace" tabIndex={-1}>
+                <Workspace decoded={decoded} />
+              </main>
+              {hasInspector && (
+                <aside className="shell-inspector" aria-label={t('shellInspectorAriaLabel')}>
+                  {inspector}
+                </aside>
               )}
-              <div style={{ overflowX: 'auto' }}>
-                <table>
-                <caption>{t('appSessionsCaption')}</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">{t('appThSession')}</th>
-                    <th scope="col">{t('appThFirst')}</th>
-                    <th scope="col">{t('appThLast')}</th>
-                    <th scope="col">{t('appThEntries')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessionsRes.value.sessions.map((s) => (
-                    <tr key={s.sessionId}>
-                      <td>
-                        <code>{s.sessionId}</code>
-                      </td>
-                      <td>{s.firstTs ?? '—'}</td>
-                      <td>{s.lastTs ?? '—'}</td>
-                      <td>{s.entryCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
             </>
           )}
-        </section>
+        </AreaErrorBoundary>
+      </div>
+
+      <dialog ref={navDialog} className="drawer-dialog" aria-label={t('shellNavigationAriaLabel')}>
+        <button data-initial-focus type="button" onClick={() => navDialog.current?.close()}>{t('shellClose')}</button>
+        <AreaNavigation route={route} navigate={navigate} />
+      </dialog>
+      <dialog ref={inspectorDialog} className="drawer-dialog" aria-label={t('shellInspectorAriaLabel')}>
+        <button data-initial-focus type="button" onClick={() => inspectorDialog.current?.close()}>{t('shellClose')}</button>
+        {inspector}
+      </dialog>
+    </div>
+  );
+}
+
+export function App(): React.JSX.Element {
+  const { gate, authenticated } = useAuthGate();
+  const { t } = useI18n();
+  return (
+    <DraftProvider authVerified={gate === 'authed'}>
+      {gate === 'checking' ? (
+        <main className="auth-state" aria-live="polite">{t('shellCheckingSession')}</main>
+      ) : gate === 'unauthed' ? (
+        <Login onAuthenticated={authenticated} />
+      ) : (
+        <AuthenticatedShell />
       )}
-    </main>
+    </DraftProvider>
   );
 }

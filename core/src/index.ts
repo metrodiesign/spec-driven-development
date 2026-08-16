@@ -119,6 +119,9 @@ export {
   validateCostUnits,
   BudgetUsageError,
   type BudgetTracker,
+  type BudgetObservationPhase,
+  type BudgetObserver,
+  type BudgetUsageSnapshot,
   type CostValidation,
   type CostValidationReason,
 } from './budget/budget.ts';

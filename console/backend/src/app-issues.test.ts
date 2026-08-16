@@ -75,6 +75,32 @@ test('POST /api/issues creates an open issue; GET lists it (REQ-8.1/8.2/8.4)', a
   }
 });
 
+test('GET /api/issues paginates by createdAt/id while legacy response stays unchanged', async () => {
+  let now = NOW;
+  const { deps, cleanup } = makeFixture({ now: () => now });
+  const app = buildApp(deps);
+  try {
+    await app.inject({ method: 'POST', url: '/api/issues', ...jsonBody({ title: 'first', body: 'b' }) });
+    now += 1;
+    await app.inject({ method: 'POST', url: '/api/issues', ...jsonBody({ title: 'second', body: 'b' }) });
+
+    const legacy = await app.inject({ method: 'GET', url: '/api/issues', headers: HOST });
+    assert.equal('nextCursor' in legacy.json(), false);
+    const first = await app.inject({ method: 'GET', url: '/api/issues?limit=1', headers: HOST });
+    assert.equal(first.json().issues[0].title, 'first');
+    const second = await app.inject({
+      method: 'GET',
+      url: `/api/issues?limit=1&cursor=${encodeURIComponent(first.json().nextCursor)}`,
+      headers: HOST,
+    });
+    assert.equal(second.json().issues[0].title, 'second');
+    assert.equal((await app.inject({ method: 'GET', url: '/api/issues?cursor=bad', headers: HOST })).statusCode, 400);
+  } finally {
+    await app.close();
+    cleanup();
+  }
+});
+
 test('POST /api/issues: non-string title/body -> 400; over-cap -> 413, writes nothing (REQ-8.3)', async () => {
   const { deps, cleanup } = makeFixture();
   const app = buildApp(deps);
