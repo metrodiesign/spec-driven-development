@@ -1,6 +1,6 @@
 # Requirements: opencode-glm — GLM-5.3 through the OpenCode CLI (fifth lineage)
 
-> Status: draft 2026-08-16
+> Status: approved 2026-08-16 (D1–D3 + identity decisions accepted at the gate)
 > Upstream: unified-platform-spec.md v1.11 §7.4/§7.6 (multi-lineage routing, INV-8) + §5.4 quota-survivability rationale.
 > Sibling spec: glm-5-3-adapter (PR #142, direct-API zai lineage). User decisions binding: clarifications.md (D1–D3 answered in-session; identity decisions follow existing conventions).
 
