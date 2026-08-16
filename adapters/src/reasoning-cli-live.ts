@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { AdapterError } from 'aal';
 import type { AdapterInterface } from 'aal';
 
 import { providerEnvironment, terminateChild } from './control.ts';
@@ -235,6 +236,94 @@ export function createLiveOpenCodeDeepSeekAdapter(opts: LiveReasoningOptions): A
     id: 'opencode-deepseek',
     lineage: 'deepseek',
     contextWindowTokens: 128_000,
+    exec,
+  });
+}
+
+// --- opencode-glm lane (spec: .ai/specs/opencode-glm) -------------------------
+// Fifth lineage: GLM-5.3 served through the OpenCode Go gateway on the credential
+// this machine already holds (auth store at <data dir>/opencode/auth.json). The
+// hosted credential lives in the REAL home, while the deny-all sandbox uses a
+// temp HOME — so exactly one file (auth.json, 0600) is copied into the sandbox
+// per invocation and destroyed afterwards; config isolation is never loosened.
+
+/** Model id on the OpenCode Go gateway (overridable for future glm releases). */
+export const OPENCODE_GLM_DEFAULT_MODEL = 'opencode-go/glm-5.3';
+
+export interface OpenCodeGlmOptions extends LiveReasoningOptions {
+  /** Override the auth-store data dir — tests inject a temp dir; default resolves the real one. */
+  authDataDir?: string;
+}
+
+/**
+ * Resolve the OpenCode credential store (REQ-2.2/2.3). Pure fs probe: returns the
+ * auth.json path or null — never reads or returns file CONTENT. Default data dir
+ * follows OpenCode's own lookup: <XDG_DATA_HOME | ~/.local/share>/opencode.
+ */
+export function resolveOpenCodeAuthStore(dataDir?: string): string | null {
+  const base = dataDir ?? process.env['XDG_DATA_HOME'] ?? join(homedir(), '.local', 'share');
+  const store = join(base, 'opencode', 'auth.json');
+  return existsSync(store) ? store : null;
+}
+
+/**
+ * Assemble the child env for one invocation (REQ-2.1/2.2): the safe provider
+ * env base, then HOME/XDG_* pointed INSIDE the sandbox root with the deny-all
+ * config content and autoupdate off — identical isolation to the deepseek lane,
+ * plus the data dir that carries the per-invocation auth copy.
+ */
+export function buildOpenCodeGlmEnv(root: string, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...providerEnvironment(source),
+    HOME: root,
+    XDG_CONFIG_HOME: join(root, 'config'),
+    XDG_DATA_HOME: join(root, 'data'),
+    XDG_CACHE_HOME: join(root, 'cache'),
+    OPENCODE_CONFIG_DIR: join(root, 'config'),
+    OPENCODE_CONFIG_CONTENT: DENY_ALL_OPENCODE_CONFIG,
+    OPENCODE_DISABLE_AUTOUPDATE: 'true',
+  };
+}
+
+export function createLiveOpenCodeGlmAdapter(opts: OpenCodeGlmOptions): AdapterInterface {
+  // Factory-time fail-fast (REQ-2.3): a missing store is a wiring error — surface it
+  // before any sandbox/spawn. The message names the fix, never file content (REQ-2.5).
+  const store = resolveOpenCodeAuthStore(opts.authDataDir);
+  if (store === null) {
+    throw new AdapterError('auth_unavailable', 'opencode auth store not found — run `opencode auth login`');
+  }
+  const exec: ReasoningCliExec = async ({ prompt, model, signal, timeoutMs }) => {
+    const root = mkdtempSync(join(tmpdir(), 'platform-opencode-glm-'));
+    try {
+      const dataDir = join(root, 'data', 'opencode');
+      mkdirSync(dataDir, { recursive: true });
+      // Verbatim bytes then owner-only mode (REQ-2.4): copyFileSync's third arg is
+      // a copy mask (0-7), not a mode — the explicit chmod is the real 0600.
+      const authCopy = join(dataDir, 'auth.json');
+      copyFileSync(store, authCopy);
+      chmodSync(authCopy, 0o600);
+      return await runChild({
+        binary: opts.binary ?? 'opencode',
+        argv: buildOpenCodeReviewArgv(prompt, model),
+        cwd: root,
+        env: buildOpenCodeGlmEnv(root),
+        ...(signal !== undefined ? { signal } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        parse: parseOpenCode,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+  return createReasoningCliAdapter({
+    ...opts,
+    model: opts.model ?? OPENCODE_GLM_DEFAULT_MODEL,
+    id: 'opencode-glm',
+    // Shared with the direct-API glm adapter BY DESIGN (clarifications): same model
+    // family — fusion/susceptibility routing must not treat the two transports as
+    // decorrelated lineages.
+    lineage: 'zai',
+    contextWindowTokens: 1_000_000,
     exec,
   });
 }

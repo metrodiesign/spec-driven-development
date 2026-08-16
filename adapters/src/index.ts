@@ -30,8 +30,13 @@ export {
 export {
   buildGeminiReviewArgv,
   buildOpenCodeReviewArgv,
+  buildOpenCodeGlmEnv,
   createLiveGeminiAdapter,
   createLiveOpenCodeDeepSeekAdapter,
+  createLiveOpenCodeGlmAdapter,
+  OPENCODE_GLM_DEFAULT_MODEL,
+  resolveOpenCodeAuthStore,
+  type OpenCodeGlmOptions,
 } from './reasoning-cli-live.ts';
 // Shared Ring-2 wire helpers (INV-8) — reused by both adapters and any new lineage.
 export { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';
