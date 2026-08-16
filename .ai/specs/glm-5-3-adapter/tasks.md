@@ -21,8 +21,16 @@
        - test: `pnpm -C adapters test` -> 75 passed / 0 failed (+3 conformance tests: P1–P8 all pass with p7 susceptibility 0, prose-only fails exactly P2, regressed record → stale + not eligible)
        - viewports: n/a — logic-only
        - deviations: none
-- [ ] 3. Conformance CLI + routing policy — `console/backend/bin/platform.ts` `runConformance()`: add `'zai'` to the lineage allowlist + `createLiveGlmAdapter` construction branch (per-run replay dir, `PR_GATE_GLM_MODEL` env passthrough); add `tokenBuckets["glm"]` (capacity 4, refillPerSec 0.5) to `.ai/policies/routing.json`. Note: REQ-6 CLI wiring is review-verified (no test harness for `platform.ts` — recorded ceiling since v1.7); REQ-7 policy is guard-tested via aal routing-config tests + governance preflight on the next live run.
+- [x] 3. Conformance CLI + routing policy — `console/backend/bin/platform.ts` `runConformance()`: add `'zai'` to the lineage allowlist + `createLiveGlmAdapter` construction branch (per-run replay dir, `PR_GATE_GLM_MODEL` env passthrough); add `tokenBuckets["glm"]` (capacity 4, refillPerSec 0.5) to `.ai/policies/routing.json`. Note: REQ-6 CLI wiring is review-verified (no test harness for `platform.ts` — recorded ceiling since v1.7); REQ-7 policy is guard-tested via aal routing-config tests + governance preflight on the next live run.
      Satisfies: REQ-6 (all criteria), REQ-7 (all criteria). Depends on: 1. Verify: `pnpm -C console/backend typecheck && pnpm -C aal test && pnpm vendor-check`.
+     Evidence:
+       - test: `pnpm -C console/backend typecheck` -> clean (CLI branch + createLiveGlmAdapter import type-check)
+       - test: `pnpm -C aal test` -> 192 passed / 0 failed (routing-config guard tests green with the new `glm` bucket)
+       - test: `pnpm vendor-check` -> OK: core/ and aal/ are vendor-name-free (INV-7)
+       - test: `pnpm test` (full workspace) -> exit 0, all packages green
+       - test: `node -e JSON.parse(routing.json)` -> valid JSON; `scripts/spec-trace.sh glm-5-3-adapter` -> 33/33 covered, EARS lint clean
+       - viewports: n/a — logic-only
+       - deviations: none — REQ-6 CLI wiring review-verified as the task notes (no platform.ts test harness exists, ceiling recorded since v1.7); the POLICY_FILES hash change takes effect as a governance approval prompt on the next live run, by construction.
 - [ ] 4. LIVE conformance run (manual, conditional) — run `platform conformance --live --lineage zai` (TTY, confirmation phrase) with `ZAI_API_KEY` in the environment; record per-probe results + the persisted `.ai/calibration/conformance-glm-<stamp>.json` path here. IF no key/quota is available, leave this task open (phase-3 LIVE pattern) and note it in the handoff — CI readiness (tasks 1–2) is this round's delivered evidence.
      Satisfies: REQ-8 (all criteria). Depends on: 2, 3. Verify: `platform conformance --live --lineage zai` (real-model P1–P8 record).
 
