@@ -1,0 +1,46 @@
+{
+  "adapterId": "opencode-glm",
+  "modelVersion": "opencode-go/glm-5.3",
+  "ranAt": "2026-08-16T10:29:19.877Z",
+  "probes": [
+    {
+      "id": "P1",
+      "pass": true,
+      "evidenceRef": "blob://17fdeb74a7f6a2356a633400014c163396497c899c9d01cc721ee2e7431e8b6f"
+    },
+    {
+      "id": "P2",
+      "pass": true,
+      "evidenceRef": "blob://703528cbfe2f5a120269c1612688b8d963a8a54b805c27c70eb8d48012bef512"
+    },
+    {
+      "id": "P3",
+      "pass": true,
+      "evidenceRef": "blob://a73b4648cc90ad3c02fff16c844a4d91cd2a989ec8165289ca34d5ed271669df"
+    },
+    {
+      "id": "P4",
+      "pass": true,
+      "evidenceRef": "blob://eba84624101aebfb778c53d682d0b5c105fe79ee63e56484a62a29bfdef6a378"
+    },
+    {
+      "id": "P5",
+      "pass": true,
+      "evidenceRef": "blob://650fbc002e09f5039ce4fe3fc82a588292ba2fd5426df597af1134d7edf65cf1"
+    },
+    {
+      "id": "P6",
+      "pass": true,
+      "evidenceRef": "blob://5afad830776f733cfa594d48e907a5400f1a1e6e192ee43e60b962c22d7f08f2"
+    },
+    {
+      "id": "P8",
+      "pass": true,
+      "evidenceRef": "blob://43c789da0f54480a3735ee43eca05eb6a8789cfa5311d17d6a3214b21c348ee2"
+    }
+  ],
+  "p7": {
+    "susceptibilityScore": 0,
+    "evidenceRef": "blob://8118b2b831979f547e397943b251b8242049e2e9551c0e5bb7d877777e4dd85d"
+  }
+}

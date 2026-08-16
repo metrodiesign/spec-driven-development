@@ -365,7 +365,7 @@ async function runConformance(rest: string[]): Promise<void> {
       lineage: { type: 'string', default: 'claude' },
     },
   });
-  if (!['claude', 'codex', 'gemini-cli', 'opencode-deepseek', 'zai'].includes(values.lineage)) {
+  if (!['claude', 'codex', 'gemini-cli', 'opencode-deepseek', 'zai', 'opencode-glm'].includes(values.lineage)) {
     // A typo must refuse before any live spend, never silently fall back to
     // claude (Codex review finding on PR #47).
     process.stderr.write(`platform conformance: unsupported --lineage ${JSON.stringify(values.lineage)}\n`);
@@ -410,6 +410,7 @@ async function runConformance(rest: string[]): Promise<void> {
     createLiveGeminiAdapter,
     createLiveOpenCodeDeepSeekAdapter,
     createLiveGlmAdapter,
+    createLiveOpenCodeGlmAdapter,
   } = await import('adapters');
   const common = {
     cwd: agentSessionsCwd(),
@@ -432,6 +433,8 @@ async function runConformance(rest: string[]): Promise<void> {
           ? createLiveOpenCodeDeepSeekAdapter({ ...common, ...(process.env['PR_GATE_DEEPSEEK_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_DEEPSEEK_MODEL'] }) })
           : lineage === 'zai'
             ? createLiveGlmAdapter({ ...common, ...(process.env['PR_GATE_GLM_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_GLM_MODEL'] }) })
+          : lineage === 'opencode-glm'
+            ? createLiveOpenCodeGlmAdapter({ ...common, ...(process.env['PR_GATE_OPENCODE_GLM_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_OPENCODE_GLM_MODEL'] }) })
       : createLiveAnthropicAdapter({
           ...common,
           id: 'claude',
