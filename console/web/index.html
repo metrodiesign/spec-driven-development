@@ -1,17 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Platform Console</title>
     <script>
-      // ponytail: duplicates logic/theme.ts's resolveInitialTheme (tiny, inline,
-      // runs before first paint) so dark-preferring operators don't see a flash
-      // of the light theme. Keep both in sync if the storage key/rule changes.
+      // ponytail: tiny inline bootstrap prevents theme/locale flash. Keep storage
+      // keys and fallback rules in sync with logic/theme.ts and logic/i18n.ts.
       (function () {
-        var stored = localStorage.getItem('console-theme');
-        var dark = stored === 'dark' || (stored !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        var theme = null;
+        var locale = null;
+        try {
+          theme = localStorage.getItem('console-theme');
+          locale = localStorage.getItem('console-locale');
+        } catch (_) {
+          // Storage-disabled browsers keep preferences in memory after React mounts.
+        }
+        theme = theme === 'light' || theme === 'dark' ? theme : 'dark';
+        locale = locale === 'th' || locale === 'en'
+          ? locale
+          : ((navigator.language || '').toLowerCase().startsWith('th') ? 'th' : 'en');
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.setAttribute('data-locale', locale);
+        document.documentElement.lang = locale;
       })();
     </script>
   </head>

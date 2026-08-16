@@ -2,14 +2,14 @@
 // operator (INV-15). Which form renders depends on the active provider (REQ-20):
 // Basic shows the password form; OIDC shows a Google sign-in link that
 // navigates (full page load, not fetch) into the redirect-based flow. On
-// success a full reload re-runs App's auth probe under the new session cookie.
+// success notifies the shell so tab-memory drafts survive the auth transition.
 
 import { useEffect, useState } from 'react';
 
 import { interpretLoginResponse, interpretProviderProbe, type ProviderKind } from './logic/auth.ts';
 import { useI18n } from './I18nContext.tsx';
 
-export function Login(): React.JSX.Element {
+export function Login({ onAuthenticated }: { onAuthenticated?: () => void }): React.JSX.Element {
   const { t } = useI18n();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +43,9 @@ export function Login(): React.JSX.Element {
       });
       const outcome = interpretLoginResponse(res.status, await res.json());
       if (outcome.ok) {
-        window.location.reload();
+        setPassword('');
+        if (onAuthenticated === undefined) window.location.reload();
+        else onAuthenticated();
         return;
       }
       setError(outcome.error);

@@ -258,6 +258,19 @@ test('supervised loop with the FakeAdapter reaches REVIEWING; calibration comput
       const shadowRoutes = log.all({ type: 'SHADOW_ROUTE' });
       assert.ok(shadowRoutes.length >= 1, 'each live route decision records a SHADOW_ROUTE event');
       assert.equal(shadowRoutes[0]?.payload['live'], shadowRoutes[0]?.payload['wouldChoose']);
+      assert.deepEqual(
+        shadowRoutes[0]?.payload['order'],
+        [shadowRoutes[0]?.payload['live']],
+        'full eligible order is recorded additively and starts with the unchanged live choice',
+      );
+      const descriptors = log.all({ type: 'RUN_DESCRIPTOR' });
+      assert.equal(descriptors.length, 1);
+      assert.equal(descriptors[0]?.payload['contractHash'], CONTRACT.hash);
+      assert.equal(descriptors[0]?.payload['taskMode'], 'single');
+      const budgetSnapshots = log.all({ type: 'BUDGET_SNAPSHOT' });
+      assert.equal(budgetSnapshots[0]?.payload['phase'], 'init');
+      assert.equal(budgetSnapshots.at(-1)?.payload['phase'], 'terminal');
+      assert.equal((budgetSnapshots.at(-1)?.payload['used'] as { iterations?: unknown })?.iterations, out.iterations);
     } finally {
       log.close();
     }

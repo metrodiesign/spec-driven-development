@@ -102,7 +102,7 @@
 ไฟล์: `.claude/settings.json`, `.claude/hooks/task-gate.sh` (ใหม่)
 
 - พิสูจน์แล้ว: Stop hook exit code เป็นของ `tail` + `exit 0` ปิดท้าย = โมเดลไม่เคยเห็นผล test; TaskCompleted ตายสองชั้น (lint script ที่ผูกกับ tool ซึ่งถูกถอดออกใน toolchain เวอร์ชันที่ใช้ → exit 1 เสมอ, event ยิงเฉพาะ Task tools ที่ workflow นี้ไม่ใช้)
-- ทำ: ลบ Stop + TaskCompleted hooks; เพิ่ม PostToolUse (matcher `Edit|Write`, timeout 120) → `.claude/hooks/task-gate.sh`: อ่าน stdin JSON ด้วย jq, early-exit ถ้า file ไม่ใช่ `.ai/specs/*/tasks.md`, ตรวจว่า edit flip `- [ ]` → `- [x]` (เทียบ old_string/new_string; Write ดู content), ถ้าใช่รัน gate ที่ขับด้วย env (`.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD` — auto-detect package.json scripts ของ Node ถ้ามี) — เขียว = เงียบ exit 0, แดง = exit 2 + stderr ไทยสั้น "ห้าม mark [x] จนกว่าเขียว" ยิงแค่ 5-10 ครั้ง/feature
+- ทำ: ลบ Stop + TaskCompleted hooks; เพิ่ม PostToolUse (matcher `Edit|Write`, timeout 120) → `.claude/hooks/task-gate.sh`: อ่าน stdin JSON ด้วย jq, early-exit ถ้า file ไม่ใช่ `.ai/specs/*/tasks.md`, ตรวจว่า edit flip `- [ ]` → `- [x]` (เทียบ old_string/new_string; Write ดู content), ถ้าใช่รัน gate ที่ขับด้วย env (`.ai/bin/gate-task.sh` อ่าน `SDD_TYPECHECK_CMD` / `SDD_TEST_CMD` — auto-detect package.json scripts ของ Node ถ้ามี) — เขียว = เงียบ exit 0, แดง = exit 2 + stderr ไทยสั้น "ห้าม mark [x] จนกว่าเขียว" ยิงเฉพาะตอน flip task เป็น `[x]`
 
 ### S1. ซ่อม feedback loop ของ Stop hook (ถ้าเลือกเก็บ Stop ไว้แทน A1) [adjust, high/low]
 

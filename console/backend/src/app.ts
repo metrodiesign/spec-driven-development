@@ -33,14 +33,30 @@ import { activityHookEntry, buildSessionSearch, indexUsage, InvalidIngestUrlErro
 import {
   confirmToken,
   jsonDiffPreview,
+  redactGovernanceContent,
   retentionPreview,
   validateHookConfig,
+  validateJsonObject,
   validateMcpConfig,
   validateSubagentFrontmatter,
 } from './surfaces.ts';
 import { convertIssue, createIssue, listIssues, rejectIssue, TITLE_MAX, BODY_MAX } from './issues.ts';
 import type { ChatManager, CreateChatSessionInput } from './chat.ts';
 import type { PrGateManager } from './pr-gate/manager.ts';
+import {
+  ControlCenterSourceUnavailableError,
+  InvalidControlCenterQueryError,
+  parseControlCenterAfter,
+  parseControlCenterLimit,
+  type ControlCenterReadPort,
+} from './control-center.ts';
+import {
+  InvalidPaginationQueryError,
+  paginateCreated,
+  paginateNamed,
+  parseOptionalPagination,
+  type PaginationQuery,
+} from './pagination.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -108,6 +124,8 @@ export interface AppDeps {
   chatRateOk?(): boolean;
   /** Universal PR quality gate. Absent = routes stay unregistered. */
   prGateManager?: PrGateManager;
+  /** Read-only authoritative projection seam for the operator control center. */
+  controlCenter?: ControlCenterReadPort;
   /**
    * F-Sched (REQ-16): the thin runtime for the one registered child + where its
    * governed inputs live. Absent = routes do not register (mirrors termManager).
@@ -153,6 +171,50 @@ function readUsageConfig(dataDir: string): UsageConfig {
     return JSON.parse(readFileSync(p, 'utf8')) as UsageConfig;
   } catch {
     return {};
+  }
+}
+
+function paginationQuery(
+  query: { readonly cursor?: string; readonly limit?: string },
+  reply: FastifyReply,
+): PaginationQuery | null | undefined {
+  try {
+    return parseOptionalPagination(query);
+  } catch (error) {
+    if (!(error instanceof InvalidPaginationQueryError)) throw error;
+    void reply.code(400).send({ error: error.message });
+    return undefined;
+  }
+}
+
+function namedPage<T>(
+  records: readonly T[],
+  nameOf: (record: T) => string,
+  query: PaginationQuery,
+  reply: FastifyReply,
+): ReturnType<typeof paginateNamed<T>> | undefined {
+  try {
+    return paginateNamed(records, nameOf, query);
+  } catch (error) {
+    if (!(error instanceof InvalidPaginationQueryError)) throw error;
+    void reply.code(400).send({ error: error.message });
+    return undefined;
+  }
+}
+
+function createdPage<T>(
+  records: readonly T[],
+  createdAtOf: (record: T) => string,
+  idOf: (record: T) => string,
+  query: PaginationQuery,
+  reply: FastifyReply,
+): ReturnType<typeof paginateCreated<T>> | undefined {
+  try {
+    return paginateCreated(records, createdAtOf, idOf, query);
+  } catch (error) {
+    if (!(error instanceof InvalidPaginationQueryError)) throw error;
+    void reply.code(400).send({ error: error.message });
+    return undefined;
   }
 }
 
@@ -205,6 +267,74 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     });
   }
 
+  const controlCenter = deps.controlCenter;
+  if (controlCenter !== undefined) {
+    const projectionError = (reply: FastifyReply, error: unknown): FastifyReply => {
+      if (error instanceof InvalidControlCenterQueryError) {
+        return reply.code(400).send({ error: error.message });
+      }
+      if (error instanceof ControlCenterSourceUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    };
+
+    app.get<{ Querystring: { cursor?: string; limit?: string } }>('/api/control-center/core/runs', async (req, reply) => {
+      try {
+        return controlCenter.listRuns({
+          cursor: req.query.cursor ?? null,
+          limit: parseControlCenterLimit(req.query.limit),
+        });
+      } catch (error) {
+        return projectionError(reply, error);
+      }
+    });
+
+    app.get<{ Params: { run: string } }>('/api/control-center/core/runs/:run', async (req, reply) => {
+      const result = controlCenter.readRun(req.params.run);
+      return result === null ? reply.code(404).send({ error: 'run_not_found' }) : result;
+    });
+
+    app.get<{ Params: { run: string }; Querystring: { after?: string; limit?: string } }>(
+      '/api/control-center/core/runs/:run/events',
+      async (req, reply) => {
+        try {
+          const result = controlCenter.readRunEvents({
+            runId: req.params.run,
+            after: parseControlCenterAfter(req.query.after),
+            limit: parseControlCenterLimit(req.query.limit),
+          });
+          return result === null ? reply.code(404).send({ error: 'run_not_found' }) : result;
+        } catch (error) {
+          return projectionError(reply, error);
+        }
+      },
+    );
+
+    app.get('/api/control-center/aal', async (_req, reply) => {
+      try {
+        return controlCenter.readAal();
+      } catch (error) {
+        return projectionError(reply, error);
+      }
+    });
+
+    app.get<{ Querystring: { cursor?: string; limit?: string } }>('/api/control-center/adapters', async (req, reply) => {
+      try {
+        return controlCenter.listAdapters({ cursor: req.query.cursor ?? null, limit: parseControlCenterLimit(req.query.limit) });
+      } catch (error) {
+        return projectionError(reply, error);
+      }
+    });
+
+    app.get<{ Params: { id: string } }>('/api/control-center/adapters/:id', async (req, reply) => {
+      const result = controlCenter.readAdapter(req.params.id);
+      return result === null ? reply.code(404).send({ error: 'adapter_not_found' }) : result;
+    });
+
+    app.get('/api/control-center/health', async () => controlCenter.readServiceHealth());
+  }
+
   // F-Status (REQ-13.1/13.2)
   app.get('/api/status', async () => {
     let cli: { available: boolean; version?: string; hint?: string };
@@ -225,17 +355,29 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // F-Proj (REQ-13.3)
-  app.get('/api/projects', async () => {
-    return { disclaimer: DISCLAIMER, ...readProjects(deps.homeDir) };
+  app.get<{ Querystring: { cursor?: string; limit?: string } }>('/api/projects', async (req, reply) => {
+    const result = readProjects(deps.homeDir);
+    const query = paginationQuery(req.query, reply);
+    if (query === undefined) return reply;
+    if (query === null) return { disclaimer: DISCLAIMER, ...result };
+    const page = namedPage(result.projects, (project) => project.id, query, reply);
+    if (page === undefined) return reply;
+    return { disclaimer: DISCLAIMER, ...result, projects: page.items, nextCursor: page.nextCursor };
   });
 
   // F-Sess (REQ-13.4/13.5/13.6)
-  app.get<{ Querystring: { project?: string } }>('/api/sessions', async (req, reply) => {
+  app.get<{ Querystring: { project?: string; cursor?: string; limit?: string } }>('/api/sessions', async (req, reply) => {
     const project = req.query.project;
     if (project === undefined || project.length === 0 || project.includes('/') || project.includes('..')) {
       return reply.code(400).send({ error: 'query param "project" (project id) required' });
     }
-    return readSessions(deps.homeDir, project);
+    const result = readSessions(deps.homeDir, project);
+    const query = paginationQuery(req.query, reply);
+    if (query === undefined) return reply;
+    if (query === null) return result;
+    const page = namedPage(result.sessions, (session) => session.sessionId, query, reply);
+    if (page === undefined) return reply;
+    return { ...result, sessions: page.items, nextCursor: page.nextCursor };
   });
 
   // F-Auth (REQ-14) — names only; never values (INV-12).
@@ -331,9 +473,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         });
       }
     });
-    app.get('/api/term/sessions', async (_req, reply) => {
+    app.get<{ Querystring: { project?: string; cursor?: string; limit?: string } }>('/api/term/sessions', async (req, reply) => {
       if (!(await guardTerm(reply))) return reply;
-      return term.list();
+      const sessions = term.list().filter((session) => req.query.project === undefined || session.project === req.query.project);
+      const query = paginationQuery(req.query, reply);
+      if (query === undefined) return reply;
+      if (query === null) return sessions;
+      const page = namedPage(sessions, (session) => session.ptyId, query, reply);
+      if (page === undefined) return reply;
+      return { sessions: page.items, nextCursor: page.nextCursor };
     });
     app.post<{ Params: { id: string } }>('/api/term/sessions/:id/attach', async (req, reply) => {
       if (!(await guardTerm(reply))) return reply;
@@ -360,7 +508,18 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     '/api/permissions/simulate',
     async (req, reply) => {
       const { rules, tool, path } = req.body ?? {};
-      if (!Array.isArray(rules) || typeof tool !== 'string' || typeof path !== 'string') {
+      if (
+        !Array.isArray(rules)
+        || rules.some((rule) => (
+          typeof rule !== 'object'
+          || rule === null
+          || !['allow', 'deny', 'ask'].includes((rule as { action?: string }).action ?? '')
+          || typeof (rule as { pattern?: unknown }).pattern !== 'string'
+          || ('scope' in rule && typeof (rule as { scope?: unknown }).scope !== 'string')
+        ))
+        || typeof tool !== 'string'
+        || typeof path !== 'string'
+      ) {
         return reply.code(400).send({ error: 'rules[], tool, path required' });
       }
       return permissionDecision(rules, tool, path);
@@ -401,10 +560,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return null;
   };
   app.get<{ Querystring: { scope?: string; project?: string } }>('/api/memory', async (req, reply) => {
-    const p = memPath(req.query.scope ?? 'user', req.query.project);
+    const scope = req.query.scope ?? 'user';
+    const p = memPath(scope, req.query.project);
     if (p === null) return reply.code(400).send({ error: 'bad scope/project' });
-    const content = existsSync(p) ? readFileSync(p, 'utf8') : '';
-    return { content, hash: content === '' ? null : govSha256(content), preview: content.slice(0, 4000) };
+    const raw = existsSync(p) ? readFileSync(p, 'utf8') : '';
+    const view = redactGovernanceContent(raw);
+    return {
+      content: view.content,
+      hash: raw === '' ? null : govSha256(raw),
+      preview: view.content.slice(0, 4000),
+      scope,
+      provenance: `${scope} memory`,
+      readOnly: false,
+      metadata: view.metadata,
+    };
   });
   app.put<{ Body: { scope?: string; project?: string; content?: string; baseHash?: string | null } }>(
     '/api/memory',
@@ -418,7 +587,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         return reply.code(409).send({ error: 'conflict', currentHash: result.currentHash });
       }
       if (!result.ok) return reply.code(422).send({ error: result.detail });
-      return { saved: true, hash: result.newHash };
+      return { saved: true, hash: result.newHash, applyTiming: 'next-session' };
     },
   );
 
@@ -450,7 +619,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   // --- F-Sess search: rebuildable FTS5 over session docs (REQ-20) ---
-  app.get<{ Querystring: { q?: string; project?: string } }>('/api/sessions/search', async (req, reply) => {
+  app.get<{ Querystring: { q?: string; project?: string; cursor?: string; limit?: string } }>('/api/sessions/search', async (req, reply) => {
     const q = req.query.q;
     const project = req.query.project;
     if (typeof q !== 'string' || q.length === 0) return reply.code(400).send({ error: 'q required' });
@@ -463,7 +632,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }));
     const search = buildSessionSearch(docs);
     try {
-      return { results: search.search(q) };
+      const results = search.search(q);
+      const query = paginationQuery(req.query, reply);
+      if (query === undefined) return reply;
+      if (query === null) return { results };
+      const page = namedPage(results, (result) => result.sessionId, query, reply);
+      if (page === undefined) return reply;
+      return { results: page.items, nextCursor: page.nextCursor };
     } finally {
       search.close();
     }
@@ -490,6 +665,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const content = existsSync(p) ? readFileSync(p, 'utf8') : '';
     return { content, hash: content === '' ? null : govSha256(content) };
   };
+  const contentView = (p: string): { content: string; hash: string | null; metadata: { sensitive: true; redacted: boolean } } => {
+    const raw = contentHash(p);
+    return { ...redactGovernanceContent(raw.content), hash: raw.hash };
+  };
   const putThrough = (
     reply: FastifyReply,
     p: string,
@@ -501,13 +680,80 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const result = writeSafeFile(p, content, baseHash ?? null, validate);
     if (!result.ok && result.reason === 'conflict') return reply.code(409).send({ error: 'conflict', currentHash: result.currentHash });
     if (!result.ok) return reply.code(422).send({ error: result.detail });
-    return { saved: true, hash: result.newHash };
+    return { saved: true, hash: result.newHash, applyTiming: 'next-session' };
   };
   const safeName = (name: string): boolean => name.length > 0 && !name.includes('/') && !name.includes('..');
-  const readJson = (p: string): Record<string, unknown> => {
-    if (!existsSync(p)) return {};
-    try { return JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>; } catch { return {}; }
+  const readJsonObject = (p: string): { value: Record<string, unknown> | null; error: string | null } => {
+    if (!existsSync(p)) return { value: {}, error: null };
+    const content = readFileSync(p, 'utf8');
+    const error = validateJsonObject(content);
+    return error === null
+      ? { value: JSON.parse(content) as Record<string, unknown>, error: null }
+      : { value: null, error };
   };
+
+  // --- Governance Settings: additive live reads + writes; managed stays GET-only. ---
+  app.get<{ Querystring: { project?: string } }>('/api/settings/effective', async (req) => {
+    const scopes: ScopeValues[] = [];
+    const issues: { scope: string; reason: string }[] = [
+      { scope: 'managed', reason: 'managed settings source unavailable' },
+    ];
+    for (const scope of ['user', 'project', 'local'] as const) {
+      const p = settingsScopePath(scope, req.query.project);
+      if (p === null) continue;
+      const parsed = readJsonObject(p);
+      if (parsed.value === null) issues.push({ scope, reason: parsed.error ?? 'invalid settings' });
+      else scopes.push({ scope, values: parsed.value });
+    }
+    let redacted = false;
+    const effective = Object.fromEntries(
+      Object.entries(resolveEffectiveSettings(scopes)).map(([key, entry]) => {
+        const view = redactGovernanceContent(JSON.stringify({ [key]: entry.value }));
+        redacted ||= view.metadata.redacted;
+        const value = (JSON.parse(view.content) as Record<string, unknown>)[key];
+        return [key, { ...entry, value, provenance: `${entry.scope} settings` }];
+      }),
+    );
+    return {
+      source: 'computed from files',
+      effective,
+      issues,
+      metadata: { sensitive: true, redacted },
+    };
+  });
+  app.get<{ Params: { scope: string }; Querystring: { project?: string } }>('/api/settings/:scope', async (req, reply) => {
+    if (req.params.scope === 'managed') {
+      return {
+        scope: 'managed',
+        content: '',
+        hash: null,
+        provenance: 'managed settings source unavailable',
+        readOnly: true,
+        available: false,
+        metadata: { sensitive: true, redacted: false },
+      };
+    }
+    const p = settingsScopePath(req.params.scope, req.query.project);
+    if (p === null) return reply.code(400).send({ error: 'bad scope/project' });
+    return {
+      scope: req.params.scope,
+      provenance: `${req.params.scope} settings`,
+      readOnly: false,
+      available: true,
+      ...contentView(p),
+    };
+  });
+  type SettingsBody = { project?: string; content?: string; baseHash?: string | null };
+  const putSettings = (scope: 'user' | 'project' | 'local') =>
+    async (req: FastifyRequest<{ Body: SettingsBody }>, reply: FastifyReply): Promise<unknown> => {
+      const b = req.body ?? {};
+      const p = settingsScopePath(scope, b.project);
+      if (p === null || typeof b.content !== 'string') return reply.code(400).send({ error: 'bad scope/project/content' });
+      return putThrough(reply, p, b.content, b.baseHash, validateJsonObject);
+    };
+  app.put<{ Body: SettingsBody }>('/api/settings/user', putSettings('user'));
+  app.put<{ Body: SettingsBody }>('/api/settings/project', putSettings('project'));
+  app.put<{ Body: SettingsBody }>('/api/settings/local', putSettings('local'));
 
   // --- F-MCP (REQ-12): project .mcp.json writable; user scope read-only view ---
   const mcpPath = (scope: string, project: string | undefined): string | null => {
@@ -518,7 +764,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.get<{ Params: { scope: string }; Querystring: { project?: string } }>('/api/mcp/:scope', async (req, reply) => {
     const p = mcpPath(req.params.scope, req.query.project);
     if (p === null) return reply.code(400).send({ error: 'bad scope/project' });
-    return { scope: req.params.scope, readOnly: req.params.scope !== 'project', ...contentHash(p) };
+    return {
+      scope: req.params.scope,
+      readOnly: req.params.scope !== 'project',
+      provenance: `${req.params.scope} MCP configuration`,
+      ...contentView(p),
+    };
   });
   // PUT registered ONLY for the project scope — user/managed stay read-only (REQ-12.1/13.4).
   app.put<{ Body: { project?: string; content?: string; baseHash?: string | null } }>('/api/mcp/project', async (req, reply) => {
@@ -535,9 +786,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const timer = setTimeout(() => ctrl.abort(), 3000);
       try {
         const r = await fetch(url, { signal: ctrl.signal });
-        return { advisory: true, reachable: true, status: r.status };
+        return { advisory: true, reachable: true, status: r.status, applyTiming: 'immediate' };
       } catch (e) {
-        return { advisory: true, reachable: false, detail: (e as Error).message };
+        return { advisory: true, reachable: false, detail: (e as Error).message, applyTiming: 'immediate' };
       } finally {
         clearTimeout(timer);
       }
@@ -545,20 +796,25 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (transport === 'stdio' && typeof command === 'string') {
       try {
         await execFileAsync(command, [], { timeout: 3000 });
-        return { advisory: true, reachable: true };
+        return { advisory: true, reachable: true, applyTiming: 'immediate' };
       } catch (e) {
         // A non-zero exit still means the binary spawned — advisory, not a blocker.
-        return { advisory: true, reachable: false, detail: (e as Error).message };
+        return { advisory: true, reachable: false, detail: (e as Error).message, applyTiming: 'immediate' };
       }
     }
-    return { advisory: true, reachable: false, detail: 'provide transport stdio+command or http+url' };
+    return { advisory: true, reachable: false, detail: 'provide transport stdio+command or http+url', applyTiming: 'immediate' };
   });
 
   // --- F-Hook (REQ-13): two-step consent gate over settings.json scopes ---
   app.get<{ Params: { scope: string }; Querystring: { project?: string } }>('/api/hooks/:scope', async (req, reply) => {
     const p = settingsScopePath(req.params.scope, req.query.project);
     if (p === null) return reply.code(400).send({ error: 'bad or read-only scope' });
-    return { scope: req.params.scope, ...contentHash(p) };
+    return {
+      scope: req.params.scope,
+      readOnly: false,
+      provenance: `${req.params.scope} settings hooks`,
+      ...contentView(p),
+    };
   });
   app.post<{ Body: { scope?: string; project?: string; content?: string } }>('/api/hooks/validate', async (req, reply) => {
     const b = req.body ?? {};
@@ -566,12 +822,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (p === null || typeof b.content !== 'string') return reply.code(400).send({ error: 'bad scope/content' });
     const { content: current, hash: baseHash } = contentHash(p);
     const error = validateHookConfig(b.content);
+    const rawDiff = jsonDiffPreview(current, b.content);
+    const removed = rawDiff.removed.map((line) => redactGovernanceContent(line).content);
+    const added = rawDiff.added.map((line) => redactGovernanceContent(line).content);
     return {
       valid: error === null,
       error,
-      diff: jsonDiffPreview(current, b.content),
+      diff: { removed, added },
       baseHash,
       confirmToken: confirmToken(baseHash, b.content),
+      metadata: {
+        sensitive: true,
+        redacted: removed.some((line, index) => line !== rawDiff.removed[index])
+          || added.some((line, index) => line !== rawDiff.added[index]),
+      },
     };
   });
   type HookBody = { scope?: string; project?: string; content?: string; confirmToken?: string; baseHash?: string | null };
@@ -600,17 +864,23 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (scope === 'project') { const b = projectBase(project); return b === null ? null : join(b, '.claude', 'agents'); }
     return null;
   };
-  app.get<{ Querystring: { scope?: string; project?: string } }>('/api/subagents', async (req) => {
+  app.get<{ Querystring: { scope?: string; project?: string; cursor?: string; limit?: string } }>('/api/subagents', async (req, reply) => {
     const dir = agentsDir(req.query.scope ?? 'user', req.query.project);
     const names = dir !== null && existsSync(dir)
       ? readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).sort()
       : [];
-    return { subagents: names };
+    const query = paginationQuery(req.query, reply);
+    if (query === undefined) return reply;
+    if (query === null) return { subagents: names };
+    const page = namedPage(names, (name) => name, query, reply);
+    if (page === undefined) return reply;
+    return { subagents: page.items, nextCursor: page.nextCursor };
   });
   app.get<{ Params: { name: string }; Querystring: { scope?: string; project?: string } }>('/api/subagents/:name', async (req, reply) => {
-    const dir = agentsDir(req.query.scope ?? 'user', req.query.project);
+    const scope = req.query.scope ?? 'user';
+    const dir = agentsDir(scope, req.query.project);
     if (dir === null || !safeName(req.params.name)) return reply.code(400).send({ error: 'bad scope/name' });
-    return contentHash(join(dir, `${req.params.name}.md`));
+    return { scope, readOnly: false, provenance: `${scope} subagent`, ...contentView(join(dir, `${req.params.name}.md`)) };
   });
   app.put<{ Params: { name: string }; Body: { scope?: string; project?: string; content?: string; baseHash?: string | null } }>(
     '/api/subagents/:name',
@@ -626,13 +896,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       });
     },
   );
-  app.delete<{ Params: { name: string }; Querystring: { scope?: string; project?: string } }>('/api/subagents/:name', async (req, reply) => {
+  app.delete<{ Params: { name: string }; Querystring: { scope?: string; project?: string; baseHash?: string } }>('/api/subagents/:name', async (req, reply) => {
     const dir = agentsDir(req.query.scope ?? 'user', req.query.project);
     if (dir === null || !safeName(req.params.name)) return reply.code(400).send({ error: 'bad scope/name' });
     const p = join(dir, `${req.params.name}.md`);
     const existed = existsSync(p);
+    if (existed && req.query.baseHash !== undefined) {
+      const currentHash = govSha256(readFileSync(p, 'utf8'));
+      if (currentHash !== req.query.baseHash) return reply.code(409).send({ error: 'conflict', currentHash });
+    }
     if (existed) unlinkSync(p);
-    return { deleted: existed };
+    return { deleted: existed, applyTiming: 'next-session' };
   });
 
   // --- F-Skill (REQ-14.2): list/edit SKILL.md + toggle enabledPlugins in settings ---
@@ -641,19 +915,25 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (scope === 'project') { const b = projectBase(project); return b === null ? null : join(b, '.claude', 'skills'); }
     return null;
   };
-  app.get<{ Querystring: { scope?: string; project?: string } }>('/api/skills', async (req) => {
+  app.get<{ Querystring: { scope?: string; project?: string; cursor?: string; limit?: string } }>('/api/skills', async (req, reply) => {
     const dir = skillsDir(req.query.scope ?? 'user', req.query.project);
     const names = dir !== null && existsSync(dir)
       ? readdirSync(dir, { withFileTypes: true })
           .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, 'SKILL.md')))
           .map((d) => d.name).sort()
       : [];
-    return { skills: names };
+    const query = paginationQuery(req.query, reply);
+    if (query === undefined) return reply;
+    if (query === null) return { skills: names };
+    const page = namedPage(names, (name) => name, query, reply);
+    if (page === undefined) return reply;
+    return { skills: page.items, nextCursor: page.nextCursor };
   });
   app.get<{ Params: { name: string }; Querystring: { scope?: string; project?: string } }>('/api/skills/:name', async (req, reply) => {
-    const dir = skillsDir(req.query.scope ?? 'user', req.query.project);
+    const scope = req.query.scope ?? 'user';
+    const dir = skillsDir(scope, req.query.project);
     if (dir === null || !safeName(req.params.name)) return reply.code(400).send({ error: 'bad scope/name' });
-    return contentHash(join(dir, req.params.name, 'SKILL.md'));
+    return { scope, readOnly: false, provenance: `${scope} skill`, ...contentView(join(dir, req.params.name, 'SKILL.md')) };
   });
   app.put<{ Params: { name: string }; Body: { scope?: string; project?: string; content?: string; baseHash?: string | null } }>(
     '/api/skills/:name',
@@ -674,7 +954,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       if (p === null || typeof b.plugin !== 'string' || typeof b.enabled !== 'boolean') {
         return reply.code(400).send({ error: 'bad or read-only scope/plugin/enabled' });
       }
-      const settings = readJson(p);
+      const parsed = readJsonObject(p);
+      if (parsed.value === null) return reply.code(422).send({ error: parsed.error });
+      const settings = parsed.value;
       const set = new Set(Array.isArray(settings['enabledPlugins']) ? (settings['enabledPlugins'] as string[]) : []);
       if (b.enabled) set.add(b.plugin); else set.delete(b.plugin);
       settings['enabledPlugins'] = [...set].sort();
@@ -728,7 +1010,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       if (p === null || typeof b.cleanupPeriodDays !== 'number' || b.cleanupPeriodDays < 0) {
         return reply.code(400).send({ error: 'bad scope or cleanupPeriodDays' });
       }
-      const settings = readJson(p);
+      const parsed = readJsonObject(p);
+      if (parsed.value === null) return reply.code(422).send({ error: parsed.error });
+      const settings = parsed.value;
       settings['cleanupPeriodDays'] = Math.floor(b.cleanupPeriodDays);
       return putThrough(reply, p, JSON.stringify(settings, null, 2) + '\n', b.baseHash);
     },
@@ -769,7 +1053,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const projectsRoot = join(deps.homeDir, '.claude', 'projects');
     for (const rel of candidates) unlinkSync(join(projectsRoot, rel));
     audit({ event: 'retention_prune', count: candidates.length, cleanupPeriodDays: days });
-    return { pruned: candidates.length, files: candidates };
+    return { pruned: candidates.length, files: candidates, applyTiming: 'immediate' };
   });
 
   // --- F-Loop (REQ-15): Human Plane discovery + proxy. Console = client, owns no
@@ -789,8 +1073,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return ref;
     };
 
-    app.get('/api/loop/runs', async () => {
-      return { runs: discoverRuns(loopRunsRoot).map((r) => ({ runId: r.runId, ended: r.ended })) };
+    app.get<{ Querystring: { cursor?: string; limit?: string } }>('/api/loop/runs', async (req, reply) => {
+      const runs = discoverRuns(loopRunsRoot).map((run) => ({ runId: run.runId, ended: run.ended }));
+      const query = paginationQuery(req.query, reply);
+      if (query === undefined) return reply;
+      if (query === null) return { runs };
+      const page = namedPage(runs, (run) => run.runId, query, reply);
+      if (page === undefined) return reply;
+      return { runs: page.items, nextCursor: page.nextCursor };
     });
 
     app.get<{ Params: { run: string } }>('/api/loop/:run/approvals', async (req, reply) => {
@@ -818,7 +1108,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // REQ-15.8: since-based pagination over the existing /events route (no new WS
     // surface) — the upstream route has no since support of its own, so the proxy
     // fetches the full (already-redacted) log and slices by PlatformEvent.seq here.
-    app.get<{ Params: { run: string }; Querystring: { since?: string } }>('/api/loop/:run/events', async (req, reply) => {
+    app.get<{ Params: { run: string }; Querystring: { since?: string; limit?: string } }>('/api/loop/:run/events', async (req, reply) => {
       const ref = await resolveRun(req.params.run, reply);
       if (ref === null) return reply;
       if (ref.ended) return reply.code(409).send({ error: 'run_ended' });
@@ -827,7 +1117,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const sinceRaw = Number(req.query.since ?? '0');
       const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
       const all = Array.isArray(res.body) ? (res.body as { seq?: number }[]) : [];
-      return all.filter((e) => (e.seq ?? 0) > since);
+      const fresh = all
+        .filter((event) => (event.seq ?? 0) > since)
+        .sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0));
+      if (req.query.limit === undefined) return fresh;
+      const query = paginationQuery({ limit: req.query.limit }, reply);
+      if (query === undefined || query === null) return reply;
+      return fresh.slice(0, query.limit);
     });
 
     app.post<{ Params: { run: string; action: string }; Body: unknown }>(
@@ -913,7 +1209,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return res.issue;
     });
 
-    app.get('/api/issues', async () => ({ issues: listIssues(issuesDir) }));
+    app.get<{ Querystring: { cursor?: string; limit?: string } }>('/api/issues', async (req, reply) => {
+      const issues = listIssues(issuesDir);
+      const query = paginationQuery(req.query, reply);
+      if (query === undefined) return reply;
+      if (query === null) return { issues };
+      const page = createdPage(issues, (issue) => issue.createdAt, (issue) => issue.id, query, reply);
+      if (page === undefined) return reply;
+      return { issues: page.items, nextCursor: page.nextCursor };
+    });
 
     app.post<{ Params: { id: string } }>('/api/issues/:id/convert', async (req, reply) => {
       const res = convertIssue(issuesDir, req.params.id);

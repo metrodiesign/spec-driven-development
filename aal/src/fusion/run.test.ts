@@ -149,6 +149,40 @@ test('panel fans out N candidates with distinct requestIds derived from the base
   assert.equal(new Set(ids).size, 2, 'requestIds are distinct');
 });
 
+test('dispatcher rate observations reach the authoritative fusion event log', async () => {
+  const s = setupWith([{ id: 'A', lineage: 'familyA' }, { id: 'B', lineage: 'familyB' }]);
+  await runFusion(s.deps, profile(), s.base);
+
+  const observed = s.log.events.filter((event) => event.type === 'RATE_LIMIT_OBSERVED');
+  assert.deepEqual(
+    observed.map((event) => event.payload),
+    [
+      { target: 'A', policyKey: null, limited: false, availableTokens: null },
+      { target: 'B', policyKey: null, limited: false, availableTokens: null },
+    ],
+  );
+  assert.ok(observed.every((event) => event.runId === 'RUN' && event.taskId === 'T-1'));
+});
+
+test('rate observation append failure records best-effort ERROR without changing fusion', async () => {
+  const s = setupWith([{ id: 'A', lineage: 'familyA' }, { id: 'B', lineage: 'familyB' }]);
+  const append = s.log.append.bind(s.log);
+  s.log.append = (event) => {
+    if (event.type === 'RATE_LIMIT_OBSERVED') throw new Error('observation store unavailable');
+    return append(event);
+  };
+
+  const outcome = await runFusion(s.deps, profile(), s.base);
+
+  assert.ok(outcome.winner !== null, 'observation failure does not change resolution');
+  assert.equal(
+    s.log.events.filter(
+      (event) => event.type === 'ERROR' && event.payload['reason'] === 'rate_limit_observation_append_failed',
+    ).length,
+    2,
+  );
+});
+
 test('fusion rejects invalid candidate usage before aggregation and emits invalid_response (REQ-7.3/7.4/7.5)', async () => {
   const s = setupWith([
     { id: 'A', lineage: 'familyA', usageCostUnits: -1 },

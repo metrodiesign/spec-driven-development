@@ -7,8 +7,11 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
 import { termWsUrl } from './logic/term.ts';
-import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
+import { FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
 import { useI18n } from './I18nContext.tsx';
+import { mergeNamedRecords } from './logic/console.ts';
+import { usePendingMutation } from './usePendingMutation.ts';
+import { protectedFetch } from './useFetch.ts';
 
 interface SessionRow {
   ptyId: string;
@@ -17,7 +20,13 @@ interface SessionRow {
   alive: boolean;
 }
 
-export function TerminalPanel({ project }: { project: string }) {
+export function TerminalPanel({
+  project,
+  intent = null,
+}: {
+  project: string;
+  intent?: 'mcp-authenticate' | null;
+}) {
   const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -27,14 +36,39 @@ export function TerminalPanel({ project }: { project: string }) {
   const [attached, setAttached] = useState(false);
   const [resume, setResume] = useState('');
   const [sessionsState, setSessionsState] = useState<FetchState<SessionRow[]>>(FETCH_LOADING);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [sessionsReadError, setSessionsReadError] = useState(false);
+  const [sessionsReadAt, setSessionsReadAt] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const mutations = usePendingMutation();
 
-  const refreshSessions = () => {
-    fetch('/api/term/sessions')
-      .then((r) => r.json().then((rows: SessionRow[]) => setSessionsState(fetchStateFromResponse(r.ok, rows))))
-      .catch(() => setSessionsState(FETCH_ERROR));
+  const refreshSessions = (cursor: string | null = null) => {
+    const url = `/api/term/sessions?project=${encodeURIComponent(project)}&limit=50${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+    protectedFetch(url)
+      .then((r) => r.json().then((body: { sessions: SessionRow[]; nextCursor: string | null }) => {
+        if (!r.ok) {
+          setSessionsReadError(true);
+          setSessionsState((current) => current.kind === 'data' ? current : FETCH_ERROR);
+          return;
+        }
+        setSessionsReadError(false);
+        setSessionsReadAt(new Date().toISOString());
+        setSessionsState((current) => ({
+          kind: 'data',
+          value: cursor === null || current.kind !== 'data'
+            ? body.sessions
+            : [...mergeNamedRecords(current.value, body.sessions, (session) => session.ptyId)],
+        }));
+        setNextCursor(body.nextCursor);
+      }))
+      .catch(() => {
+        setSessionsReadError(true);
+        setSessionsState((current) => current.kind === 'data' ? current : FETCH_ERROR);
+      });
   };
-  useEffect(refreshSessions, []);
+  useEffect(() => {
+    refreshSessions();
+  }, [project]);
 
   // One xterm instance for the panel's lifetime; sized to the backend PTY (120x32).
   useEffect(() => {
@@ -46,6 +80,11 @@ export function TerminalPanel({ project }: { project: string }) {
       t.dispose();
       termRef.current = null;
     };
+  }, []);
+
+  useEffect(() => () => {
+    dataSubRef.current?.dispose();
+    wsRef.current?.close();
   }, []);
 
   function openWs(id: string, ticket: string): void {
@@ -65,43 +104,49 @@ export function TerminalPanel({ project }: { project: string }) {
   }
 
   async function create(opts?: { mcp?: boolean }): Promise<void> {
-    const body: Record<string, string | boolean> = { project, mode: 'claude-only' };
-    if (opts?.mcp === true) body['mcp'] = true;
-    else if (resume.trim().length > 0) body['resume'] = resume.trim();
-    const r = await fetch('/api/term/sessions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+    const mcp = opts?.mcp === true;
+    const identity = { action: mcp ? 'terminal-mcp-authenticate' : 'terminal-create', target: project, concurrencyKey: mcp ? null : resume.trim() || null };
+    await mutations.run(identity, async () => {
+      try {
+        const body: Record<string, string | boolean> = { project, mode: 'claude-only' };
+        if (mcp) body['mcp'] = true;
+        else if (resume.trim().length > 0) body['resume'] = resume.trim();
+        const r = await protectedFetch('/api/term/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          setNote(t('termCreateFailed', { error: ((await r.json()) as { error?: string }).error ?? r.status }));
+          return;
+        }
+        const { ptyId: id, ticket } = (await r.json()) as { ptyId: string; ticket: string };
+        termRef.current?.reset();
+        openWs(id, ticket);
+        refreshSessions();
+      } catch {
+        setNote(t('fetchUnavailable'));
+      }
     });
-    if (!r.ok) {
-      setNote(t('termCreateFailed', { error: ((await r.json()) as { error?: string }).error ?? r.status }));
-      return;
-    }
-    const { ptyId: id, ticket } = (await r.json()) as { ptyId: string; ticket: string };
-    termRef.current?.reset();
-    openWs(id, ticket);
-    refreshSessions();
   }
 
-  // F-MCP Authenticate deep link (REQ-18.1): `/terminal?cmd=mcp` auto-opens a
-  // claude-only session running `claude mcp` instead of requiring a manual click.
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('cmd') === 'mcp') {
-      void create({ mcp: true });
-    }
-  }, []);
-
   async function reattach(id: string): Promise<void> {
-    wsRef.current?.close();
-    const r = await fetch(`/api/term/sessions/${encodeURIComponent(id)}/attach`, { method: 'POST' });
-    if (!r.ok) {
-      setNote(t('termAttachFailed', { status: r.status }));
-      return;
-    }
-    const { ticket } = (await r.json()) as { ticket: string; buffer: string };
-    termRef.current?.reset();
-    // The WS handshake replays the ring buffer itself — no client-side splice.
-    openWs(id, ticket);
+    await mutations.run({ action: 'terminal-attach', target: id, concurrencyKey: null }, async () => {
+      try {
+        wsRef.current?.close();
+        const r = await protectedFetch(`/api/term/sessions/${encodeURIComponent(id)}/attach`, { method: 'POST' });
+        if (!r.ok) {
+          setNote(t('termAttachFailed', { status: r.status }));
+          return;
+        }
+        const { ticket } = (await r.json()) as { ticket: string; buffer: string };
+        termRef.current?.reset();
+        // The WS handshake replays the ring buffer itself — no client-side splice.
+        openWs(id, ticket);
+      } catch {
+        setNote(t('fetchUnavailable'));
+      }
+    });
   }
 
   function detach(): void {
@@ -114,8 +159,26 @@ export function TerminalPanel({ project }: { project: string }) {
   return (
     <section aria-label={t('termHeading')}>
       <h2>{t('termHeading')}</h2>
+      {intent === 'mcp-authenticate' && (
+        <div className="operation-intent" role="status">
+          <p>{t('termMcpIntentPrepared')} <code>claude mcp</code></p>
+          <button
+            type="button"
+            disabled={mutations.isPending({ action: 'terminal-mcp-authenticate', target: project, concurrencyKey: null })}
+            onClick={() => void create({ mcp: true })}
+          >
+            {t('termMcpStartButton')}
+          </button>
+        </div>
+      )}
       <p>
-        <button onClick={() => void create()}>{t('termOpenButton')}</button>{' '}
+        <button
+          type="button"
+          disabled={mutations.isPending({ action: 'terminal-create', target: project, concurrencyKey: resume.trim() || null })}
+          onClick={() => void create()}
+        >
+          {t('termOpenButton')}
+        </button>{' '}
         <input
           aria-label={t('termResumeAriaLabel')}
           placeholder={t('termResumePlaceholder')}
@@ -123,20 +186,34 @@ export function TerminalPanel({ project }: { project: string }) {
           onChange={(e) => setResume(e.target.value)}
           style={{ width: '24rem', maxWidth: '100%' }}
         />{' '}
-        {attached && <button onClick={detach}>{t('termDetachButton')}</button>}
+        {attached && <button type="button" onClick={detach}>{t('termDetachButton')}</button>}
       </p>
       {note !== null && <p role="status">{note}</p>}
-      {sessionsState.kind === 'error' && <p role="status">{t('fetchUnavailable')}</p>}
+      {sessionsReadError && (
+        <p role="alert">
+          {sessionsState.kind === 'data' ? t('consoleStaleAt', { time: sessionsReadAt ?? 'unknown' }) : t('fetchUnavailable')}{' '}
+          <button type="button" onClick={() => refreshSessions()}>{t('shellRetry')}</button>
+        </p>
+      )}
       {sessionsState.kind === 'data' && sessionsState.value.length > 0 && (
         <ul>
           {sessionsState.value.map((s) => (
             <li key={s.ptyId}>
               <code>{s.ptyId}</code> · {s.mode}
               {s.alive ? '' : t('termExitedSuffix')}{' '}
-              <button onClick={() => void reattach(s.ptyId)}>{t('termReattachButton')}</button>
+              <button
+                type="button"
+                disabled={mutations.isPending({ action: 'terminal-attach', target: s.ptyId, concurrencyKey: null })}
+                onClick={() => void reattach(s.ptyId)}
+              >
+                {t('termReattachButton')}
+              </button>
             </li>
           ))}
         </ul>
+      )}
+      {nextCursor !== null && (
+        <button type="button" onClick={() => refreshSessions(nextCursor)}>{t('consoleLoadMore')}</button>
       )}
       <div ref={hostRef} style={{ overflowX: 'auto', border: '1px solid var(--color-border-strong)' }} />
       <p>

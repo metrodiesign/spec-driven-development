@@ -67,8 +67,12 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
    -> verify: ทุก REQ ปรากฏใน traceability table; STOP for review.
 
 5. **tasks.md.** แตกเป็น COHESIVE, independently verifiable slices (vertical slice: model -> API ->
-   validation -> tests) — ~5-10 tasks ต่อฟีเจอร์ ไม่ใช่ 20-30. ห้าม pre-split เป็น 1.1/1.2 (model
-   ที่ implement จัดการ micro-sequencing เองด้วย internal TODO). map แต่ละ task -> REQ IDs บนบรรทัด
+   validation -> tests). จำนวน task เป็นผลลัพธ์ ไม่ใช่โควตา: หลาย feature อยู่แถว 5-10 tasks
+   แต่ไม่มีขั้นต่ำหรือเพดานระดับ spec. ถ้าเกิน 10 ให้ตรวจว่า scope กว้างเกินไปหรือแตกเป็น
+   micro-step; คงจำนวนใดก็ได้เมื่อทุก task cohesive, verify แยกได้, trace ถึง requirement และจบได้
+   ในหนึ่งรอบ. ห้ามแยก behavior ที่ cohesive หรือรวม behavior ที่ไม่เกี่ยวกันเพียงเพื่อให้ได้จำนวน
+   เป้าหมาย. ห้าม pre-split เป็น
+   1.1/1.2 (model ที่ implement จัดการ micro-sequencing เองด้วย internal TODO). map แต่ละ task -> REQ IDs บนบรรทัด
    `Satisfies:`. ก่อน STOP รัน `scripts/spec-trace.sh <feature>` — ทุก REQ ต้องปรากฏบน Satisfies:
    ของอย่างน้อยหนึ่ง task; REQ ที่ไม่ถูกครอบ = blocker (รายงานดังๆ ห้าม skip เงียบ).
    -> verify: `scripts/spec-trace.sh <feature>` ผ่าน (REQ coverage ครบ); STOP for review.

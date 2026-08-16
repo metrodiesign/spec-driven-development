@@ -57,6 +57,8 @@ import {
   copyOperatorGoldenFixture,
   GoldenFixtureError,
   type ApprovalPackage,
+  type BudgetObservationPhase,
+  type BudgetUsageSnapshot,
   type CalibrationResult,
   type Clock,
   type DeployClock,
@@ -244,7 +246,14 @@ export function wrapRouterForShadow(
             runId: deps.runId,
             taskId: deps.taskId,
             type: 'SHADOW_ROUTE',
-            payload: { role, live: liveKey, wouldChoose, basis, frozen: false },
+            payload: {
+              role,
+              live: liveKey,
+              wouldChoose,
+              basis,
+              frozen: false,
+              order: eligible.map((candidate) => breakerKey(candidate.record.adapterId, candidate.record.modelVersion)),
+            },
           });
         } catch (err) {
           try {
@@ -691,7 +700,18 @@ export async function runSupervisedLoop(opts: {
           runId: RUN_ID,
           taskId: null,
           type: 'TASK_GRAPH_FROZEN',
-          payload: { graphHash: frozen.gate.graphHash, taskIds: frozen.gate.taskIds },
+          payload: {
+            graphHash: frozen.gate.graphHash,
+            taskIds: frozen.gate.taskIds,
+            tasks: frozen.graph.tasks.map((task) => ({
+              id: task.id,
+              title: task.title,
+              dependsOn: task.dependsOn,
+              satisfies: task.satisfies,
+              risk: task.risk,
+              diffBudget: task.diffBudget,
+            })),
+          },
         }).seq;
       } catch (err) {
         if (!(err instanceof TaskGraphGateError)) throw err;
@@ -706,6 +726,21 @@ export async function runSupervisedLoop(opts: {
         };
       }
     }
+    log.append({
+      runId: RUN_ID,
+      taskId: null,
+      type: 'RUN_DESCRIPTOR',
+      payload: {
+        contractHash: opts.contract.hash,
+        goal: { id: opts.contract.goal.id, title: opts.contract.goal.title },
+        taskMode: graph === null ? 'single' : 'graph',
+        budget: {
+          iterations: opts.contract.budget.maxIterations,
+          costUnits: opts.contract.budget.maxCostUnits,
+          wallclockMs: opts.contract.budget.maxWallclockMs,
+        },
+      },
+    });
     const adapter = opts.adapterFactory((s) => evidence.put(s));
     // Breaker + quota-aware routing (REQ-1/2/3): transitions become events; a live
     // adapter may expose a health probe (REQ-2.5), the Fake has none (always-ok).
@@ -1098,7 +1133,24 @@ export async function runSupervisedLoop(opts: {
       git(fx.wt, 'checkout', '-q', '-b', taskBranch);
       // REQ-4.12: a fresh tracker per task — task N's spend never depletes task N+1's.
       // Single-task calls this exactly once, where the run used to.
-      const budget = createBudget(opts.contract.budget, clock);
+      const appendBudgetSnapshot = (phase: BudgetObservationPhase | 'terminal', snapshot: BudgetUsageSnapshot): void => {
+        try {
+          log.append({ runId: RUN_ID, taskId, type: 'BUDGET_SNAPSHOT', payload: { phase, ...snapshot } });
+        } catch (error) {
+          try {
+            log.append({
+              runId: RUN_ID,
+              taskId,
+              type: 'ERROR',
+              payload: { reason: 'budget_snapshot_append_failed', detail: error instanceof Error ? error.message : String(error) },
+            });
+          } catch {
+            // Observation failure never changes the task result.
+          }
+        }
+      };
+      const budget = createBudget(opts.contract.budget, clock, appendBudgetSnapshot);
+      try {
       // The ACs this task maps. Single-task maps the whole contract (Phase-2 REQ-7.2);
       // a graph task maps ONLY its own `satisfies` (REQ-4.13, superseding "maps ALL"
       // for this mode) — the one narrow point every downstream reader shares, so the
@@ -1514,6 +1566,9 @@ export async function runSupervisedLoop(opts: {
         }
       }
       return { finalState, iterations: result.iterations, reachedReviewing };
+      } finally {
+        appendBudgetSnapshot('terminal', budget.snapshot());
+      }
     };
 
     /**

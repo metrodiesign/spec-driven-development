@@ -145,11 +145,15 @@ See @.claude/rules/structure.md for file organization and conventions.
 
 Size tasks as cohesive, independently verifiable slices of behavior — NOT micro-steps.
 Assume you can hold the whole feature in context and implement a complete task
-end-to-end in one pass, even when it spans many files. A typical feature is about
-5-10 tasks, not 20-30. Do NOT pre-split a task into 1.1/1.2 sub-steps inside
-tasks.md; decompose into working steps yourself at execution time using your own
-internal TODO list. Prefer vertical slices (model → API → validation → tests) over
-horizontal layers that are useless alone.
+end-to-end in one pass, even when it spans many files. Task count is an outcome, not
+a quota: many features land around 5-10 tasks, but there is no minimum or maximum at
+the spec level. If the count exceeds 10, review whether the feature is too broad or
+tasks are micro-steps; keep any count when every task remains cohesive, independently
+verifiable, requirement-traceable, and feasible in one pass. Never split cohesive
+behavior or merge unrelated behaviors solely to hit a target count. Do NOT pre-split
+a task into 1.1/1.2 sub-steps inside tasks.md; decompose into working steps yourself
+at execution time using your own internal TODO list. Prefer vertical slices (model →
+API → validation → tests) over horizontal layers that are useless alone.
 
 ## Working agreements
 
@@ -501,9 +505,14 @@ implement end-to-end in one pass, even if it spans many files.
 
 Rules:
 
-- Aim for the FEWEST tasks that keep each one independently verifiable. A typical
-  feature is ~5-10 tasks, not 20-30. If a "task" can't be verified on its own,
-  fold it into the task it serves.
+- Use the fewest tasks that preserve cohesion and independent verifiability. Task
+  count is an outcome, not a quota: many features land around 5-10 tasks, but there
+  is no minimum or maximum at the spec level. If the count exceeds 10, review whether
+  the feature is too broad or tasks are micro-steps; keep any count when every task
+  remains cohesive, independently verifiable, requirement-traceable, and feasible in
+  one pass. Never split cohesive behavior or merge unrelated behaviors solely to hit
+  a target count. If a "task" cannot be verified on its own, fold it into the task it
+  serves.
 - Each task is ONE coherent behavior / vertical slice (e.g. "user registration
   end-to-end: model → endpoint → validation → tests"), never a horizontal layer
   ("create the model", "create the repository") that does nothing alone.

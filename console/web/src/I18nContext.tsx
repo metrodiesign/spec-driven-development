@@ -5,6 +5,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { isLocale, resolveInitialLocale, toggleLocale, translate, LOCALE_STORAGE_KEY, type Locale, type LocaleKey } from './logic/i18n.ts';
+import { readPreference, writePreference } from './logic/preferences.ts';
 
 interface I18nValue {
   locale: Locale;
@@ -17,14 +18,15 @@ const I18nContext = createContext<I18nValue | null>(null);
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<Locale>(() => {
     const attr = document.documentElement.getAttribute('data-locale');
-    return isLocale(attr)
-      ? attr
-      : resolveInitialLocale(localStorage.getItem(LOCALE_STORAGE_KEY), navigator.language.toLowerCase().startsWith('th'));
+    if (isLocale(attr)) return attr;
+    const stored = readPreference(localStorage, LOCALE_STORAGE_KEY);
+    return resolveInitialLocale(stored, navigator.language.toLowerCase().startsWith('th'));
   });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-locale', locale);
-    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+    document.documentElement.lang = locale;
+    writePreference(localStorage, LOCALE_STORAGE_KEY, locale);
   }, [locale]);
 
   const value: I18nValue = {
