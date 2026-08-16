@@ -1,6 +1,6 @@
 # Implementation Tasks: opencode-glm — GLM-5.3 through the OpenCode CLI
 
-> Status: approved 2026-08-16 (4 tasks — spec-trace 26/26 green)
+> Status: completed 2026-08-16 (approved 2026-08-16 — 4 tasks done, LIVE record green)
 
 > Each task is a cohesive, independently verifiable slice. Implement a whole task
 > in one pass (it may touch many files). Decompose into sub-steps yourself at
@@ -31,8 +31,13 @@
        - test: `pnpm vendor-check` -> OK (INV-7); `scripts/spec-trace.sh opencode-glm` -> 26/26 covered, EARS lint clean
        - viewports: n/a — logic-only
        - deviations: none — REQ-5 CLI wiring review-verified as the task notes (no platform.ts harness exists, ceiling recorded since v1.7); both POLICY_FILES hash changes take effect as a governance approval prompt on the next live run, by construction.
-- [ ] 4. LIVE conformance run (the point of this spec) — run `node console/backend/bin/platform.ts conformance --live --lineage opencode-glm --force-quota-override` (TTY, confirmation phrase) using the machine's existing OpenCode Go credential; record per-probe results + the persisted `.ai/calibration/conformance-opencode-glm-<stamp>.json` path here. IF the gateway/quota is unavailable, record the failure shape and leave the task open with REQ-4 CI evidence as this round's deliverable.
+- [x] 4. LIVE conformance run (the point of this spec) — run `node console/backend/bin/platform.ts conformance --live --lineage opencode-glm --force-quota-override` (TTY, confirmation phrase) using the machine's existing OpenCode Go credential; record per-probe results + the persisted `.ai/calibration/conformance-opencode-glm-<stamp>.json` path here. IF the gateway/quota is unavailable, record the failure shape and leave the task open with REQ-4 CI evidence as this round's deliverable.
      Satisfies: REQ-7 (all criteria). Depends on: 2, 3. Verify: live P1–P8 record against the real gateway.
+     Evidence:
+       - test: `platform conformance --live --lineage opencode-glm --force-quota-override` (operator TTY, RUN-LIVE, post governance approval gov-027fc8660300ce2a) -> P1 PASS · P2 PASS · P3 PASS · P4 PASS · P5 PASS · P6 PASS · P8 PASS · P7 susceptibility 0 · modelVersion opencode-go/glm-5.3
+       - record: `.ai/calibration/conformance-opencode-glm-2026-08-16T10-29-19-877Z.json` (committed; probes P1–P8 all true, p7 0) · initiator evidence blob://011df0bd…
+       - viewports: n/a — logic-only
+       - deviations: the first attempt (pre-fix) failed blind — see task 1's amendment for the two transport fixes (stdout error-event surfacing + model-catalog seeding) that made this run green; run completed on the retry after those landed.
 
 ## Suggested execution batches
 

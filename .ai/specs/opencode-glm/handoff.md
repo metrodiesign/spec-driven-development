@@ -13,9 +13,11 @@ spec-trace 26/26) เกิดจากการที่ LIVE ของ `glm-5-
 
 ## Current Status
 
-tasks 1–3 เสร็จพร้อม Evidence (commit `c47d5c1`/`ce85431`/`1809fee`)
-เหลือ **task 4 = LIVE run** ซึ่งเป็นของ operator (TTY + RUN-LIVE) —
-คาดว่ารันได้จริงเพราะ credential มีแล้ว
+**COMPLETED** — tasks 1–4 done (LIVE record green 2026-08-16:
+`.ai/calibration/conformance-opencode-glm-2026-08-16T10-29-19-877Z.json`,
+P1–P8 all pass, p7 = 0). Post-completion transport fixes from the live
+diagnosis are documented in task 1's amendment (stdout error-event
+surfacing + model-catalog seeding).
 
 ## Files Changed
 
