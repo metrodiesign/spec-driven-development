@@ -1,8 +1,21 @@
 {
-  "_comment": "Governance-pinned provider data policy (REQ-11.5/11.8). Before a bundle is sent, every ContextPiece.path is checked against the routed adapter's allowPaths globs; a pathless piece may travel only when its kind is in pathlessKinds. A violation escalates data_policy_violation and sends nothing. Globs: '*' matches within a path segment, '**' across '/'. Per-adapter entries override 'default'. This file is hashed into the governance policy snapshot (REQ-9.1).",
+  "_comment": "Governance-pinned provider data policy (REQ-11.5/11.8). Before a bundle is sent, every ContextPiece.path is checked against the routed adapter's allowPaths globs; a pathless piece may travel only when its kind is in pathlessKinds. A violation escalates data_policy_violation and sends nothing. Globs: '*' matches within a path segment, '**' across '/'. Per-adapter entries override 'default'. This file is hashed into the governance policy snapshot (REQ-9.1). The 'opencode-glm' entry (spec: .ai/specs/opencode-glm) is explicit processor consent: prompts sent through that adapter transit the OpenCode Go gateway — an additional data processor vs the direct Z.ai endpoint — carrying the same content classes as the default (deliberately not narrower this round; narrowing is a future governance decision).",
   "pathlessKinds": ["feedback", "contract", "guidance", "patchPlan"],
   "adapters": {
     "default": {
+      "allowPaths": [
+        "src/**",
+        "test/**",
+        "tests/**",
+        "*.md",
+        "*.json",
+        "*.yaml",
+        "*.yml",
+        "*.txt",
+        "*.lock"
+      ]
+    },
+    "opencode-glm": {
       "allowPaths": [
         "src/**",
         "test/**",

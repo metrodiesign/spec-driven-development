@@ -21,8 +21,15 @@
        - typecheck: `pnpm -C adapters typecheck` -> clean
        - viewports: n/a — logic-only
        - deviations: none
-- [ ] 3. Conformance CLI + policies — `console/backend/bin/platform.ts` `runConformance()`: add `'opencode-glm'` to the lineage allowlist + construction branch (`PR_GATE_OPENCODE_GLM_MODEL` passthrough); add `tokenBuckets["opencode-glm"]` to `.ai/policies/routing.json` and the per-adapter `opencode-glm` entry + processor note to `.ai/policies/provider-data-policy.json`. CLI wiring review-verified (no platform.ts harness — ceiling since v1.7); policy edits guard-tested via aal.
+- [x] 3. Conformance CLI + policies — `console/backend/bin/platform.ts` `runConformance()`: add `'opencode-glm'` to the lineage allowlist + construction branch (`PR_GATE_OPENCODE_GLM_MODEL` passthrough); add `tokenBuckets["opencode-glm"]` to `.ai/policies/routing.json` and the per-adapter `opencode-glm` entry + processor note to `.ai/policies/provider-data-policy.json`. CLI wiring review-verified (no platform.ts harness — ceiling since v1.7); policy edits guard-tested via aal.
      Satisfies: REQ-5 (all criteria), REQ-6 (all criteria). Depends on: 1. Verify: `pnpm -C console/backend typecheck && pnpm -C aal test && pnpm vendor-check`.
+     Evidence:
+       - typecheck: `pnpm -C console/backend typecheck` -> clean (CLI branch + createLiveOpenCodeGlmAdapter import)
+       - test: `pnpm -C aal test` -> 192 passed / 0 failed (routing-config + data-policy guard tests green with both policy edits)
+       - test: `node -e JSON.parse(...)` on both policy files -> valid JSON
+       - test: `pnpm vendor-check` -> OK (INV-7); `scripts/spec-trace.sh opencode-glm` -> 26/26 covered, EARS lint clean
+       - viewports: n/a — logic-only
+       - deviations: none — REQ-5 CLI wiring review-verified as the task notes (no platform.ts harness exists, ceiling recorded since v1.7); both POLICY_FILES hash changes take effect as a governance approval prompt on the next live run, by construction.
 - [ ] 4. LIVE conformance run (the point of this spec) — run `node console/backend/bin/platform.ts conformance --live --lineage opencode-glm --force-quota-override` (TTY, confirmation phrase) using the machine's existing OpenCode Go credential; record per-probe results + the persisted `.ai/calibration/conformance-opencode-glm-<stamp>.json` path here. IF the gateway/quota is unavailable, record the failure shape and leave the task open with REQ-4 CI evidence as this round's deliverable.
      Satisfies: REQ-7 (all criteria). Depends on: 2, 3. Verify: live P1–P8 record against the real gateway.
 
