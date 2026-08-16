@@ -15,7 +15,9 @@ import {
   buildOpenCodeReviewArgv,
   createLiveOpenCodeGlmAdapter,
   OPENCODE_GLM_DEFAULT_MODEL,
+  opencodeErrorDetail,
   resolveOpenCodeAuthStore,
+  resolveOpenCodeModelCatalog,
 } from './reasoning-cli-live.ts';
 
 const SANDBOX_PREFIX = 'platform-opencode-glm-';
@@ -185,9 +187,101 @@ test('credential hygiene: store content never reaches evidence or replay (REQ-2.
   assert.ok(!allDurable.includes(secretMarker), 'evidence/replay must not contain credential content');
 });
 
+test('resolveOpenCodeModelCatalog: path when present, null when absent', () => {
+  const cache = tempDir('ocglm-cache');
+  mkdirSync(join(cache, 'opencode'), { recursive: true });
+  writeFileSync(join(cache, 'opencode', 'models.json'), '{"opencode-go":{}}');
+  assert.equal(resolveOpenCodeModelCatalog(cache), join(cache, 'opencode', 'models.json'));
+  assert.equal(resolveOpenCodeModelCatalog(tempDir('ocglm-empty')), null);
+});
+
+test('sandbox: model catalog seeded from cacheDir when present, run fine without when absent', async () => {
+  const cache = tempDir('ocglm-cache');
+  mkdirSync(join(cache, 'opencode'), { recursive: true });
+  writeFileSync(join(cache, 'opencode', 'models.json'), '{"catalog":"seed"}');
+  const capture = join(tempDir('ocglm-cap'), 'facts.txt');
+  const bin = join(tempDir('ocglm-bin'), 'probe.sh');
+  writeFileSync(
+    bin,
+    [
+      '#!/bin/sh',
+      `{ if [ -f "$XDG_CACHE_HOME/opencode/models.json" ]; then echo catalog-yes; else echo catalog-no; fi; } > ${JSON.stringify(capture)}`,
+      `echo '{"type":"text","text":"{\\"claim\\":\\"WORKING\\",\\"actionRequests\\":[]}"}'`,
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  const withCatalog = createLiveOpenCodeGlmAdapter({
+    authDataDir: fakeAuthData(),
+    cacheDir: cache,
+    binary: bin,
+    cwd: tempDir('ocglm-cwd'),
+    replayDir: tempDir('ocglm-replay'),
+    putEvidence: () => 'blob://tr',
+  });
+  await withCatalog.send(req('catalog-1'));
+  assert.equal(readFileSync(capture, 'utf8').trim(), 'catalog-yes');
+  // Best-effort: absent catalog does not break the invocation (cold-start race returns).
+  const withoutCatalog = createLiveOpenCodeGlmAdapter({
+    authDataDir: fakeAuthData(),
+    cacheDir: tempDir('ocglm-empty'),
+    binary: bin,
+    cwd: tempDir('ocglm-cwd'),
+    replayDir: tempDir('ocglm-replay'),
+    putEvidence: () => 'blob://tr',
+  });
+  await withoutCatalog.send(req('catalog-2'));
+  assert.equal(readFileSync(capture, 'utf8').trim(), 'catalog-no');
+});
+
 // Keep the shared tmpdir from accumulating this suite's scratch dirs across runs.
 test('scratch cleanup', () => {
   for (const d of readdirSync(tmpdir())) {
     if (/^(ocglm-|platform-opencode-glm-)/.test(d)) rmSync(join(tmpdir(), d), { recursive: true, force: true });
   }
+});
+
+test('opencodeErrorDetail: stdout error events extracted, ref included, none -> null', () => {
+  const stdout = [
+    '{"type":"step_start","part":{"type":"step-start"}}',
+    '{"type":"error","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_63ff0ccd"}}}',
+  ].join('\n');
+  assert.equal(
+    opencodeErrorDetail(stdout),
+    'UnknownError: Unexpected server error. Check server logs for details. (ref err_63ff0ccd)',
+  );
+  assert.equal(opencodeErrorDetail('{"type":"text","text":"ok"}'), null);
+  assert.equal(opencodeErrorDetail(''), null);
+  // Malformed error event (no name/message) -> null, never a blank detail.
+  assert.equal(opencodeErrorDetail('{"type":"error","error":{}}'), null);
+});
+
+test('a failing opencode run surfaces the stdout error event in the thrown AdapterError detail', async () => {
+  // Stub child that mimics the real failure shape: error event on STDOUT, exit 1,
+  // EMPTY stderr — the exact live signature observed on the OpenCode Go gateway.
+  const dir = tempDir('ocglm-bin');
+  const bin = join(dir, 'fail.sh');
+  writeFileSync(
+    bin,
+    [
+      '#!/bin/sh',
+      `echo '{"type":"error","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_deadbeef"}}}'`,
+      'exit 1',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  const adapter = createLiveOpenCodeGlmAdapter({
+    authDataDir: fakeAuthData(),
+    binary: bin,
+    cwd: tempDir('ocglm-cwd'),
+    replayDir: tempDir('ocglm-replay'),
+    putEvidence: () => 'blob://tr',
+  });
+  await assert.rejects(
+    adapter.send(req('fail-1')),
+    (err: unknown) =>
+      err instanceof AdapterError &&
+      err.kind === 'transport' &&
+      (err.message.includes('Unexpected server error') ?? false) &&
+      (err.message.includes('err_deadbeef') ?? false),
+  );
 });

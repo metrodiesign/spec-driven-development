@@ -35,7 +35,9 @@ export {
   createLiveOpenCodeDeepSeekAdapter,
   createLiveOpenCodeGlmAdapter,
   OPENCODE_GLM_DEFAULT_MODEL,
+  opencodeErrorDetail,
   resolveOpenCodeAuthStore,
+  resolveOpenCodeModelCatalog,
   type OpenCodeGlmOptions,
 } from './reasoning-cli-live.ts';
 // Shared Ring-2 wire helpers (INV-8) — reused by both adapters and any new lineage.

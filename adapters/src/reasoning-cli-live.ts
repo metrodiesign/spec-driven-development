@@ -250,9 +250,31 @@ export function createLiveOpenCodeDeepSeekAdapter(opts: LiveReasoningOptions): A
 /** Model id on the OpenCode Go gateway (overridable for future glm releases). */
 export const OPENCODE_GLM_DEFAULT_MODEL = 'opencode-go/glm-5.3';
 
+/**
+ * opencode reports provider/gateway failures as JSON events on STDOUT and exits
+ * 1 with an EMPTY stderr — the thrown detail would be blind without this.
+ * Mirrors the codex lane's stdout-error-event lesson (unified spec v1.10).
+ * Returns e.g. `UnknownError: Unexpected server error... (ref err_x)` or null.
+ */
+export function opencodeErrorDetail(stdout: string): string | null {
+  for (const event of jsonLines(stdout)) {
+    if (String(event['type'] ?? '') !== 'error') continue;
+    const error = (event['error'] ?? {}) as Record<string, unknown>;
+    const data = (error['data'] ?? {}) as Record<string, unknown>;
+    const name = typeof error['name'] === 'string' ? error['name'] : '';
+    const message = typeof data['message'] === 'string' ? data['message'] : '';
+    const ref = typeof data['ref'] === 'string' ? ` (ref ${data['ref']})` : '';
+    if (message === '' && name === '') continue;
+    return `${name}: ${message}${ref}`.replace(/^: /, '').trim() || null;
+  }
+  return null;
+}
+
 export interface OpenCodeGlmOptions extends LiveReasoningOptions {
   /** Override the auth-store data dir — tests inject a temp dir; default resolves the real one. */
   authDataDir?: string;
+  /** Override the catalog cache dir (models.json) — same injection purpose. */
+  cacheDir?: string;
 }
 
 /**
@@ -285,6 +307,21 @@ export function buildOpenCodeGlmEnv(root: string, source: NodeJS.ProcessEnv = pr
   };
 }
 
+/**
+ * Resolve the opencode model catalog (REQ-1.1 reliability). Pure path probe for
+ * <XDG_CACHE_HOME | ~/.cache>/opencode/models.json — the file opencode fetches
+ * async at startup. A cold sandbox without it races the fetch and the FIRST
+ * request dies with ProviderModelNotFoundError (observed live: "Model not
+ * found: opencode-go/glm-5.3" with attempts 2+ passing once cached). Seeding it
+ * per invocation keeps full isolation while removing the race. Best-effort:
+ * absent on the host -> today's cold-start behavior.
+ */
+export function resolveOpenCodeModelCatalog(cacheDir?: string): string | null {
+  const base = cacheDir ?? process.env['XDG_CACHE_HOME'] ?? join(homedir(), '.cache');
+  const catalog = join(base, 'opencode', 'models.json');
+  return existsSync(catalog) ? catalog : null;
+}
+
 export function createLiveOpenCodeGlmAdapter(opts: OpenCodeGlmOptions): AdapterInterface {
   // Factory-time fail-fast (REQ-2.3): a missing store is a wiring error — surface it
   // before any sandbox/spawn. The message names the fix, never file content (REQ-2.5).
@@ -292,6 +329,7 @@ export function createLiveOpenCodeGlmAdapter(opts: OpenCodeGlmOptions): AdapterI
   if (store === null) {
     throw new AdapterError('auth_unavailable', 'opencode auth store not found — run `opencode auth login`');
   }
+  const catalog = resolveOpenCodeModelCatalog(opts.cacheDir);
   const exec: ReasoningCliExec = async ({ prompt, model, signal, timeoutMs }) => {
     const root = mkdtempSync(join(tmpdir(), 'platform-opencode-glm-'));
     try {
@@ -302,6 +340,13 @@ export function createLiveOpenCodeGlmAdapter(opts: OpenCodeGlmOptions): AdapterI
       const authCopy = join(dataDir, 'auth.json');
       copyFileSync(store, authCopy);
       chmodSync(authCopy, 0o600);
+      // Warm the model catalog so the first request cannot race opencode's async
+      // fetch (ProviderModelNotFoundError on a cold cache — not a credential).
+      if (catalog !== null) {
+        const cacheDir2 = join(root, 'cache', 'opencode');
+        mkdirSync(cacheDir2, { recursive: true });
+        copyFileSync(catalog, join(cacheDir2, 'models.json'));
+      }
       return await runChild({
         binary: opts.binary ?? 'opencode',
         argv: buildOpenCodeReviewArgv(prompt, model),
@@ -310,6 +355,15 @@ export function createLiveOpenCodeGlmAdapter(opts: OpenCodeGlmOptions): AdapterI
         ...(signal !== undefined ? { signal } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         parse: parseOpenCode,
+      }).then((result) => {
+        // Surface stdout error events into the stderr the core classifies from
+        // (opencode exits 1 with empty stderr on gateway failures). Kind stays
+        // transport for unmatched server errors — only the detail becomes legible.
+        if (result.exitCode !== 0) {
+          const detail = opencodeErrorDetail(result.transcript);
+          if (detail !== null) return { ...result, stderr: `${result.stderr}\nopencode error event: ${detail}`.trim() };
+        }
+        return result;
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
