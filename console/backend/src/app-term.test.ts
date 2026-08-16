@@ -69,6 +69,25 @@ test('loopback bind: create -> list -> attach -> delete (REQ-13.1/13.2)', async 
   }
 });
 
+test('terminal list supports project-filtered bounded pages without changing legacy array shape', async () => {
+  const app = buildApp(deps('127.0.0.1'));
+  try {
+    await app.inject({ method: 'POST', url: '/api/term/sessions', headers: GOOD_HOST, payload: { project: 'demo', mode: 'claude-only' } });
+    await app.inject({ method: 'POST', url: '/api/term/sessions', headers: GOOD_HOST, payload: { project: 'demo', mode: 'claude-only' } });
+    await app.inject({ method: 'POST', url: '/api/term/sessions', headers: GOOD_HOST, payload: { project: 'other', mode: 'claude-only' } });
+
+    const legacy = await app.inject({ method: 'GET', url: '/api/term/sessions', headers: GOOD_HOST });
+    assert.equal(Array.isArray(legacy.json()), true);
+    const first = await app.inject({ method: 'GET', url: '/api/term/sessions?project=demo&limit=1', headers: GOOD_HOST });
+    assert.equal(first.json().sessions.length, 1);
+    assert.equal(first.json().sessions[0].project, 'demo');
+    assert.equal(typeof first.json().nextCursor, 'string');
+    assert.equal((await app.inject({ method: 'GET', url: '/api/term/sessions?cursor=bad&limit=1', headers: GOOD_HOST })).statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
+
 test('missing project -> 400', async () => {
   const app = buildApp(deps('127.0.0.1'));
   try {

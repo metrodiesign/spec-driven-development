@@ -7,6 +7,65 @@
 
 import { sha256 } from './govern.ts';
 
+export interface GovernanceReadMetadata {
+  sensitive: true;
+  redacted: boolean;
+}
+
+const SENSITIVE_KEY = /(?:api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)/iu;
+const TOKEN_PATTERNS = [
+  /sk-[A-Za-z0-9_-]{8,}/gu,
+  /ghp_[A-Za-z0-9]{20,}/gu,
+  /github_pat_[A-Za-z0-9_]{20,}/gu,
+  /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/gu,
+  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/gu,
+] as const;
+
+function redactJsonValue(value: unknown, key: string | null): unknown {
+  if (key !== null && SENSITIVE_KEY.test(key)) return '[redacted]';
+  if (Array.isArray(value)) return value.map((entry) => redactJsonValue(entry, null));
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([childKey, child]) => [
+      childKey,
+      redactJsonValue(child, childKey),
+    ]),
+  );
+}
+
+/** Route-specific Governance redaction. Hashes always remain hashes of raw source bytes. */
+export function redactGovernanceContent(content: string): { content: string; metadata: GovernanceReadMetadata } {
+  let output = content;
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    const redacted = redactJsonValue(parsed, null);
+    if (JSON.stringify(redacted) !== JSON.stringify(parsed)) output = `${JSON.stringify(redacted, null, 2)}\n`;
+  } catch {
+    output = output.replace(
+      /^(\s*[A-Za-z0-9_.-]*(?:api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)[A-Za-z0-9_.-]*\s*[:=]\s*).+$/gimu,
+      '$1[redacted]',
+    );
+  }
+  output = output.replace(
+    /-----BEGIN [^-]*(?:PRIVATE KEY|OPENSSH PRIVATE KEY)-----[\s\S]*?-----END [^-]*(?:PRIVATE KEY|OPENSSH PRIVATE KEY)-----/gu,
+    '[private-key-redacted]',
+  );
+  output = output.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/giu, '$1[redacted]@');
+  for (const pattern of TOKEN_PATTERNS) output = output.replace(pattern, '[redacted]');
+  return { content: output, metadata: { sensitive: true, redacted: output !== content } };
+}
+
+export function validateJsonObject(content: string): string | null {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? null
+      : 'settings must be a JSON object';
+  } catch (error) {
+    return `invalid JSON: ${(error as Error).message}`;
+  }
+}
+
 const MAX_LCS_CELLS = 1_000_000;
 
 /**

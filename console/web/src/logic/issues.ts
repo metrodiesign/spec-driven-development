@@ -24,3 +24,12 @@ export function canAct(issue: IssueRecord): boolean {
 export function overCap(title: string, body: string): boolean {
   return title.length > TITLE_MAX || body.length > BODY_MAX;
 }
+
+export function mergeIssues(current: readonly IssueRecord[], incoming: readonly IssueRecord[]): readonly IssueRecord[] {
+  const byId = new Map(current.map((issue) => [issue.id, issue]));
+  for (const issue of incoming) byId.set(issue.id, issue);
+  return [...byId.values()].sort((left, right) => {
+    const byCreated = left.createdAt.localeCompare(right.createdAt);
+    return byCreated === 0 ? left.id.localeCompare(right.id) : byCreated;
+  });
+}

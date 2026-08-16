@@ -3,9 +3,9 @@
 
 export type AuthGateState = 'checking' | 'authed' | 'unauthed';
 
-/** A 401 on the auth probe means no valid session; anything else lets the dashboard try. */
+/** Only a confirmed 200 session may mount protected views. */
 export function interpretAuthProbe(status: number): AuthGateState {
-  return status === 401 ? 'unauthed' : 'authed';
+  return status === 200 ? 'authed' : 'unauthed';
 }
 
 export type LoginOutcome = { ok: true } | { ok: false; error: string };

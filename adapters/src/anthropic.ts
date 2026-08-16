@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { AdapterError } from 'aal';
 import { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';
 import { linkCallControl, providerEnvironment } from './control.ts';
+import { describeAnthropicAdapter } from './descriptors.ts';
 import type { AdapterHealth, AdapterInterface, AgentCallControl, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
 import type { Action } from 'core';
 
@@ -145,15 +146,7 @@ export function createAnthropicAdapter(opts: AnthropicAdapterOptions): Anthropic
   return {
     ...(healthProbe ? { healthProbe } : {}),
     manifest(): CapabilityManifest {
-      return {
-        adapterId: id,
-        structuredOutput: true,
-        toolCalling: false,
-        contextWindowTokens: 200_000,
-        executionBackend: false,
-        determinism: 'none', // no seed; reproducibility = frozen artifact at verification (§16)
-        lineage: 'anthropic', // vendor family for cross-lineage fusion routing (§7.4, REQ-4.1) — legal in Ring 2 only
-      };
+      return describeAnthropicAdapter(id).manifest;
     },
 
     async send(req: AgentRequest, control?: AgentCallControl): Promise<AgentResponse> {

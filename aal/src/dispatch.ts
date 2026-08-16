@@ -24,7 +24,18 @@ export interface DispatcherOptions {
   /** Poll delay while an adapter's bucket is empty (default 5ms). Injected for deterministic tests. */
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
+  /** Optional best-effort observation side channel; exceptions never affect dispatch. */
+  observeRate?: RateObserver;
 }
+
+export interface RateObservation {
+  target: string;
+  policyKey: string | null;
+  limited: boolean;
+  availableTokens: number | null;
+}
+
+export type RateObserver = (record: RateObservation) => void;
 
 export interface DispatchItem {
   adapter: AdapterInterface;
@@ -40,26 +51,60 @@ export interface DispatchResult {
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export function createDispatcher(opts: DispatcherOptions): {
-  dispatchAll(items: DispatchItem[]): Promise<DispatchResult[]>;
+  dispatchAll(items: DispatchItem[], observeRate?: RateObserver): Promise<DispatchResult[]>;
   /** Resolved concurrency after the governance ceiling — readable so a composition guard can refuse a misassembled dispatcher (REQ-4.2). */
   effectiveMaxParallel: number;
 } {
   const sleep = opts.sleep ?? realSleep;
   const waitMs = opts.waitMs ?? 5;
   const maxParallel = Math.max(1, Math.min(opts.maxParallel, opts.ceiling ?? opts.maxParallel));
+  const lastLimited = new Map<string, boolean>();
+
+  const emitRate = (record: RateObservation, force = false, callObserver?: RateObserver): void => {
+    if (!force && lastLimited.get(record.target) === record.limited) return;
+    lastLimited.set(record.target, record.limited);
+    try {
+      opts.observeRate?.(record);
+    } catch {
+      // Observation is a side channel; waiting and provider dispatch stay unchanged.
+    }
+    if (callObserver === opts.observeRate) return;
+    try {
+      callObserver?.(record);
+    } catch {
+      // Per-dispatch observation is isolated by the same compatibility rule.
+    }
+  };
 
   return {
     effectiveMaxParallel: maxParallel,
-    async dispatchAll(items) {
+    async dispatchAll(items, observeRate) {
       const results = new Array<DispatchResult>(items.length);
       let next = 0;
 
       async function runOne(item: DispatchItem): Promise<DispatchResult> {
-        const bucket = opts.buckets.get(item.adapter.manifest().adapterId);
+        const target = item.adapter.manifest().adapterId;
+        const bucket = opts.buckets.get(target);
         // Wait for a token rather than drop the item (REQ-6.3). Bounded by the
         // caller's own budget/timeout — the panel size is small and finite.
-        while (bucket !== undefined && !bucket.tryTake()) {
-          await sleep(waitMs);
+        if (bucket === undefined) {
+          emitRate({ target, policyKey: null, limited: false, availableTokens: null }, true, observeRate);
+        } else {
+          for (;;) {
+            const allowed = bucket.tryTake();
+            const record: RateObservation = {
+              target,
+              policyKey: target,
+              limited: !allowed,
+              availableTokens: bucket.peekAvailable(),
+            };
+            if (allowed) {
+              emitRate(record, true, observeRate);
+              break;
+            }
+            emitRate(record, false, observeRate);
+            await sleep(waitMs);
+          }
         }
         try {
           const response = await item.adapter.send(item.request, item.control);
