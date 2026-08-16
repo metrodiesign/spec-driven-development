@@ -125,6 +125,14 @@ test('REQ-4.2/4.9/4.11: a two-task graph runs both tasks in dependency order and
       assert.equal(frozen.length, 1, 'REQ-4.8: frozen exactly once, inside the run');
       assert.deepStrictEqual(frozen[0]?.payload['taskIds'], ['T-1', 'T-2']);
       assert.equal(typeof frozen[0]?.payload['graphHash'], 'string');
+      assert.deepEqual(
+        frozen[0]?.payload['tasks'],
+        [
+          { id: 'T-1', title: 'first', dependsOn: [], satisfies: ['AC-1'], risk: 'L2', diffBudget: 400 },
+          { id: 'T-2', title: 'second', dependsOn: ['T-1'], satisfies: ['AC-2'], risk: 'L2', diffBudget: 400 },
+        ],
+        'frozen graph details are recorded additively for read-only projection',
+      );
       assert.equal(log.all({ type: 'TASK_GRAPH_REJECTED' }).length, 0);
 
       // Dependency order, asserted from the log rather than from anything the agent

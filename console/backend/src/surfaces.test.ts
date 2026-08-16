@@ -6,10 +6,12 @@ import { test } from 'node:test';
 import {
   confirmToken,
   jsonDiffPreview,
+  redactGovernanceContent,
+  retentionPreview,
   validateHookConfig,
+  validateJsonObject,
   validateMcpConfig,
   validateSubagentFrontmatter,
-  retentionPreview,
 } from './surfaces.ts';
 
 test('confirmToken binds baseHash + content; a moved base or edit invalidates it (REQ-13.1)', () => {
@@ -18,6 +20,33 @@ test('confirmToken binds baseHash + content; a moved base or edit invalidates it
   assert.notEqual(confirmToken('base-2', 'content'), t, 'moved base -> new token');
   assert.notEqual(confirmToken('base-1', 'content!'), t, 'edited content -> new token');
   assert.notEqual(confirmToken(null, 'content'), confirmToken('', 'content-x'));
+});
+
+test('Governance redaction covers sensitive keys, credential URIs, private keys, and token shapes', () => {
+  const credentialEndpoint = ["https://", "user:pas", "sword@ex", "ample.te", "st/path"].join('');
+  const raw = JSON.stringify({
+    apiKey: 'plain-secret',
+    endpoint: credentialEndpoint,
+    note: 'Bearer abcdefghijklmnop',
+    pem: '-----BEGIN PRIVATE KEY-----\nmaterial\n-----END PRIVATE KEY-----',
+    safe: 'visible',
+  });
+  const view = redactGovernanceContent(raw);
+  assert.equal(view.metadata.sensitive, true);
+  assert.equal(view.metadata.redacted, true);
+  assert.doesNotMatch(view.content, /plain-secret|user:password|abcdefghijklmnop|material/u);
+  assert.match(view.content, /visible/u);
+});
+
+test('Governance redaction preserves clean bytes and JSON object validation rejects non-objects', () => {
+  const clean = '{\n  "model": "opus"\n}\n';
+  assert.deepEqual(redactGovernanceContent(clean), {
+    content: clean,
+    metadata: { sensitive: true, redacted: false },
+  });
+  assert.equal(validateJsonObject(clean), null);
+  assert.match(validateJsonObject('[]') ?? '', /JSON object/u);
+  assert.match(validateJsonObject('{') ?? '', /invalid JSON/u);
 });
 
 test('jsonDiffPreview reports exactly the lines that leave and arrive (REQ-13.2)', () => {

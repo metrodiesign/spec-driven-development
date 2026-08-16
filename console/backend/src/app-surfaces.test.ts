@@ -29,6 +29,85 @@ function depsFor(fix: HomeFixture, extra: Partial<AppDeps> = {}): AppDeps {
 
 const body = (obj: unknown) => ({ payload: JSON.stringify(obj), headers: { ...HOST, 'content-type': 'application/json' } });
 
+// --- Governance Settings (REQ-7) ---
+
+test('Settings GET/PUT exposes provenance + redaction metadata while managed stays read-only', async () => {
+  const fix = makeHome();
+  const userDir = join(fix.homeDir, '.claude');
+  mkdirSync(userDir, { recursive: true });
+  const raw = JSON.stringify({ model: 'opus', apiKey: 'sk-secretvalue' });
+  writeFileSync(join(userDir, 'settings.json'), raw);
+  const app = buildApp(depsFor(fix));
+  try {
+    await app.ready();
+    const user = await app.inject({ method: 'GET', url: '/api/settings/user', headers: HOST });
+    assert.equal(user.statusCode, 200);
+    assert.equal(user.json().hash, sha256(raw));
+    assert.equal(user.json().metadata.redacted, true);
+    assert.equal(user.json().provenance, 'user settings');
+    assert.ok(!user.body.includes('sk-secretvalue'));
+
+    const managed = await app.inject({ method: 'GET', url: '/api/settings/managed', headers: HOST });
+    assert.equal(managed.json().readOnly, true);
+    assert.equal(managed.json().available, false);
+    assert.equal(app.hasRoute({ method: 'PUT', url: '/api/settings/managed' }), false);
+
+    const invalid = await app.inject({ method: 'PUT', url: '/api/settings/user', ...body({ content: '[]', baseHash: sha256(raw) }) });
+    assert.equal(invalid.statusCode, 422);
+    const saved = await app.inject({ method: 'PUT', url: '/api/settings/user', ...body({ content: '{"model":"sonnet"}', baseHash: sha256(raw) }) });
+    assert.equal(saved.statusCode, 200);
+    assert.equal(saved.json().applyTiming, 'next-session');
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
+test('Settings effective GET reads live scope precedence and returns per-field provenance', async () => {
+  const fix = makeHome();
+  mkdirSync(join(fix.homeDir, '.claude'), { recursive: true });
+  mkdirSync(join(fix.homeDir, PROJECT, '.claude'), { recursive: true });
+  writeFileSync(join(fix.homeDir, '.claude', 'settings.json'), JSON.stringify({ model: 'user', theme: 'dark' }));
+  writeFileSync(join(fix.homeDir, PROJECT, '.claude', 'settings.json'), JSON.stringify({ model: 'project' }));
+  const sensitiveToken = ["ordinary", "-secret-", "value"].join('');
+  writeFileSync(join(fix.homeDir, PROJECT, '.claude', 'settings.local.json'), JSON.stringify({ token: sensitiveToken }));
+  const app = buildApp(depsFor(fix));
+  try {
+    const response = await app.inject({ method: 'GET', url: `/api/settings/effective?project=${PROJECT}`, headers: HOST });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().effective.model.value, 'project');
+    assert.equal(response.json().effective.model.scope, 'project');
+    assert.equal(response.json().effective.model.provenance, 'project settings');
+    assert.equal(response.json().effective.theme.scope, 'user');
+    assert.equal(response.json().metadata.redacted, true);
+    assert.ok(!response.body.includes(sensitiveToken));
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
+test('Hook preview redacts old secrets without breaking exact token flow', async () => {
+  const fix = makeHome();
+  mkdirSync(join(fix.homeDir, '.claude'), { recursive: true });
+  writeFileSync(join(fix.homeDir, '.claude', 'settings.json'), JSON.stringify({ apiKey: 'sk-secretvalue' }));
+  const app = buildApp(depsFor(fix));
+  try {
+    const preview = await app.inject({ method: 'POST', url: '/api/hooks/validate', ...body({ scope: 'user', content: HOOKS }) });
+    assert.equal(preview.statusCode, 200);
+    assert.equal(preview.json().metadata.redacted, true);
+    assert.ok(!preview.body.includes('sk-secretvalue'));
+    const result = await app.inject({ method: 'POST', url: '/api/hooks/install', ...body({
+      scope: 'user', content: HOOKS, baseHash: preview.json().baseHash, confirmToken: preview.json().confirmToken,
+    }) });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.json().applyTiming, 'next-session');
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
 // --- F-MCP (REQ-12) ---
 
 test('F-MCP: project .mcp.json GET/PUT with writeSafe; invalid -> 422, stale -> 409 (REQ-12.1/12.4)', async () => {
@@ -43,6 +122,7 @@ test('F-MCP: project .mcp.json GET/PUT with writeSafe; invalid -> 422, stale -> 
     const good = JSON.stringify({ mcpServers: { fs: { command: 'mcp-fs' }, api: { url: 'http://localhost:9' } } });
     const saved = await app.inject({ method: 'PUT', url: '/api/mcp/project', ...body({ project: PROJECT, content: good, baseHash: null }) });
     assert.equal(saved.statusCode, 200);
+    assert.equal(saved.json().applyTiming, 'next-session');
     const hash = saved.json().hash;
 
     const invalid = await app.inject({ method: 'PUT', url: '/api/mcp/project', ...body({ project: PROJECT, content: '{ "mcpServers": { "x": { "nope": 1 } } }', baseHash: hash }) });
@@ -166,6 +246,8 @@ test('F-Sub: CRUD .claude/agents/*.md, frontmatter-validated (REQ-14.1/14.3)', a
     const good = '---\nname: rev\ndescription: reviewer\ntools: Read, Grep\n---\n# body\n';
     const put = await app.inject({ method: 'PUT', url: '/api/subagents/rev', ...body({ scope: 'user', content: good, baseHash: null }) });
     assert.equal(put.statusCode, 200);
+    assert.equal(put.json().applyTiming, 'next-session');
+    const originalHash = put.json().hash as string;
 
     const bad = await app.inject({ method: 'PUT', url: '/api/subagents/broken', ...body({ scope: 'user', content: '# no frontmatter', baseHash: null }) });
     assert.equal(bad.statusCode, 422);
@@ -174,9 +256,16 @@ test('F-Sub: CRUD .claude/agents/*.md, frontmatter-validated (REQ-14.1/14.3)', a
     const list = await app.inject({ method: 'GET', url: '/api/subagents?scope=user', headers: HOST });
     assert.deepEqual(list.json().subagents, ['rev']);
 
-    const del = await app.inject({ method: 'DELETE', url: '/api/subagents/rev?scope=user', headers: HOST });
+    writeFileSync(join(fix.homeDir, '.claude', 'agents', 'rev.md'), `${good}\nchanged\n`);
+    const staleDelete = await app.inject({ method: 'DELETE', url: `/api/subagents/rev?scope=user&baseHash=${originalHash}`, headers: HOST });
+    assert.equal(staleDelete.statusCode, 409);
+    const current = await app.inject({ method: 'GET', url: '/api/subagents/rev?scope=user', headers: HOST });
+    const del = await app.inject({ method: 'DELETE', url: `/api/subagents/rev?scope=user&baseHash=${current.json().hash}`, headers: HOST });
     assert.equal(del.json().deleted, true);
+    assert.equal(del.json().applyTiming, 'next-session');
     assert.equal(existsSync(join(fix.homeDir, '.claude', 'agents', 'rev.md')), false);
+    const again = await app.inject({ method: 'DELETE', url: '/api/subagents/rev?scope=user', headers: HOST });
+    assert.equal(again.json().deleted, false);
   } finally {
     await app.close();
     fix.cleanup();
@@ -191,13 +280,43 @@ test('F-Skill: SKILL.md edit + enabledPlugins toggle through writeSafe (REQ-14.2
   try {
     const put = await app.inject({ method: 'PUT', url: '/api/skills/demo', ...body({ scope: 'user', content: '# Demo skill\n', baseHash: null }) });
     assert.equal(put.statusCode, 200);
+    assert.equal(put.json().applyTiming, 'next-session');
     const list = await app.inject({ method: 'GET', url: '/api/skills?scope=user', headers: HOST });
     assert.deepEqual(list.json().skills, ['demo']);
 
     const settingsPath = join(fix.homeDir, '.claude', 'settings.json');
     const on = await app.inject({ method: 'PUT', url: '/api/settings/enabled-plugins', ...body({ scope: 'user', plugin: 'p@1', enabled: true, baseHash: null }) });
     assert.equal(on.statusCode, 200);
+    assert.equal(on.json().applyTiming, 'next-session');
     assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')).enabledPlugins, ['p@1']);
+  } finally {
+    await app.close();
+    fix.cleanup();
+  }
+});
+
+test('subagent and skill catalogs expose bounded named pages without changing legacy callers', async () => {
+  const fix = makeHome();
+  const agents = join(fix.homeDir, '.claude', 'agents');
+  const skills = join(fix.homeDir, '.claude', 'skills');
+  mkdirSync(agents, { recursive: true });
+  writeFileSync(join(agents, 'b.md'), '# b\n');
+  writeFileSync(join(agents, 'a.md'), '# a\n');
+  for (const name of ['b', 'a']) {
+    mkdirSync(join(skills, name), { recursive: true });
+    writeFileSync(join(skills, name, 'SKILL.md'), `# ${name}\n`);
+  }
+  const app = buildApp(depsFor(fix));
+  try {
+    const legacy = await app.inject({ method: 'GET', url: '/api/subagents?scope=user', headers: HOST });
+    assert.equal('nextCursor' in legacy.json(), false);
+    const agentsPage = await app.inject({ method: 'GET', url: '/api/subagents?scope=user&limit=1', headers: HOST });
+    assert.deepEqual(agentsPage.json().subagents, ['a']);
+    assert.equal(typeof agentsPage.json().nextCursor, 'string');
+    const skillsPage = await app.inject({ method: 'GET', url: '/api/skills?scope=user&limit=1', headers: HOST });
+    assert.deepEqual(skillsPage.json().skills, ['a']);
+    assert.equal(typeof skillsPage.json().nextCursor, 'string');
+    assert.equal((await app.inject({ method: 'GET', url: '/api/skills?scope=user&limit=0', headers: HOST })).statusCode, 400);
   } finally {
     await app.close();
     fix.cleanup();
@@ -318,6 +437,7 @@ test('F-Sys: retention prune is two-step + refuses under a live PTY + audits (RE
     const done = await app.inject({ method: 'POST', url: '/api/system/retention/prune', ...body({ cleanupPeriodDays: 30, confirmToken: token }) });
     assert.equal(done.statusCode, 200);
     assert.equal(done.json().pruned, 1);
+    assert.equal(done.json().applyTiming, 'immediate');
     assert.equal(existsSync(old), false);
     assert.equal(audits.filter((a) => a['event'] === 'retention_prune').length, 1);
   } finally {
@@ -332,6 +452,7 @@ test('F-Sys: retention edits cleanupPeriodDays through writeSafe (REQ-15.3)', as
   try {
     const res = await app.inject({ method: 'PUT', url: '/api/system/retention', ...body({ scope: 'user', cleanupPeriodDays: 45, baseHash: null }) });
     assert.equal(res.statusCode, 200);
+    assert.equal(res.json().applyTiming, 'next-session');
     const settings = JSON.parse(readFileSync(join(fix.homeDir, '.claude', 'settings.json'), 'utf8'));
     assert.equal(settings.cleanupPeriodDays, 45);
   } finally {

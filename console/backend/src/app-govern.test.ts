@@ -31,9 +31,10 @@ test('POST /api/permissions/simulate returns the winning decision (REQ-15.2)', a
   try {
     const r = await app.inject({
       method: 'POST', url: '/api/permissions/simulate', headers: GOOD_HOST,
-      payload: { rules: [{ action: 'deny', pattern: 'Write(test/golden/**)' }], tool: 'Write', path: 'test/golden/x' },
+      payload: { rules: [{ action: 'deny', pattern: 'Write(test/golden/**)', scope: 'project' }], tool: 'Write', path: 'test/golden/x' },
     });
     assert.equal((r.json() as { decision: string }).decision, 'deny');
+    assert.deepEqual(r.json().provenance, { scope: 'project', source: 'project simulator input' });
   } finally { await app.close(); }
 });
 
@@ -65,6 +66,7 @@ test('F-Mem: PUT CLAUDE.md write-safe; stale baseHash -> 409 (REQ-17.1)', async 
   try {
     const put1 = await app.inject({ method: 'PUT', url: '/api/memory', headers: GOOD_HOST, payload: { scope: 'user', content: '# rules\n', baseHash: null } });
     assert.equal(put1.statusCode, 200);
+    assert.equal(put1.json().applyTiming, 'next-session');
     const get1 = await app.inject({ method: 'GET', url: '/api/memory?scope=user', headers: GOOD_HOST });
     const { hash } = get1.json() as { hash: string };
     // stale write -> 409
@@ -73,6 +75,20 @@ test('F-Mem: PUT CLAUDE.md write-safe; stale baseHash -> 409 (REQ-17.1)', async 
     // correct baseHash -> ok
     const ok = await app.inject({ method: 'PUT', url: '/api/memory', headers: GOOD_HOST, payload: { scope: 'user', content: '# v2\n', baseHash: hash } });
     assert.equal(ok.statusCode, 200);
+  } finally { await app.close(); }
+});
+
+test('F-Mem: GET redacts sensitive content and keeps raw base hash for replace-entire edits', async () => {
+  const app = buildApp(deps());
+  try {
+    const raw = 'token: sk-secretvalue\npublic: visible\n';
+    const saved = await app.inject({ method: 'PUT', url: '/api/memory', headers: GOOD_HOST, payload: { scope: 'user', content: raw, baseHash: null } });
+    const view = await app.inject({ method: 'GET', url: '/api/memory?scope=user', headers: GOOD_HOST });
+    assert.equal(view.json().hash, saved.json().hash);
+    assert.equal(view.json().metadata.redacted, true);
+    assert.equal(view.json().provenance, 'user memory');
+    assert.ok(!view.body.includes('sk-secretvalue'));
+    assert.match(view.body, /visible/u);
   } finally { await app.close(); }
 });
 

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 
 import { AdapterError } from 'aal';
 import { buildProposePrompt, classifyAdapterError, normalizeActions, unfence } from './wire.ts';
+import { describeCodexAdapter } from './descriptors.ts';
 import type { AdapterInterface, AgentCallControl, AgentRequest, AgentResponse, CapabilityManifest } from 'aal';
 import type { Action } from 'core';
 
@@ -104,15 +105,7 @@ export function createCodexAdapter(opts: CodexAdapterOptions): AdapterInterface 
 
   return {
     manifest(): CapabilityManifest {
-      return {
-        adapterId: id,
-        structuredOutput: true,
-        toolCalling: false,
-        contextWindowTokens: 200_000,
-        executionBackend: false,
-        determinism: 'none', // no seed; reproducibility = frozen artifact at verification (§16)
-        lineage: 'openai',
-      };
+      return describeCodexAdapter(id).manifest;
     },
 
     async send(req: AgentRequest, control?: AgentCallControl): Promise<AgentResponse> {

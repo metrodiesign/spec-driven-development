@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { ensureGovernanceApproved } from 'core';
+import { describeAnthropicAdapter, describeCodexAdapter, describeReasoningCliAdapter } from 'adapters';
 import { buildApp } from '../src/app.ts';
 import { createBasicProvider } from '../src/auth/basic.ts';
 import { createOidcProvider } from '../src/auth/oidc.ts';
@@ -31,6 +32,7 @@ import { attachUnknownUpgradeGuard, createChatRuntime, CHAT_WS_PATH } from '../s
 import { runGovernanceCommand } from '../src/governance-cli.ts';
 import { runAuditorCommand } from '../src/auditor-cli.ts';
 import { createSchedRuntime, type ChildLike, type SpawnChild } from '../src/sched.ts';
+import { createControlCenterReadPort } from '../src/control-center.ts';
 
 const HELP = `usage:
   platform console [--port <n>] [--host <h>] [--no-open] [--insecure] [--behind-proxy <url>]
@@ -363,7 +365,7 @@ async function runConformance(rest: string[]): Promise<void> {
       lineage: { type: 'string', default: 'claude' },
     },
   });
-  if (!['claude', 'codex', 'gemini-cli', 'opencode-deepseek', 'opencode-glm'].includes(values.lineage)) {
+  if (!['claude', 'codex', 'gemini-cli', 'opencode-deepseek', 'zai', 'opencode-glm'].includes(values.lineage)) {
     // A typo must refuse before any live spend, never silently fall back to
     // claude (Codex review finding on PR #47).
     process.stderr.write(`platform conformance: unsupported --lineage ${JSON.stringify(values.lineage)}\n`);
@@ -407,6 +409,7 @@ async function runConformance(rest: string[]): Promise<void> {
     createLiveCodexAdapter,
     createLiveGeminiAdapter,
     createLiveOpenCodeDeepSeekAdapter,
+    createLiveGlmAdapter,
     createLiveOpenCodeGlmAdapter,
   } = await import('adapters');
   const common = {
@@ -428,6 +431,8 @@ async function runConformance(rest: string[]): Promise<void> {
         ? createLiveGeminiAdapter({ ...common, ...(process.env['PR_GATE_GEMINI_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_GEMINI_MODEL'] }) })
         : lineage === 'opencode-deepseek'
           ? createLiveOpenCodeDeepSeekAdapter({ ...common, ...(process.env['PR_GATE_DEEPSEEK_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_DEEPSEEK_MODEL'] }) })
+          : lineage === 'zai'
+            ? createLiveGlmAdapter({ ...common, ...(process.env['PR_GATE_GLM_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_GLM_MODEL'] }) })
           : lineage === 'opencode-glm'
             ? createLiveOpenCodeGlmAdapter({ ...common, ...(process.env['PR_GATE_OPENCODE_GLM_MODEL'] === undefined ? {} : { model: process.env['PR_GATE_OPENCODE_GLM_MODEL'] }) })
       : createLiveAnthropicAdapter({
@@ -764,6 +769,34 @@ async function main(): Promise<void> {
     calibrationDir: join(process.cwd(), '.ai', 'calibration'),
     env: process.env,
   });
+  const loopRunsRoot = join(homedir(), '.ai', 'runs');
+  const controlCenter = createControlCenterReadPort({
+    runsRoot: loopRunsRoot,
+    policiesDir: join(aiDir(), 'policies'),
+    calibrationDir: calibrationDir(),
+    adapterDescriptors: [
+      describeAnthropicAdapter(),
+      describeCodexAdapter(),
+      describeReasoningCliAdapter({ id: 'gemini-cli', lineage: 'google', contextWindowTokens: 1_000_000 }),
+      describeReasoningCliAdapter({ id: 'opencode-deepseek', lineage: 'deepseek', contextWindowTokens: 128_000 }),
+    ],
+    adapterModelEnvironment: {
+      PR_GATE_CLAUDE_MODEL: process.env['PR_GATE_CLAUDE_MODEL']?.trim() || null,
+      PR_GATE_CODEX_MODEL: process.env['PR_GATE_CODEX_MODEL']?.trim() || null,
+      PR_GATE_GEMINI_MODEL: process.env['PR_GATE_GEMINI_MODEL']?.trim() || null,
+      PR_GATE_DEEPSEEK_MODEL: process.env['PR_GATE_DEEPSEEK_MODEL']?.trim() || null,
+    },
+    services: {
+      terminal: termRuntime === undefined
+        ? { status: 'policy-disabled', reason: 'Terminal is loopback-only and disabled for proxied or non-loopback access.' }
+        : { status: 'available', reason: null },
+      chat: { status: 'available', reason: null },
+      loop: { status: 'available', reason: null },
+      scheduler: { status: 'available', reason: null },
+      prQuality: { status: 'available', reason: null },
+    },
+    now: () => Date.now(),
+  });
   const app = buildApp({
     homeDir: homedir(),
     env: process.env,
@@ -776,7 +809,8 @@ async function main(): Promise<void> {
     // loop run` persists to. §13.3 audit trail (REQ-15.4/18.3): the console now
     // wires the same appender the CLI uses — every governed write in app.ts (hook
     // install, retention prune, ...) starts recording too, not just F-Loop.
-    loopRunsRoot: join(homedir(), '.ai', 'runs'),
+    loopRunsRoot,
+    controlCenter,
     // F-Issue (REQ-8/9): repo-anchored like policies/governance — issues feed
     // draft goal.yaml files a human reviews as part of THIS project, not a
     // per-machine runtime artifact (unlike loopRunsRoot above).

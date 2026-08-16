@@ -42,7 +42,9 @@ requirement ต้อง atomic, ไม่กำกวม, ทดสอบได
 ## 1.3 การ size task (โมเดล context ใหญ่)
 
 - task = สไลซ์พฤติกรรมที่ **cohesive + verify เองได้** ไม่ใช่ micro-step
-- 1 ฟีเจอร์ทั่วไป ~5-10 task ไม่ใช่ 20-30
+- จำนวน task เป็นผลลัพธ์ ไม่ใช่โควตา; หลายฟีเจอร์อยู่แถว 5-10 task แต่ไม่มีขั้นต่ำหรือเพดานระดับ spec
+- เกิน 10 ให้ตรวจ scope กว้างเกินไปหรือแตกเป็น micro-step; คงจำนวนใดก็ได้ถ้าทุก task cohesive, verify แยกได้, trace ได้ และจบในหนึ่งรอบ
+- ห้ามแยก behavior ที่ cohesive หรือรวม behavior ที่ไม่เกี่ยวกันเพียงเพื่อให้ได้จำนวนเป้าหมาย
 - **ห้าม** pre-split เป็น 1.1/1.2 ใน tasks.md — โมเดลแตกขั้นย่อยเองตอน execute ด้วย TODO ภายใน
 - เน้น vertical slice (model -> API -> validation -> tests) ไม่ใช่ horizontal layer ที่ใช้เดี่ยวไม่ได้
 

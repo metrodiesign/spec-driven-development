@@ -3,6 +3,14 @@
 export const RING = 2 as const;
 
 export {
+  describeAnthropicAdapter,
+  describeCodexAdapter,
+  describeReasoningCliAdapter,
+  type AdapterDescriptor,
+  type AdapterTransport,
+} from './descriptors.ts';
+
+export {
   createAnthropicAdapter,
   type AnthropicAdapterOptions,
   type QueryFn,
@@ -20,6 +28,19 @@ export {
   type ExecFn,
 } from './codex.ts';
 export { createLiveCodexAdapter, buildCodexArgv, CODEX_STDIO } from './codex-live.ts';
+export {
+  createOpenAICompatibleAdapter,
+  buildGlmRequestBody,
+  parseGlmHttpBody,
+  resolveGlmEndpointConfig,
+  GLM_CONTEXT_WINDOW_TOKENS,
+  GLM_DEFAULT_BASE_URL,
+  type OpenAICompatibleAdapterOptions,
+  type GlmTransport,
+  type GlmTransportResult,
+  type GlmReasoningEffort,
+} from './openai-compatible.ts';
+export { createLiveGlmAdapter, GLM_DEFAULT_MODEL, GLM_DEFAULT_TIMEOUT_MS, type LiveGlmOptions } from './openai-compatible-live.ts';
 export { linkCallControl, providerEnvironment } from './control.ts';
 export {
   createReasoningCliAdapter,

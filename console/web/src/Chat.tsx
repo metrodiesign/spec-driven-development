@@ -15,8 +15,8 @@ import {
   type ChatUiState,
 } from './logic/chat.ts';
 import { windowSummary, type WindowInfo } from './logic/format.ts';
-import { fetchStateFromResponse, FETCH_LOADING, FETCH_ERROR, type FetchState } from './logic/fetchState.ts';
 import { useI18n } from './I18nContext.tsx';
+import { protectedFetch, useRead } from './useFetch.ts';
 
 const box: React.CSSProperties = {
   border: '1px solid var(--color-border)',
@@ -29,6 +29,8 @@ const box: React.CSSProperties = {
 export function Chat({ project }: { project: string }) {
   const { t } = useI18n();
   const wsRef = useRef<WebSocket | null>(null);
+  const inputRef = useRef('');
+  const decidedToolsRef = useRef(new Set<string>());
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [state, setState] = useState<ChatUiState>(initialChatUiState);
@@ -36,15 +38,7 @@ export function Chat({ project }: { project: string }) {
   const [resume, setResume] = useState('');
   const [fork, setFork] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [quota, setQuota] = useState<FetchState<WindowInfo | null>>(FETCH_LOADING);
-
-  useEffect(() => {
-    fetch('/api/usage/estimate')
-      .then((r) =>
-        r.json().then((d: { currentWindow: WindowInfo | null }) => setQuota(fetchStateFromResponse(r.ok, d.currentWindow))),
-      )
-      .catch(() => setQuota(FETCH_ERROR));
-  }, []);
+  const quota = useRead<{ currentWindow: WindowInfo | null }>('/api/usage/estimate');
 
   useEffect(() => () => wsRef.current?.close(), []);
 
@@ -61,7 +55,7 @@ export function Chat({ project }: { project: string }) {
       const body: Record<string, string | boolean> = { projectDir: project };
       if (resume.trim().length > 0) body['resume'] = resume.trim();
       if (fork) body['fork'] = true;
-      const r = await fetch('/api/chat/sessions', {
+      const r = await protectedFetch('/api/chat/sessions', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -73,6 +67,7 @@ export function Chat({ project }: { project: string }) {
       }
       const { wsTicket } = (await r.json()) as { sessionId: string; wsTicket: string };
       setState(initialChatUiState);
+      decidedToolsRef.current.clear();
       const ws = new WebSocket(chatWsUrl(wsTicket));
       ws.onopen = () => {
         setConnected(true);
@@ -83,8 +78,12 @@ export function Chat({ project }: { project: string }) {
         setConnecting(false);
       };
       ws.onmessage = (ev) => {
-        const event = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') as ChatServerEvent;
-        setState((s) => applyServerEvent(s, event));
+        try {
+          const event = JSON.parse(typeof ev.data === 'string' ? ev.data : '{}') as ChatServerEvent;
+          setState((s) => applyServerEvent(s, event));
+        } catch {
+          setNote(t('chatInvalidEvent'));
+        }
       };
       wsRef.current = ws;
       setNote(null);
@@ -96,16 +95,27 @@ export function Chat({ project }: { project: string }) {
 
   function send(): void {
     const ws = wsRef.current;
-    if (ws === null || ws.readyState !== WebSocket.OPEN || input.trim().length === 0) return;
-    ws.send(JSON.stringify({ type: 'user_message', text: input }));
-    setState((s) => appendUserMessage(s, input));
+    const message = inputRef.current;
+    if (ws === null || ws.readyState !== WebSocket.OPEN || message.trim().length === 0) return;
+    inputRef.current = '';
+    ws.send(JSON.stringify({ type: 'user_message', text: message }));
+    setState((s) => appendUserMessage(s, message));
     setInput('');
   }
 
   function decide(toolUseId: string, decision: 'allow' | 'deny'): void {
-    wsRef.current?.send(JSON.stringify({ type: 'tool_decision', toolUseId, decision }));
+    const ws = wsRef.current;
+    if (ws === null || ws.readyState !== WebSocket.OPEN || decidedToolsRef.current.has(toolUseId)) return;
+    decidedToolsRef.current.add(toolUseId);
+    ws.send(JSON.stringify({ type: 'tool_decision', toolUseId, decision }));
     setState((s) => resolveApproval(s, toolUseId));
   }
+
+  const quotaData = quota.state.kind === 'data'
+    ? quota.state.value.currentWindow
+    : quota.state.kind === 'error'
+      ? quota.state.previous?.currentWindow ?? null
+      : null;
 
   return (
     <section aria-label={t('chatHeading')}>
@@ -118,10 +128,18 @@ export function Chat({ project }: { project: string }) {
       </p>
       <p role="status">
         <small>
+          {t('chatConnectionState')}{' '}
+          {connecting ? t('chatConnecting') : connected ? t('chatConnected') : t('chatDisconnected')} ·{' '}
           {t('chatQuotaLabel')}{' '}
-          {quota.kind === 'error' ? t('fetchUnavailable') : windowSummary(quota.kind === 'data' ? quota.value : null, Date.now())}
+          {windowSummary(quotaData, Date.now())}
         </small>
       </p>
+      {quota.state.kind === 'error' && (
+        <p role="alert">
+          {quota.state.stale ? t('consoleStaleAt', { time: quota.state.readAt ?? 'unknown' }) : t('fetchUnavailable')}{' '}
+          <button type="button" onClick={quota.retry}>{t('shellRetry')}</button>
+        </p>
+      )}
       {note !== null && <p role="alert">{note}</p>}
 
       {!connected && (
@@ -182,7 +200,10 @@ export function Chat({ project }: { project: string }) {
             <input
               aria-label={t('chatMessageAriaLabel')}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                inputRef.current = e.target.value;
+                setInput(e.target.value);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') send();
               }}

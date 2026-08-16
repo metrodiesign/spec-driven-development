@@ -1,5 +1,5 @@
 # Autonomous Loop Engineering — Implementation Spec
-### เอกสารเดียวสำหรับ AI Agents ที่จะ Implement ระบบ (Claude · Codex · GLM-5.2 · โมเดลใดที่ผ่าน Conformance)
+### เอกสารเดียวสำหรับ AI Agents ที่จะ Implement ระบบ (Claude · Codex · GLM-5.3 · โมเดลใดที่ผ่าน Conformance)
 
 > **การใช้เอกสารนี้:** ไฟล์นี้คือ spec ฉบับ implement — มีเฉพาะเนื้อหา normative **เมื่อส่งงานให้ agent ให้ใช้ไฟล์นี้ไฟล์เดียว** ห้ามโหลดเอกสาร master/blueprint รุ่นก่อนเข้า context ร่วม (เอกสารเหล่านั้นเป็นบันทึกการวิเคราะห์สำหรับมนุษย์ — โหลดร่วมจะเกิดคำสั่งซ้ำซ้อน/ขัดกัน)
 >
@@ -166,8 +166,8 @@ P1 echo-schema · P2 propose-action (คืน action ไม่ใช่ prose) 
 |------|---------|--------------------------------|
 | Planner / Architect | reasoning, largeContext | Claude — fusion เปิดเสมอ (Phase 3) |
 | Implementer / Repair | codeProposal, structuredOutput | Codex |
-| Test Designer / Property Author | codeProposal | GLM-5.2 — **ต้องต่าง lineage กับ implementer** |
-| Reviewer / Diagnostician | reasoning, largeContext | Claude + GLM-5.2 ensemble |
+| Test Designer / Property Author | codeProposal | GLM-5.3 — **ต้องต่าง lineage กับ implementer** (เมื่อ adapter ผ่าน conformance P1–P8; ระหว่างนี้ใช้ Claude — สถานะจริงตาม unified spec §7.4, v1.11) |
+| Reviewer / Diagnostician | reasoning, largeContext | Claude + GLM-5.3 ensemble (context 1M — เมื่อ adapter พร้อม; ระหว่างนี้ Claude + Codex ตาม unified spec §7.4, v1.11) |
 | Verifier / Controller | — (ไม่ใช่โมเดล) | Ring 0 deterministic |
 Routing ตามลำดับ: capability match → health-aware (ข้าม breaker-open) → injection-aware (context มี low-trust content ห้ามไปโมเดล susceptibility สูง) → cost → outcome-weighted (shadow ก่อนเสมอ); `on_repeated_failure: switch_to_next_eligible`
 
@@ -183,7 +183,7 @@ Pipeline เดียวทุก artifact: **PANEL** (N ตัว อิสร�
 Entry points: virtual `fusion:*` adapter ใน registry / policy trigger (planning เสมอ, L2+, repeated failure) / agent เรียกเองผ่าน `fusion.deliberate` (budget cap + depth ≤1) — ต้นทุน ~4–5× ต่อจุดเปิด: เปิดเฉพาะที่ calibration พิสูจน์ uplift และลองความหลากหลายราคาถูก (self-panel ต่าง seed/temp) ก่อนจ่ายค่าโมเดลต่างค่าย
 
 ## §6 Ring 2 — Adapters
-`adapters/anthropic.ts` (Claude) · `adapters/codex.ts` (Codex — sandbox ของมันเป็น execution backend *ทางเลือก* ไม่ใช่ข้อบังคับ) · `adapters/openai-compatible.ts` (GLM-5.2 และโมเดล compat อื่น; ใช้กับ aggregator เช่น OpenRouter ได้ แต่ aggregator = ผู้ประมวลผลข้อมูลอีกราย → `provider_data_policy` ต้องระบุ path ที่อนุญาต) · `adapters/_template.ts` — ทุกตัวบาง แปล wire format เท่านั้น
+`adapters/anthropic.ts` (Claude) · `adapters/codex.ts` (Codex — sandbox ของมันเป็น execution backend *ทางเลือก* ไม่ใช่ข้อบังคับ) · `adapters/openai-compatible.ts` (GLM-5.3 และโมเดล compat อื่น — access มีแล้ว 2026-08-14, spec งาน `.ai/specs/glm-5-3-adapter/`; ใช้กับ aggregator เช่น OpenRouter ได้ แต่ aggregator = ผู้ประมวลผลข้อมูลอีกราย → `provider_data_policy` ต้องระบุ path ที่อนุญาต) · `adapters/_template.ts` — ทุกตัวบาง แปล wire format เท่านั้น
 
 ## §7 Loops
 
@@ -327,7 +327,7 @@ project/
   เขียน scenarios เป็น failing tests *ก่อน* แล้ว implement ให้ผ่าน — **ก่อนต่อโมเดลจริงใด ๆ**
 - **Phase 1 — หนึ่ง Adapter + Calibration แรก:** AAL + conformance P1–P8 + adapter ตัวแรก + context builder รุ่นแรก + approval package → supervised loop หนึ่งฟีเจอร์ → **วัดเลขครั้งแรก**
 - **Phase 2 — Semi-autonomous + Survivability:** security plane เต็ม (canary, dep-policy, data-govern), breaker/degraded mode, hypothesis repair, auto-merge L0–L1 + sampling audit, meta-governance, steering
-- **Phase 3 — Multi-model + Fusion:** adapters ครบ (Claude/Codex/GLM-5.2), fusion plane + วัด decorrelation/uplift, merge queue + auditor, outcome routing shadow
+- **Phase 3 — Multi-model + Fusion:** adapters (Claude/Codex — GLM-5.3 เปิดงานภายหลังตาม unified spec v1.11: spec `.ai/specs/glm-5-3-adapter/`), fusion plane + วัด decorrelation/uplift, merge queue + auditor, outcome routing shadow
 - **Phase 4 — Continuous:** issue intake, canary deploy, automated rollback, lessons active, outcome routing active เมื่อ shadow พิสูจน์แล้ว
 
 ## §12 Implementation Constraints (ข้อบังคับปิดท้าย)

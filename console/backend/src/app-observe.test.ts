@@ -56,5 +56,7 @@ test('GET /api/sessions/search requires q + project, returns results (REQ-20.1)'
     const ok = await app.inject({ method: 'GET', url: '/api/sessions/search?q=anything&project=app', headers: GOOD_HOST });
     assert.equal(ok.statusCode, 200);
     assert.ok(Array.isArray((ok.json() as { results: unknown[] }).results));
+    assert.equal((await app.inject({ method: 'GET', url: '/api/sessions/search?q=anything&project=app&limit=0', headers: GOOD_HOST })).statusCode, 400);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/sessions/search?q=anything&project=app&cursor=bad', headers: GOOD_HOST })).statusCode, 400);
   } finally { await app.close(); }
 });
