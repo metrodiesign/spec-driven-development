@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "mode": "off",
+  "checkpoint": {
+    "autoApprove": false
+  },
+  "approvals": {
+    "humanReviewers": [
+      "mirrordeco"
+    ]
+  },
+  "workflow": {
+    "enabled": false
+  },
+  "hooks": {
+    "enabled": false,
+    "definitions": []
+  },
+  "projectGuidance": {
+    "enabled": false,
+    "descriptors": [
+      {
+        "id": "foundation-product",
+        "rootId": "workspace",
+        "relativePath": ".ai/shared/PROJECT_CONTEXT.md",
+        "scope": "workspace",
+        "mode": "always",
+        "priority": 100,
+        "description": "บริบทผลิตภัณฑ์กลาง",
+        "required": true,
+        "maxBytes": 16384,
+        "foundationId": "product"
+      },
+      {
+        "id": "foundation-technology",
+        "rootId": "workspace",
+        "relativePath": ".ai/shared/CODING_STANDARDS.md",
+        "scope": "workspace",
+        "mode": "always",
+        "priority": 100,
+        "description": "มาตรฐานเทคโนโลยีและการเขียนโค้ด",
+        "required": true,
+        "maxBytes": 16384,
+        "foundationId": "technology"
+      },
+      {
+        "id": "foundation-structure",
+        "rootId": "workspace",
+        "relativePath": ".ai/shared/ARCHITECTURE.md",
+        "scope": "workspace",
+        "mode": "always",
+        "priority": 100,
+        "description": "โครงสร้างและขอบเขตสถาปัตยกรรม",
+        "required": true,
+        "maxBytes": 16384,
+        "foundationId": "structure"
+      }
+    ]
+  },
+  "skills": {
+    "enabled": false,
+    "catalog": []
+  },
+  "programs": {
+    "enabled": false,
+    "catalog": []
+  },
+  "parity": {
+    "targetRules": []
+  },
+  "permissions": {
+    "enabled": true,
+    "rules": []
+  },
+  "limits": {
+    "maxConfigBytes": 1048576,
+    "maxDescriptors": 1000,
+    "maxGlobChars": 256,
+    "instructionBudgetBytes": 65536,
+    "instructionSourceBytes": 16384,
+    "maxParallelTasks": 1,
+    "maxDecisionItems": 1000,
+    "maxDecisionTextBytes": 256,
+    "maxDecisionRecordBytes": 262144
+  }
+}

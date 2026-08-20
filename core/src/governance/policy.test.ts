@@ -4,16 +4,19 @@
 // flaky_quarantine proposal (never auto), ci-fixture seeding.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
+  BOOTSTRAP_POLICY_RATIONALE,
+  POLICY_FILES,
   approveProposal,
   applyGovernanceApproval,
   computePolicySnapshot,
   ensureGovernanceApproved,
+  governanceProposalId,
   listPendingProposals,
   pendingQuarantines,
   proposeFlakyQuarantine,
@@ -21,10 +24,58 @@ import {
   readGovernanceLog,
   seedFixtureSnapshot,
   snapshotHash,
+  validateBootstrapGovernanceAppend,
+  validateBootstrapPolicyBytes,
 } from './policy.ts';
 import type { Clock } from '../types.ts';
 
 const clock: Clock = { now: () => 1_700_000_000_000 };
+
+interface B0VerifierModule {
+  AuthenticatedReadApi: new (input: {
+    repository: { fullName: string };
+    token: string;
+    fetchImpl: () => Promise<never>;
+  }) => { get(path: string): Promise<unknown> };
+  expectedCiWorkflow(base: Uint8Array): Uint8Array;
+  selectReviewBinding(input: {
+    pull: unknown;
+    reviews: unknown[];
+    accountsByLogin: Record<string, unknown>;
+    policyReviewers: string[];
+  }): unknown;
+  selectRulesetBinding(details: unknown[]): unknown;
+  verifyCiWorkflowBytes(base: Uint8Array, head: Uint8Array): void;
+  verifyExactOperations(files: unknown[]): void;
+  verifyPassedB0Check(
+    api: { repository: { owner: string; repo: string }; get(path: string, options?: unknown): Promise<unknown> },
+    headSha: string,
+    review: unknown,
+    integrationId: number | null,
+  ): Promise<unknown>;
+}
+
+async function b0Verifier(): Promise<B0VerifierModule> {
+  const path = String(new URL('../../../.ai/bin/check-b0-bootstrap.mjs', import.meta.url));
+  return await import(path) as unknown as B0VerifierModule;
+}
+
+function line(value: unknown): string {
+  return `${JSON.stringify(value)}\n`;
+}
+
+function bootstrapGovernanceFixture(afterHash: string): { base: Buffer; head: Buffer } {
+  const oldHash = '1'.repeat(64);
+  const oldId = governanceProposalId('policy_change', null, oldHash);
+  const base = Buffer.from(
+    line({ type: 'GOVERNANCE_PROPOSED', ts: '2026-01-01T00:00:00.000Z', id: oldId, kind: 'policy_change', beforeHash: null, afterHash: oldHash, rationale: 'old' })
+      + line({ type: 'GOVERNANCE_CHANGE', ts: '2026-01-01T00:00:01.000Z', id: oldId, kind: 'policy_change', beforeHash: null, afterHash: oldHash, rationale: 'old', decidedBy: 'human' }),
+  );
+  const id = governanceProposalId('policy_change', oldHash, afterHash);
+  const appended = line({ type: 'GOVERNANCE_PROPOSED', ts: '2026-08-20T05:00:00.000Z', id, kind: 'policy_change', beforeHash: oldHash, afterHash, rationale: BOOTSTRAP_POLICY_RATIONALE })
+    + line({ type: 'GOVERNANCE_CHANGE', ts: '2026-08-20T05:00:01.000Z', id, kind: 'policy_change', beforeHash: oldHash, afterHash, rationale: BOOTSTRAP_POLICY_RATIONALE, decidedBy: 'human' });
+  return { base, head: Buffer.concat([base, Buffer.from(appended)]) };
+}
 
 /** A policy dir with a couple of the REQ-9.1 policy files written. */
 function policyDir(): string {
@@ -361,4 +412,210 @@ test('snapshot is deterministic and content-addressed (REQ-9.1)', () => {
   } finally {
     cleanup(dir);
   }
+});
+
+test('B0 policy is canonical, off, manual-only, and names one real reviewer', () => {
+  assert.deepEqual(POLICY_FILES, [
+    'gate-ladder.json',
+    'security-plane.json',
+    'automation.json',
+    'provider-data-policy.json',
+    'routing.json',
+    'fusion-profiles.json',
+    'pr-quality-gate.json',
+    'agent-capabilities.json',
+  ]);
+  const bytes = readFileSync(new URL('../../../.ai/policies/agent-capabilities.json', import.meta.url));
+  const result = validateBootstrapPolicyBytes(bytes);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.humanReviewers, ['mirrordeco']);
+
+  const document = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+  const invalid = [
+    { ...document, mode: 'enforce' },
+    { ...document, checkpoint: { autoApprove: true } },
+    { ...document, approvals: { humanReviewers: [] } },
+    { ...document, approvals: { humanReviewers: ['mirrordeco', 'MirrorDeco'] } },
+    { ...document, extraAuthority: true },
+  ];
+  for (const value of invalid) {
+    assert.equal(validateBootstrapPolicyBytes(Buffer.from(`${JSON.stringify(value, null, 2)}\n`)).ok, false);
+  }
+  assert.deepEqual(
+    validateBootstrapPolicyBytes(Buffer.from(JSON.stringify(document))),
+    { ok: false, reason: 'POLICY_NOT_CANONICAL' },
+  );
+});
+
+test('B0 governance append accepts one exact pair and rejects prefix, chain, hash, duplicate, and extra records', () => {
+  const afterHash = '2'.repeat(64);
+  const { base, head } = bootstrapGovernanceFixture(afterHash);
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: head, expectedAfterHash: afterHash }).ok, true);
+
+  const prefixMutation = Buffer.from(head);
+  prefixMutation[0] = prefixMutation[0] === 123 ? 91 : 123;
+  assert.deepEqual(
+    validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: prefixMutation, expectedAfterHash: afterHash }),
+    { ok: false, reason: 'LOG_PREFIX_MUTATED' },
+  );
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: head, expectedAfterHash: '3'.repeat(64) }).ok, false);
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: Buffer.concat([head, Buffer.from(line({ id: 'extra' }))]), expectedAfterHash: afterHash }).ok, false);
+
+  const changed = head.toString('utf8').replace(`"beforeHash":"${'1'.repeat(64)}"`, '"beforeHash":null');
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: Buffer.from(changed), expectedAfterHash: afterHash }).ok, false);
+  const duplicateBase = Buffer.concat([base, Buffer.from(base.subarray(0, base.indexOf(10) + 1))]);
+  assert.deepEqual(
+    validateBootstrapGovernanceAppend({ baseBytes: duplicateBase, headBytes: Buffer.concat([duplicateBase, head.subarray(base.length)]), expectedAfterHash: afterHash }),
+    { ok: false, reason: 'LOG_DUPLICATE_ID' },
+  );
+});
+
+function validRuleset(): Record<string, unknown> {
+  return {
+    id: 20737973,
+    name: 'protected-main-develop',
+    target: 'branch',
+    source: 'owner/repo',
+    source_type: 'Repository',
+    enforcement: 'active',
+    updated_at: '2026-08-20T04:00:00.000Z',
+    conditions: { ref_name: { exclude: [], include: ['refs/heads/main', 'refs/heads/develop'] } },
+    rules: [
+      {
+        type: 'pull_request',
+        parameters: {
+          required_approving_review_count: 1,
+          dismiss_stale_reviews_on_push: true,
+          require_last_push_approval: true,
+          allowed_merge_methods: ['squash'],
+        },
+      },
+      {
+        type: 'required_status_checks',
+        parameters: {
+          strict_required_status_checks_policy: true,
+          do_not_enforce_on_create: false,
+          required_status_checks: [{ context: 'B0 bootstrap authority' }],
+        },
+      },
+    ],
+  };
+}
+
+test('B0 external ruleset requires review, last-push separation, stale dismissal, exact check, and no bypass', async () => {
+  const verifier = await b0Verifier();
+  assert.doesNotThrow(() => verifier.selectRulesetBinding([validRuleset()]));
+  for (const mutate of [
+    (value: Record<string, unknown>): void => { value.enforcement = 'evaluate'; },
+    (value: Record<string, unknown>): void => { value.bypass_actors = [{ actor_id: 1 }]; },
+    (value: Record<string, unknown>): void => { ((value.rules as Record<string, unknown>[])[0]?.parameters as Record<string, unknown>).required_approving_review_count = 0; },
+    (value: Record<string, unknown>): void => { ((value.rules as Record<string, unknown>[])[0]?.parameters as Record<string, unknown>).require_last_push_approval = false; },
+    (value: Record<string, unknown>): void => { ((value.rules as Record<string, unknown>[])[0]?.parameters as Record<string, unknown>).dismiss_stale_reviews_on_push = false; },
+    (value: Record<string, unknown>): void => { (((value.rules as Record<string, unknown>[])[1]?.parameters as Record<string, unknown>).required_status_checks as Record<string, unknown>[])[0] = { context: 'alternate' }; },
+  ]) {
+    const value = structuredClone(validRuleset());
+    mutate(value);
+    assert.throws(() => verifier.selectRulesetBinding([value]));
+  }
+});
+
+test('B0 review authority rejects author, stale head, bot, non-User, and missing approval', async () => {
+  const verifier = await b0Verifier();
+  const head = 'a'.repeat(40);
+  const pull = {
+    number: 7,
+    head: { sha: head },
+    base: { ref: 'develop' },
+    user: { login: 'author' },
+  };
+  const review = {
+    id: 9,
+    state: 'APPROVED',
+    commit_id: head,
+    submitted_at: '2026-08-20T05:00:00.000Z',
+    user: { login: 'mirrordeco', type: 'User' },
+  };
+  const valid = {
+    pull,
+    reviews: [review],
+    accountsByLogin: { mirrordeco: { login: 'mirrordeco', type: 'User', permissions: { push: true } } },
+    policyReviewers: ['mirrordeco'],
+  };
+  assert.doesNotThrow(() => verifier.selectReviewBinding(valid));
+  assert.doesNotThrow(() => verifier.selectReviewBinding({ ...valid, reviews: [review, { ...review, id: 10, state: 'COMMENTED' }] }));
+  assert.throws(() => verifier.selectReviewBinding({ ...valid, pull: { ...pull, user: { login: 'mirrordeco' } } }));
+  assert.throws(() => verifier.selectReviewBinding({ ...valid, reviews: [{ ...review, commit_id: 'b'.repeat(40) }] }));
+  assert.throws(() => verifier.selectReviewBinding({ ...valid, reviews: [{ ...review, user: { login: 'release-bot', type: 'User' } }], accountsByLogin: { 'release-bot': { login: 'release-bot', type: 'User' } }, policyReviewers: ['release-bot'] }));
+  assert.throws(() => verifier.selectReviewBinding({ ...valid, accountsByLogin: { mirrordeco: { login: 'mirrordeco', type: 'Bot', permissions: { push: true } } } }));
+  assert.throws(() => verifier.selectReviewBinding({ ...valid, accountsByLogin: { mirrordeco: { login: 'mirrordeco', type: 'User', permissions: { push: false } } } }));
+  assert.throws(() => verifier.selectReviewBinding({ ...valid, reviews: [{ ...review, state: 'CHANGES_REQUESTED' }] }));
+});
+
+test('B0 exact file operations and CI composition reject seventh paths, renames, mutation, and replay', async () => {
+  const verifier = await b0Verifier();
+  const files = [
+    ['.ai/policies/agent-capabilities.json', 'added'],
+    ['core/src/governance/policy.ts', 'modified'],
+    ['core/src/governance/policy.test.ts', 'modified'],
+    ['.ai/governance/events.jsonl', 'modified'],
+    ['.ai/bin/check-b0-bootstrap.mjs', 'added'],
+    ['.github/workflows/ci.yml', 'modified'],
+  ].map(([filename, status]) => ({ filename, status }));
+  assert.doesNotThrow(() => verifier.verifyExactOperations(files));
+  assert.throws(() => verifier.verifyExactOperations([...files, { filename: 'seventh', status: 'added' }]));
+  assert.throws(() => verifier.verifyExactOperations(files.map((file, index) => index === 0 ? { ...file, previous_filename: 'old' } : file)));
+
+  const base = Buffer.from('name: CI\npermissions:\n  contents: read\njobs:\n  existing:\n    runs-on: ubuntu-latest\n');
+  const head = verifier.expectedCiWorkflow(base);
+  assert.doesNotThrow(() => verifier.verifyCiWorkflowBytes(base, head));
+  assert.throws(() => verifier.verifyCiWorkflowBytes(base, Buffer.concat([head, Buffer.from('# mutation\n')])));
+  assert.throws(() => verifier.expectedCiWorkflow(head));
+});
+
+test('B0 authenticated API fails closed when network authority is unavailable', async () => {
+  const verifier = await b0Verifier();
+  const api = new verifier.AuthenticatedReadApi({
+    repository: { fullName: 'owner/repo' },
+    token: 'test-token',
+    fetchImpl: async () => { throw new Error('offline'); },
+  });
+  await assert.rejects(api.get('/rulesets'), (error: unknown) => (
+    error instanceof Error && error.message.startsWith('API_UNAVAILABLE:')
+  ));
+});
+
+test('B0 passed status binds exact workflow, rerun, repository, app, head, and review time', async () => {
+  const verifier = await b0Verifier();
+  const head = 'a'.repeat(40);
+  const review = { submitted_at: '2026-08-20T05:00:00.000Z' };
+  const check = {
+    id: 99,
+    name: 'B0 bootstrap authority',
+    head_sha: head,
+    status: 'completed',
+    conclusion: 'success',
+    app: { id: 15368, slug: 'github-actions' },
+    started_at: '2026-08-20T05:01:00.000Z',
+    details_url: 'https://github.com/owner/repo/actions/runs/55/job/66',
+  };
+  const workflow = {
+    id: 55,
+    name: 'CI',
+    path: '.github/workflows/ci.yml',
+    event: 'pull_request',
+    head_sha: head,
+    run_attempt: 2,
+    run_started_at: '2026-08-20T05:01:00.000Z',
+  };
+  const api = (checkValue: unknown, workflowValue: unknown) => ({
+    repository: { owner: 'owner', repo: 'repo' },
+    get: async (path: string): Promise<unknown> => path.startsWith('/commits/')
+      ? { check_runs: [checkValue] }
+      : workflowValue,
+  });
+  await assert.doesNotReject(verifier.verifyPassedB0Check(api(check, workflow), head, review, 15368));
+  await assert.rejects(verifier.verifyPassedB0Check(api({ ...check, app: { id: 1, slug: 'other' } }, workflow), head, review, 15368));
+  await assert.rejects(verifier.verifyPassedB0Check(api({ ...check, details_url: 'https://github.com/other/repo/actions/runs/55/job/66' }, workflow), head, review, 15368));
+  await assert.rejects(verifier.verifyPassedB0Check(api(check, { ...workflow, path: '.github/workflows/other.yml' }), head, review, 15368));
+  await assert.rejects(verifier.verifyPassedB0Check(api(check, { ...workflow, run_attempt: 1 }), head, review, 15368));
 });

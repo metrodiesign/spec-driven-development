@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isDeepStrictEqual, TextDecoder } from 'node:util';
 
 import type { Clock } from '../types.ts';
 
@@ -31,10 +32,46 @@ export const POLICY_FILES = [
   'routing.json',
   'fusion-profiles.json',
   'pr-quality-gate.json',
+  'agent-capabilities.json',
 ] as const;
 
 /** sha256 hex is 64 chars, so this 6-char sentinel can never collide with a real file hash. */
 const ABSENT = 'absent';
+
+export const BOOTSTRAP_POLICY_RATIONALE = 'bootstrap reviewer authority policy snapshot';
+const BOOTSTRAP_POLICY_MAX_BYTES = 1_048_576;
+
+export type BootstrapPolicyValidationResult =
+  | { ok: true; document: Record<string, unknown>; humanReviewers: readonly string[] }
+  | {
+      ok: false;
+      reason:
+        | 'POLICY_TOO_LARGE'
+        | 'POLICY_NOT_UTF8'
+        | 'POLICY_INVALID_JSON'
+        | 'POLICY_INVALID_REVIEWERS'
+        | 'POLICY_INVALID_SHAPE'
+        | 'POLICY_NOT_CANONICAL';
+    };
+
+export type BootstrapGovernanceAppendResult =
+  | {
+      ok: true;
+      beforeHash: string | null;
+      afterHash: string;
+      appendedRecordIds: readonly [string, string];
+    }
+  | {
+      ok: false;
+      reason:
+        | 'LOG_PREFIX_MUTATED'
+        | 'LOG_MALFORMED'
+        | 'LOG_DUPLICATE_ID'
+        | 'LOG_APPEND_COUNT'
+        | 'LOG_APPEND_SHAPE'
+        | 'LOG_CHAIN_BREAK'
+        | 'LOG_SNAPSHOT_MISMATCH';
+    };
 
 export interface PolicySnapshot {
   files: { path: string; sha256: string }[];
@@ -93,6 +130,252 @@ export function snapshotHash(snapshot: PolicySnapshot): string {
   return sha256(canonical);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function canonicalBootstrapPolicy(humanReviewers: readonly string[]): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    mode: 'off',
+    checkpoint: { autoApprove: false },
+    approvals: { humanReviewers: [...humanReviewers] },
+    workflow: { enabled: false },
+    hooks: { enabled: false, definitions: [] },
+    projectGuidance: {
+      enabled: false,
+      descriptors: [
+        {
+          id: 'foundation-product',
+          rootId: 'workspace',
+          relativePath: '.ai/shared/PROJECT_CONTEXT.md',
+          scope: 'workspace',
+          mode: 'always',
+          priority: 100,
+          description: 'บริบทผลิตภัณฑ์กลาง',
+          required: true,
+          maxBytes: 16_384,
+          foundationId: 'product',
+        },
+        {
+          id: 'foundation-technology',
+          rootId: 'workspace',
+          relativePath: '.ai/shared/CODING_STANDARDS.md',
+          scope: 'workspace',
+          mode: 'always',
+          priority: 100,
+          description: 'มาตรฐานเทคโนโลยีและการเขียนโค้ด',
+          required: true,
+          maxBytes: 16_384,
+          foundationId: 'technology',
+        },
+        {
+          id: 'foundation-structure',
+          rootId: 'workspace',
+          relativePath: '.ai/shared/ARCHITECTURE.md',
+          scope: 'workspace',
+          mode: 'always',
+          priority: 100,
+          description: 'โครงสร้างและขอบเขตสถาปัตยกรรม',
+          required: true,
+          maxBytes: 16_384,
+          foundationId: 'structure',
+        },
+      ],
+    },
+    skills: { enabled: false, catalog: [] },
+    programs: { enabled: false, catalog: [] },
+    parity: { targetRules: [] },
+    permissions: { enabled: true, rules: [] },
+    limits: {
+      maxConfigBytes: 1_048_576,
+      maxDescriptors: 1_000,
+      maxGlobChars: 256,
+      instructionBudgetBytes: 65_536,
+      instructionSourceBytes: 16_384,
+      maxParallelTasks: 1,
+      maxDecisionItems: 1_000,
+      maxDecisionTextBytes: 256,
+      maxDecisionRecordBytes: 262_144,
+    },
+  };
+}
+
+function validReviewerLogin(value: unknown): value is string {
+  return (
+    typeof value === 'string'
+    && value === value.trim()
+    && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value)
+    && !value.includes('--')
+    && !value.includes('<')
+    && !value.includes('>')
+    && !value.includes('*')
+  );
+}
+
+/** Strict one-time bootstrap policy parser. Runtime policy loading is introduced after bootstrap. */
+export function validateBootstrapPolicyBytes(bytes: Uint8Array): BootstrapPolicyValidationResult {
+  if (bytes.byteLength > BOOTSTRAP_POLICY_MAX_BYTES) return { ok: false, reason: 'POLICY_TOO_LARGE' };
+
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return { ok: false, reason: 'POLICY_NOT_UTF8' };
+  }
+
+  let document: unknown;
+  try {
+    document = JSON.parse(text) as unknown;
+  } catch {
+    return { ok: false, reason: 'POLICY_INVALID_JSON' };
+  }
+  if (!isRecord(document)) return { ok: false, reason: 'POLICY_INVALID_SHAPE' };
+
+  const approvals = document['approvals'];
+  const reviewers = isRecord(approvals) ? approvals['humanReviewers'] : undefined;
+  if (!Array.isArray(reviewers) || reviewers.length === 0 || !reviewers.every(validReviewerLogin)) {
+    return { ok: false, reason: 'POLICY_INVALID_REVIEWERS' };
+  }
+  const normalized = new Set(reviewers.map((reviewer) => reviewer.toLowerCase()));
+  if (normalized.size !== reviewers.length) return { ok: false, reason: 'POLICY_INVALID_REVIEWERS' };
+
+  const expected = canonicalBootstrapPolicy(reviewers);
+  if (!isDeepStrictEqual(document, expected)) return { ok: false, reason: 'POLICY_INVALID_SHAPE' };
+  if (text !== `${JSON.stringify(expected, null, 2)}\n`) return { ok: false, reason: 'POLICY_NOT_CANONICAL' };
+  return { ok: true, document, humanReviewers: reviewers };
+}
+
+function parseGovernanceLogBytes(bytes: Uint8Array): GovernanceRecord[] | null {
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  if (text !== '' && !text.endsWith('\n')) return null;
+  if (text === '') return [];
+  const lines = text.slice(0, -1).split('\n');
+  if (lines.some((line) => line === '')) return null;
+  try {
+    return lines.map((line) => JSON.parse(line) as GovernanceRecord);
+  } catch {
+    return null;
+  }
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
+}
+
+function validIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
+}
+
+/** Deterministic id used by normal governance and by the external bootstrap verifier. */
+export function governanceProposalId(
+  kind: GovernanceKind,
+  beforeHash: string | null,
+  afterHash: string,
+  taskId?: string,
+): string {
+  return `gov-${sha256([kind, beforeHash ?? 'null', afterHash, taskId ?? ''].join('\n')).slice(0, 16)}`;
+}
+
+/** Last accepted policy snapshot in append order. Other governance kinds never move it. */
+export function lastApprovedPolicyHash(records: readonly GovernanceRecord[]): string | null {
+  let hash: string | null = null;
+  for (const record of records) {
+    if (record.type === 'GOVERNANCE_CHANGE' && record.kind === 'policy_change') hash = record.afterHash;
+  }
+  return hash;
+}
+
+/** Validate the only two records bootstrap may append without trusting serialized claims. */
+export function validateBootstrapGovernanceAppend(input: {
+  baseBytes: Uint8Array;
+  headBytes: Uint8Array;
+  expectedAfterHash: string;
+}): BootstrapGovernanceAppendResult {
+  const base = Buffer.from(input.baseBytes);
+  const head = Buffer.from(input.headBytes);
+  if (head.byteLength <= base.byteLength || !head.subarray(0, base.byteLength).equals(base)) {
+    return { ok: false, reason: 'LOG_PREFIX_MUTATED' };
+  }
+
+  const baseRecords = parseGovernanceLogBytes(base);
+  const headRecords = parseGovernanceLogBytes(head);
+  if (baseRecords === null || headRecords === null) return { ok: false, reason: 'LOG_MALFORMED' };
+
+  const idStates = new Map<string, { proposed: boolean; changed: boolean }>();
+  for (const record of baseRecords) {
+    if (!isRecord(record) || typeof record.id !== 'string') return { ok: false, reason: 'LOG_MALFORMED' };
+    const state = idStates.get(record.id) ?? { proposed: false, changed: false };
+    if (record.type === 'GOVERNANCE_PROPOSED') {
+      if (state.proposed) return { ok: false, reason: 'LOG_DUPLICATE_ID' };
+      state.proposed = true;
+    } else if (record.type === 'GOVERNANCE_CHANGE') {
+      if (state.changed || !state.proposed) return { ok: false, reason: 'LOG_DUPLICATE_ID' };
+      state.changed = true;
+    } else {
+      return { ok: false, reason: 'LOG_MALFORMED' };
+    }
+    idStates.set(record.id, state);
+  }
+
+  const appended = headRecords.slice(baseRecords.length);
+  if (headRecords.length !== baseRecords.length + 2 || appended.length !== 2) {
+    return { ok: false, reason: 'LOG_APPEND_COUNT' };
+  }
+  const proposed = appended[0];
+  const changed = appended[1];
+  if (!isRecord(proposed) || !isRecord(changed)) return { ok: false, reason: 'LOG_APPEND_SHAPE' };
+  if (
+    !hasExactKeys(proposed, ['type', 'ts', 'id', 'kind', 'beforeHash', 'afterHash', 'rationale'])
+    || !hasExactKeys(changed, ['type', 'ts', 'id', 'kind', 'beforeHash', 'afterHash', 'rationale', 'decidedBy'])
+    || proposed.type !== 'GOVERNANCE_PROPOSED'
+    || changed.type !== 'GOVERNANCE_CHANGE'
+    || proposed.kind !== 'policy_change'
+    || changed.kind !== 'policy_change'
+    || changed.decidedBy !== 'human'
+    || !validIsoTimestamp(proposed.ts)
+    || !validIsoTimestamp(changed.ts)
+    || proposed.rationale !== BOOTSTRAP_POLICY_RATIONALE
+    || changed.rationale !== BOOTSTRAP_POLICY_RATIONALE
+    || Date.parse(changed.ts) < Date.parse(proposed.ts)
+  ) {
+    return { ok: false, reason: 'LOG_APPEND_SHAPE' };
+  }
+
+  const beforeHash = lastApprovedPolicyHash(baseRecords);
+  const expectedId = governanceProposalId('policy_change', beforeHash, input.expectedAfterHash);
+  if (
+    proposed.beforeHash !== beforeHash
+    || changed.beforeHash !== beforeHash
+    || proposed.id !== expectedId
+    || changed.id !== expectedId
+    || idStates.has(expectedId)
+  ) {
+    return idStates.has(expectedId)
+      ? { ok: false, reason: 'LOG_DUPLICATE_ID' }
+      : { ok: false, reason: 'LOG_CHAIN_BREAK' };
+  }
+  if (proposed.afterHash !== input.expectedAfterHash || changed.afterHash !== input.expectedAfterHash) {
+    return { ok: false, reason: 'LOG_SNAPSHOT_MISMATCH' };
+  }
+
+  return {
+    ok: true,
+    beforeHash,
+    afterHash: input.expectedAfterHash,
+    appendedRecordIds: [expectedId, expectedId],
+  };
+}
+
 export function readGovernanceLog(logPath: string): GovernanceRecord[] {
   if (!existsSync(logPath)) return [];
   return readFileSync(logPath, 'utf8')
@@ -112,16 +395,12 @@ function nowIso(clock: Clock): string {
 
 /** Deterministic id — re-proposing the same change yields the same id (idempotent, no RNG). */
 function proposalId(kind: GovernanceKind, beforeHash: string | null, afterHash: string, taskId?: string): string {
-  return `gov-${sha256([kind, beforeHash ?? 'null', afterHash, taskId ?? ''].join('\n')).slice(0, 16)}`;
+  return governanceProposalId(kind, beforeHash, afterHash, taskId);
 }
 
 /** The last APPROVED policy snapshot hash (flaky_quarantine changes never move it). */
 function lastApprovedHash(records: GovernanceRecord[]): string | null {
-  let hash: string | null = null;
-  for (const r of records) {
-    if (r.type === 'GOVERNANCE_CHANGE' && r.kind === 'policy_change') hash = r.afterHash;
-  }
-  return hash;
+  return lastApprovedPolicyHash(records);
 }
 
 /** Proposals with no matching GOVERNANCE_CHANGE yet. */
