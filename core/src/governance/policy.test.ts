@@ -4,16 +4,19 @@
 // flaky_quarantine proposal (never auto), ci-fixture seeding.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
+  BOOTSTRAP_POLICY_RATIONALE,
+  POLICY_FILES,
   approveProposal,
   applyGovernanceApproval,
   computePolicySnapshot,
   ensureGovernanceApproved,
+  governanceProposalId,
   listPendingProposals,
   pendingQuarantines,
   proposeFlakyQuarantine,
@@ -21,10 +24,58 @@ import {
   readGovernanceLog,
   seedFixtureSnapshot,
   snapshotHash,
+  validateBootstrapGovernanceAppend,
+  validateBootstrapPolicyBytes,
 } from './policy.ts';
 import type { Clock } from '../types.ts';
 
 const clock: Clock = { now: () => 1_700_000_000_000 };
+
+interface B0VerifierModule {
+  AuthenticatedReadApi: new (input: {
+    repository: { fullName: string };
+    token: string;
+    fetchImpl: () => Promise<never>;
+  }) => { get(path: string): Promise<unknown> };
+  expectedCiWorkflow(base: Uint8Array): Uint8Array;
+  selectOperatorBinding(input: {
+    pull: unknown;
+    operatorAccount: unknown;
+    operatorGithubLogin: string;
+    requireMerged?: boolean;
+  }): unknown;
+  selectRulesetBinding(details: unknown[]): unknown;
+  verifyCiWorkflowBytes(base: Uint8Array, head: Uint8Array): void;
+  verifyExactOperations(files: unknown[]): void;
+  verifyRequiredChecks(
+    api: { repository: { owner: string; repo: string }; get(path: string, options?: unknown): Promise<unknown> },
+    headSha: string,
+    expectedChecks: { context: string; integrationId: number }[],
+    mergedAt: string,
+  ): Promise<unknown>;
+}
+
+async function b0Verifier(): Promise<B0VerifierModule> {
+  const path = String(new URL('../../../.ai/bin/check-b0-bootstrap.mjs', import.meta.url));
+  return await import(path) as unknown as B0VerifierModule;
+}
+
+function line(value: unknown): string {
+  return `${JSON.stringify(value)}\n`;
+}
+
+function bootstrapGovernanceFixture(afterHash: string): { base: Buffer; head: Buffer } {
+  const oldHash = '1'.repeat(64);
+  const oldId = governanceProposalId('policy_change', null, oldHash);
+  const base = Buffer.from(
+    line({ type: 'GOVERNANCE_PROPOSED', ts: '2026-01-01T00:00:00.000Z', id: oldId, kind: 'policy_change', beforeHash: null, afterHash: oldHash, rationale: 'old' })
+      + line({ type: 'GOVERNANCE_CHANGE', ts: '2026-01-01T00:00:01.000Z', id: oldId, kind: 'policy_change', beforeHash: null, afterHash: oldHash, rationale: 'old', decidedBy: 'human' }),
+  );
+  const id = governanceProposalId('policy_change', oldHash, afterHash);
+  const appended = line({ type: 'GOVERNANCE_PROPOSED', ts: '2026-08-20T05:00:00.000Z', id, kind: 'policy_change', beforeHash: oldHash, afterHash, rationale: BOOTSTRAP_POLICY_RATIONALE })
+    + line({ type: 'GOVERNANCE_CHANGE', ts: '2026-08-20T05:00:01.000Z', id, kind: 'policy_change', beforeHash: oldHash, afterHash, rationale: BOOTSTRAP_POLICY_RATIONALE, decidedBy: 'human' });
+  return { base, head: Buffer.concat([base, Buffer.from(appended)]) };
+}
 
 /** A policy dir with a couple of the REQ-9.1 policy files written. */
 function policyDir(): string {
@@ -361,4 +412,226 @@ test('snapshot is deterministic and content-addressed (REQ-9.1)', () => {
   } finally {
     cleanup(dir);
   }
+});
+
+test('B0 policy is canonical, off, manual-only, and names one governed operator', () => {
+  assert.deepEqual(POLICY_FILES, [
+    'gate-ladder.json',
+    'security-plane.json',
+    'automation.json',
+    'provider-data-policy.json',
+    'routing.json',
+    'fusion-profiles.json',
+    'pr-quality-gate.json',
+    'agent-capabilities.json',
+  ]);
+  const bytes = readFileSync(new URL('../../../.ai/policies/agent-capabilities.json', import.meta.url));
+  const result = validateBootstrapPolicyBytes(bytes);
+  assert.equal(result.ok, true);
+  if (!result.ok) throw new Error('unreachable');
+  assert.equal(result.operatorGithubLogin, 'metrodiesign');
+
+  const document = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+  const invalid = [
+    { ...document, mode: 'enforce' },
+    { ...document, checkpoint: { autoApprove: true } },
+    { ...document, governance: { mode: 'single-operator', operatorGithubLogin: '', requireIndependentGithubReview: false } },
+    { ...document, governance: { mode: 'multi-operator', operatorGithubLogin: 'metrodiesign', requireIndependentGithubReview: false } },
+    { ...document, governance: { mode: 'single-operator', operatorGithubLogin: 'metrodiesign', requireIndependentGithubReview: true } },
+    { ...document, extraAuthority: true },
+  ];
+  for (const value of invalid) {
+    assert.equal(validateBootstrapPolicyBytes(Buffer.from(`${JSON.stringify(value, null, 2)}\n`)).ok, false);
+  }
+  assert.deepEqual(
+    validateBootstrapPolicyBytes(Buffer.from(JSON.stringify(document))),
+    { ok: false, reason: 'POLICY_NOT_CANONICAL' },
+  );
+});
+
+test('B0 governance append accepts one exact pair and rejects prefix, chain, hash, duplicate, and extra records', () => {
+  const afterHash = '2'.repeat(64);
+  const { base, head } = bootstrapGovernanceFixture(afterHash);
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: head, expectedAfterHash: afterHash }).ok, true);
+
+  const prefixMutation = Buffer.from(head);
+  prefixMutation[0] = prefixMutation[0] === 123 ? 91 : 123;
+  assert.deepEqual(
+    validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: prefixMutation, expectedAfterHash: afterHash }),
+    { ok: false, reason: 'LOG_PREFIX_MUTATED' },
+  );
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: head, expectedAfterHash: '3'.repeat(64) }).ok, false);
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: Buffer.concat([head, Buffer.from(line({ id: 'extra' }))]), expectedAfterHash: afterHash }).ok, false);
+
+  const changed = head.toString('utf8').replace(`"beforeHash":"${'1'.repeat(64)}"`, '"beforeHash":null');
+  assert.equal(validateBootstrapGovernanceAppend({ baseBytes: base, headBytes: Buffer.from(changed), expectedAfterHash: afterHash }).ok, false);
+  const duplicateBase = Buffer.concat([base, Buffer.from(base.subarray(0, base.indexOf(10) + 1))]);
+  assert.deepEqual(
+    validateBootstrapGovernanceAppend({ baseBytes: duplicateBase, headBytes: Buffer.concat([duplicateBase, head.subarray(base.length)]), expectedAfterHash: afterHash }),
+    { ok: false, reason: 'LOG_DUPLICATE_ID' },
+  );
+});
+
+function validRuleset(): Record<string, unknown> {
+  return {
+    id: 20737973,
+    name: 'protected-main-develop',
+    target: 'branch',
+    source: 'owner/repo',
+    source_type: 'Repository',
+    enforcement: 'active',
+    updated_at: '2026-08-20T04:00:00.000Z',
+    conditions: { ref_name: { exclude: [], include: ['refs/heads/main', 'refs/heads/develop'] } },
+    rules: [
+      {
+        type: 'pull_request',
+        parameters: {
+          required_approving_review_count: 0,
+          dismiss_stale_reviews_on_push: false,
+          require_last_push_approval: false,
+          allowed_merge_methods: ['squash'],
+        },
+      },
+      {
+        type: 'required_status_checks',
+        parameters: {
+          strict_required_status_checks_policy: true,
+          do_not_enforce_on_create: false,
+          required_status_checks: [
+            { context: 'B0 bootstrap authority', integration_id: 15368 },
+            { context: 'guards + spec-trace', integration_id: 15368 },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+test('B0 external ruleset requires zero approvals, strict checks, squash-only, and no bypass', async () => {
+  const verifier = await b0Verifier();
+  const selected = verifier.selectRulesetBinding([validRuleset()]) as {
+    binding: { requiredApprovingReviewCount: number; requireLastPushApproval: boolean; bypassActorCount: number };
+  };
+  assert.deepEqual(
+    [selected.binding.requiredApprovingReviewCount, selected.binding.requireLastPushApproval, selected.binding.bypassActorCount],
+    [0, false, 0],
+  );
+  for (const mutate of [
+    (value: Record<string, unknown>): void => { value.enforcement = 'evaluate'; },
+    (value: Record<string, unknown>): void => { value.bypass_actors = [{ actor_id: 1 }]; },
+    (value: Record<string, unknown>): void => { ((value.rules as Record<string, unknown>[])[0]?.parameters as Record<string, unknown>).required_approving_review_count = 1; },
+    (value: Record<string, unknown>): void => { ((value.rules as Record<string, unknown>[])[0]?.parameters as Record<string, unknown>).require_last_push_approval = true; },
+    (value: Record<string, unknown>): void => { ((value.rules as Record<string, unknown>[])[0]?.parameters as Record<string, unknown>).allowed_merge_methods = ['merge', 'squash']; },
+    (value: Record<string, unknown>): void => { ((value.rules as Record<string, unknown>[])[1]?.parameters as Record<string, unknown>).strict_required_status_checks_policy = false; },
+    (value: Record<string, unknown>): void => { (((value.rules as Record<string, unknown>[])[1]?.parameters as Record<string, unknown>).required_status_checks as Record<string, unknown>[])[0] = { context: 'alternate' }; },
+    (value: Record<string, unknown>): void => { delete (((value.rules as Record<string, unknown>[])[1]?.parameters as Record<string, unknown>).required_status_checks as Record<string, unknown>[])[0]?.integration_id; },
+    (value: Record<string, unknown>): void => { (((value.rules as Record<string, unknown>[])[1]?.parameters as Record<string, unknown>).required_status_checks as Record<string, unknown>[]).push({ context: 'B0 bootstrap authority', integration_id: 15368 }); },
+  ]) {
+    const value = structuredClone(validRuleset());
+    mutate(value);
+    assert.throws(() => verifier.selectRulesetBinding([value]));
+  }
+});
+
+test('B0 operator authority requires same canonical User for policy, author, and merge actor', async () => {
+  const verifier = await b0Verifier();
+  const head = 'a'.repeat(40);
+  const pull = {
+    number: 7,
+    head: { sha: head },
+    base: { ref: 'develop' },
+    user: { login: 'metrodiesign', type: 'User' },
+    merged_by: { login: 'metrodiesign', type: 'User' },
+    merged_at: '2026-08-21T05:00:00.000Z',
+  };
+  const valid = {
+    pull,
+    operatorAccount: { login: 'metrodiesign', type: 'User', permissions: { push: true } },
+    operatorGithubLogin: 'metrodiesign',
+  };
+  assert.doesNotThrow(() => verifier.selectOperatorBinding(valid));
+  assert.doesNotThrow(() => verifier.selectOperatorBinding({ ...valid, requireMerged: true }));
+  assert.throws(() => verifier.selectOperatorBinding({ ...valid, pull: { ...pull, user: { login: 'other', type: 'User' } } }));
+  assert.throws(() => verifier.selectOperatorBinding({ ...valid, operatorAccount: { login: 'metrodiesign', type: 'Bot', permissions: { push: true } } }));
+  assert.throws(() => verifier.selectOperatorBinding({ ...valid, operatorAccount: { login: 'metrodiesign', type: 'User', permissions: { push: false } } }));
+  assert.throws(() => verifier.selectOperatorBinding({ ...valid, requireMerged: true, pull: { ...pull, merged_by: { login: 'other', type: 'User' } } }));
+  assert.throws(() => verifier.selectOperatorBinding({ ...valid, requireMerged: true, pull: { ...pull, merged_by: { login: 'metrodiesign', type: 'Bot' } } }));
+});
+
+test('B0 exact file operations and CI composition reject seventh paths, renames, mutation, and replay', async () => {
+  const verifier = await b0Verifier();
+  const files = [
+    ['.ai/policies/agent-capabilities.json', 'added'],
+    ['core/src/governance/policy.ts', 'modified'],
+    ['core/src/governance/policy.test.ts', 'modified'],
+    ['.ai/governance/events.jsonl', 'modified'],
+    ['.ai/bin/check-b0-bootstrap.mjs', 'added'],
+    ['.github/workflows/ci.yml', 'modified'],
+  ].map(([filename, status]) => ({ filename, status }));
+  assert.doesNotThrow(() => verifier.verifyExactOperations(files));
+  assert.throws(() => verifier.verifyExactOperations([...files, { filename: 'seventh', status: 'added' }]));
+  assert.throws(() => verifier.verifyExactOperations(files.map((file, index) => index === 0 ? { ...file, previous_filename: 'old' } : file)));
+
+  const base = Buffer.from('name: CI\npermissions:\n  contents: read\njobs:\n  existing:\n    runs-on: ubuntu-latest\n');
+  const head = verifier.expectedCiWorkflow(base);
+  assert.doesNotThrow(() => verifier.verifyCiWorkflowBytes(base, head));
+  assert.throws(() => verifier.verifyCiWorkflowBytes(base, Buffer.concat([head, Buffer.from('# mutation\n')])));
+  assert.throws(() => verifier.expectedCiWorkflow(head));
+});
+
+test('B0 authenticated API fails closed when network authority is unavailable', async () => {
+  const verifier = await b0Verifier();
+  const api = new verifier.AuthenticatedReadApi({
+    repository: { fullName: 'owner/repo' },
+    token: 'test-token',
+    fetchImpl: async () => { throw new Error('offline'); },
+  });
+  await assert.rejects(api.get('/rulesets'), (error: unknown) => (
+    error instanceof Error && error.message.startsWith('API_UNAVAILABLE:')
+  ));
+});
+
+test('B0 required status binds exact workflow, repository, app, head, and completion before merge', async () => {
+  const verifier = await b0Verifier();
+  const head = 'a'.repeat(40);
+  const check = {
+    id: 99,
+    name: 'B0 bootstrap authority',
+    head_sha: head,
+    status: 'completed',
+    conclusion: 'success',
+    app: { id: 15368, slug: 'github-actions' },
+    started_at: '2026-08-20T05:01:00.000Z',
+    completed_at: '2026-08-20T05:02:00.000Z',
+    details_url: 'https://github.com/owner/repo/actions/runs/55/job/66',
+  };
+  const workflow = {
+    id: 55,
+    name: 'CI',
+    path: '.github/workflows/ci.yml',
+    event: 'pull_request',
+    head_sha: head,
+    run_attempt: 1,
+    run_started_at: '2026-08-20T05:01:00.000Z',
+  };
+  const api = (checkValue: unknown, workflowValue: unknown) => ({
+    repository: { owner: 'owner', repo: 'repo' },
+    get: async (path: string): Promise<unknown> => path.startsWith('/commits/')
+      ? { check_runs: [checkValue] }
+      : workflowValue,
+  });
+  const expected = [{ context: 'B0 bootstrap authority', integrationId: 15368 }];
+  const mergedAt = '2026-08-20T05:03:00.000Z';
+  await assert.doesNotReject(verifier.verifyRequiredChecks(api(check, workflow), head, expected, mergedAt));
+  await assert.rejects(verifier.verifyRequiredChecks(api({ ...check, app: { id: 1, slug: 'other' } }, workflow), head, expected, mergedAt));
+  await assert.rejects(verifier.verifyRequiredChecks(api({ ...check, details_url: 'https://github.com/other/repo/actions/runs/55/job/66' }, workflow), head, expected, mergedAt));
+  await assert.rejects(verifier.verifyRequiredChecks(api(check, { ...workflow, path: '.github/workflows/other.yml' }), head, expected, mergedAt));
+  await assert.rejects(verifier.verifyRequiredChecks(api({ ...check, completed_at: '2026-08-20T05:04:00.000Z' }, workflow), head, expected, mergedAt));
+  const duplicateApi = {
+    repository: { owner: 'owner', repo: 'repo' },
+    get: async (path: string): Promise<unknown> => path.startsWith('/commits/')
+      ? { check_runs: [check, { ...check, id: 100 }] }
+      : workflow,
+  };
+  await assert.rejects(verifier.verifyRequiredChecks(duplicateApi, head, expected, mergedAt));
 });

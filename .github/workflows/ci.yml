@@ -7,7 +7,10 @@ on:
     branches: [main, develop]
 
 permissions:
+  actions: read
+  checks: read
   contents: read
+  pull-requests: read
 
 # Repo นี้เป็น stack-agnostic framework ที่มี Node workspace packages, Console
 # frontend/backend และ runtime dependencies จริง CI จึงตรวจทั้ง application code,
@@ -25,6 +28,27 @@ permissions:
 # resolved merge-base equals the base tip and the PR is scanned/tested AS MERGED against
 # current base — intentionally kept (not overridden to head.sha), see design ARC-F5.
 jobs:
+  b0_bootstrap:
+    name: B0 bootstrap authority
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify B0 bootstrap authority
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .ai/bin/check-b0-bootstrap.mjs ci
+
   platform:
     # Platform — Phase 0 (authority: loop-engineering-implementation-spec.md §11
     # DoD; platform-wide architecture: unified-platform-spec.md). Pinned to macOS per
