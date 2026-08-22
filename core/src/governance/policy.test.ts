@@ -33,10 +33,13 @@ const clock: Clock = { now: () => 1_700_000_000_000 };
 
 interface B0VerifierModule {
   AuthenticatedReadApi: new (input: {
-    repository: { fullName: string };
+    repository: { owner?: string; repo?: string; fullName: string };
     token: string;
-    fetchImpl: () => Promise<never>;
-  }) => { get(path: string): Promise<unknown> };
+    fetchImpl: (...args: unknown[]) => Promise<unknown>;
+  }) => {
+    get(path: string): Promise<unknown>;
+    pages(path: string, key?: string | null, options?: { requireStableKeyedCollection?: boolean }): Promise<unknown[]>;
+  };
   expectedCiWorkflow(base: Uint8Array): Uint8Array;
   selectOperatorBinding(input: {
     pull: unknown;
@@ -48,11 +51,22 @@ interface B0VerifierModule {
   verifyCiWorkflowBytes(base: Uint8Array, head: Uint8Array): void;
   verifyExactOperations(files: unknown[]): void;
   verifyRequiredChecks(
-    api: { repository: { owner: string; repo: string }; get(path: string, options?: unknown): Promise<unknown> },
+    api: B0ReadApi,
     headSha: string,
     expectedChecks: { context: string; integrationId: number }[],
     mergedAt: string,
   ): Promise<unknown>;
+  verifyCurrentRun(
+    api: B0ReadApi,
+    context: { runId: string | number },
+    authority: unknown,
+  ): Promise<{ run: Record<string, unknown>; sourceCheckRunId: number }>;
+}
+
+interface B0ReadApi {
+  repository: { owner: string; repo: string; fullName?: string };
+  get(path: string, options?: unknown): Promise<unknown>;
+  pages(path: string, key?: string | null, options?: { requireStableKeyedCollection?: boolean }): Promise<unknown[]>;
 }
 
 async function b0Verifier(): Promise<B0VerifierModule> {
@@ -591,47 +605,433 @@ test('B0 authenticated API fails closed when network authority is unavailable', 
   ));
 });
 
-test('B0 required status binds exact workflow, repository, app, head, and completion before merge', async () => {
-  const verifier = await b0Verifier();
-  const head = 'a'.repeat(40);
-  const check = {
-    id: 99,
-    name: 'B0 bootstrap authority',
-    head_sha: head,
+const B0_HEAD = 'a'.repeat(40);
+const B0_CONTEXT = 'B0 bootstrap authority';
+const B0_EXPECTED = [{ context: B0_CONTEXT, integrationId: 15368 }];
+const B0_MERGED_AT = '2026-08-20T12:44:32.000Z';
+
+function b0Check({
+  id,
+  completedAt,
+  conclusion = 'success',
+  context = B0_CONTEXT,
+  runId = id + 10_000,
+  jobId = id + 20_000,
+}: {
+  id: number;
+  completedAt: string;
+  conclusion?: string;
+  context?: string;
+  runId?: number;
+  jobId?: number;
+}): Record<string, unknown> {
+  return {
+    id,
+    name: context,
+    head_sha: B0_HEAD,
     status: 'completed',
-    conclusion: 'success',
+    conclusion,
     app: { id: 15368, slug: 'github-actions' },
-    started_at: '2026-08-20T05:01:00.000Z',
-    completed_at: '2026-08-20T05:02:00.000Z',
-    details_url: 'https://github.com/owner/repo/actions/runs/55/job/66',
+    started_at: completedAt,
+    completed_at: completedAt,
+    details_url: `https://github.com/owner/repo/actions/runs/${runId}/job/${jobId}`,
   };
-  const workflow = {
-    id: 55,
+}
+
+function b0Workflow(runId: number, runAttempt = 1): Record<string, unknown> {
+  return {
+    id: runId,
     name: 'CI',
     path: '.github/workflows/ci.yml',
     event: 'pull_request',
-    head_sha: head,
-    run_attempt: 1,
-    run_started_at: '2026-08-20T05:01:00.000Z',
+    head_sha: B0_HEAD,
+    run_attempt: runAttempt,
+    run_started_at: '2026-08-20T05:00:00.000Z',
   };
-  const api = (checkValue: unknown, workflowValue: unknown) => ({
-    repository: { owner: 'owner', repo: 'repo' },
-    get: async (path: string): Promise<unknown> => path.startsWith('/commits/')
-      ? { check_runs: [checkValue] }
-      : workflowValue,
+}
+
+function b0Job(jobId: number, runId: number, context = B0_CONTEXT): Record<string, unknown> {
+  return { id: jobId, run_id: runId, name: context, head_sha: B0_HEAD };
+}
+
+function detailsIds(check: Record<string, unknown>): { runId: number; jobId: number } | null {
+  const match = /\/actions\/runs\/(\d+)\/job\/(\d+)$/.exec(String(check.details_url));
+  return match === null ? null : { runId: Number(match[1]), jobId: Number(match[2]) };
+}
+
+function b0FixtureApi(
+  checks: Record<string, unknown>[],
+  options: {
+    workflows?: Record<number, Record<string, unknown>>;
+    jobs?: Record<string, Record<string, unknown>[]>;
+    sourceChecks?: Record<number, Record<string, unknown>>;
+    failGet?: string;
+    failPages?: string;
+  } = {},
+): B0ReadApi & { requests: string[] } {
+  const workflows = { ...(options.workflows ?? {}) };
+  const jobs = { ...(options.jobs ?? {}) };
+  for (const check of checks) {
+    const ids = detailsIds(check);
+    if (ids === null) continue;
+    workflows[ids.runId] ??= b0Workflow(ids.runId);
+    jobs[`${ids.runId}:1`] ??= [b0Job(ids.jobId, ids.runId, String(check.name))];
+  }
+  const requests: string[] = [];
+  return {
+    repository: { owner: 'owner', repo: 'repo', fullName: 'owner/repo' },
+    requests,
+    get: async (path: string): Promise<unknown> => {
+      requests.push(path);
+      if (options.failGet !== undefined && path.startsWith(options.failGet)) {
+        throw Object.assign(new Error(`GET failed: ${path}`), { code: 'API_REJECTED' });
+      }
+      const workflowMatch = /^\/actions\/runs\/(\d+)$/.exec(path);
+      if (workflowMatch !== null) return workflows[Number(workflowMatch[1])];
+      const checkMatch = /^\/check-runs\/(\d+)$/.exec(path);
+      if (checkMatch !== null) return options.sourceChecks?.[Number(checkMatch[1])];
+      throw new Error(`unexpected GET ${path}`);
+    },
+    pages: async (path: string): Promise<unknown[]> => {
+      requests.push(path);
+      if (options.failPages !== undefined && path.startsWith(options.failPages)) {
+        throw Object.assign(new Error(`pages failed: ${path}`), { code: 'API_REJECTED' });
+      }
+      if (path.startsWith('/commits/')) return structuredClone(checks);
+      const attemptMatch = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs$/.exec(path);
+      if (attemptMatch !== null) return structuredClone(jobs[`${attemptMatch[1]}:${attemptMatch[2]}`] ?? []);
+      throw new Error(`unexpected pages ${path}`);
+    },
+  };
+}
+
+function b0Error(code: string): (error: unknown) => boolean {
+  return (error) => (error as { code?: unknown }).code === code;
+}
+
+function fakeResponse(payload: unknown): Record<string, unknown> {
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (): null => null },
+    text: async (): Promise<string> => JSON.stringify(payload),
+  };
+}
+
+test('B0 authenticated keyed pagination proves completeness and a stable first page (REQ-1.9/1.10/2.13/2.19/2.20/3.10)', async () => {
+  const verifier = await b0Verifier();
+  const pageOne = Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }));
+  const payloads = [
+    { total_count: 101, check_runs: pageOne },
+    { total_count: 101, check_runs: [{ id: 101 }] },
+    { total_count: 101, check_runs: pageOne },
+  ];
+  const api = new verifier.AuthenticatedReadApi({
+    repository: { owner: 'owner', repo: 'repo', fullName: 'owner/repo' },
+    token: 'test-token',
+    fetchImpl: async (): Promise<unknown> => fakeResponse(payloads.shift()),
   });
-  const expected = [{ context: 'B0 bootstrap authority', integrationId: 15368 }];
-  const mergedAt = '2026-08-20T05:03:00.000Z';
-  await assert.doesNotReject(verifier.verifyRequiredChecks(api(check, workflow), head, expected, mergedAt));
-  await assert.rejects(verifier.verifyRequiredChecks(api({ ...check, app: { id: 1, slug: 'other' } }, workflow), head, expected, mergedAt));
-  await assert.rejects(verifier.verifyRequiredChecks(api({ ...check, details_url: 'https://github.com/other/repo/actions/runs/55/job/66' }, workflow), head, expected, mergedAt));
-  await assert.rejects(verifier.verifyRequiredChecks(api(check, { ...workflow, path: '.github/workflows/other.yml' }), head, expected, mergedAt));
-  await assert.rejects(verifier.verifyRequiredChecks(api({ ...check, completed_at: '2026-08-20T05:04:00.000Z' }, workflow), head, expected, mergedAt));
-  const duplicateApi = {
-    repository: { owner: 'owner', repo: 'repo' },
-    get: async (path: string): Promise<unknown> => path.startsWith('/commits/')
-      ? { check_runs: [check, { ...check, id: 100 }] }
-      : workflow,
+  const rows = await api.pages('/commits/head/check-runs?filter=all', 'check_runs', { requireStableKeyedCollection: true });
+  assert.equal(rows.length, 101);
+
+  const unstable: { name: string; payloads: unknown[] }[] = [
+    {
+      name: 'total_count changes',
+      payloads: [{ total_count: 101, check_runs: pageOne }, { total_count: 102, check_runs: [{ id: 101 }] }],
+    },
+    {
+      name: 'row id repeats',
+      payloads: [{ total_count: 2, check_runs: [{ id: 1 }, { id: 1 }] }],
+    },
+    {
+      name: 'collected row count differs',
+      payloads: [{ total_count: 2, check_runs: [{ id: 1 }] }],
+    },
+    {
+      name: 'first page changes during probe',
+      payloads: [{ total_count: 1, check_runs: [{ id: 1 }] }, { total_count: 1, check_runs: [{ id: 2 }] }],
+    },
+  ];
+  for (const scenario of unstable) {
+    const queue = [...scenario.payloads];
+    const unstableApi = new verifier.AuthenticatedReadApi({
+      repository: { owner: 'owner', repo: 'repo', fullName: 'owner/repo' },
+      token: 'test-token',
+      fetchImpl: async (): Promise<unknown> => fakeResponse(queue.shift()),
+    });
+    await assert.rejects(
+      unstableApi.pages('/checks', 'check_runs', { requireStableKeyedCollection: true }),
+      b0Error('API_COLLECTION_CHANGED'),
+      scenario.name,
+    );
+  }
+
+  const fullPage = Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }));
+  let page = 0;
+  const boundedApi = new verifier.AuthenticatedReadApi({
+    repository: { owner: 'owner', repo: 'repo', fullName: 'owner/repo' },
+    token: 'test-token',
+    fetchImpl: async (): Promise<unknown> => {
+      const rowsForPage = fullPage.map((row) => ({ id: row.id + page * 100 }));
+      page += 1;
+      return fakeResponse({ total_count: 1_000, check_runs: rowsForPage });
+    },
+  });
+  await assert.rejects(
+    boundedApi.pages('/checks', 'check_runs', { requireStableKeyedCollection: true }),
+    b0Error('API_PAGE_LIMIT'),
+  );
+});
+
+test('B0 PR #146 fixture selects latest pre-merge authority and ignores API order (REQ-1/4.1-4.6)', async () => {
+  const verifier = await b0Verifier();
+  const checks = [
+    b0Check({ id: 96_699_751_150, completedAt: '2026-08-20T07:21:40.000Z', conclusion: 'failure' }),
+    b0Check({ id: 96_721_505_730, completedAt: '2026-08-20T08:58:29.000Z' }),
+    b0Check({ id: 96_751_293_734, completedAt: '2026-08-20T11:06:19.000Z' }),
+  ];
+  const expected = [{
+    checkRunId: 96_751_293_734,
+    name: B0_CONTEXT,
+    headSha: B0_HEAD,
+    conclusion: 'SUCCESS',
+    appId: 15368,
+    appSlug: 'github-actions',
+    workflowRunId: 96_751_303_734,
+    runAttempt: 1,
+    completedAt: '2026-08-20T11:06:19.000Z',
+  }];
+  const api = b0FixtureApi(checks);
+  assert.deepEqual(await verifier.verifyRequiredChecks(api, B0_HEAD, B0_EXPECTED, B0_MERGED_AT), expected);
+  assert.equal(api.requests.some((path) => path.includes('check_name=B0%20bootstrap%20authority&filter=all')), true);
+  assert.equal(api.requests.some((path) => path.includes('filter=latest')), false);
+  assert.deepEqual(await verifier.verifyRequiredChecks(b0FixtureApi([...checks].reverse()), B0_HEAD, B0_EXPECTED, B0_MERGED_AT), expected);
+});
+
+test('B0 post-merge selection blocks latest failure, post-merge rows, ties, and missing authority (REQ-1.2/1.4/1.8/2.12/4.7/4.8)', async () => {
+  const verifier = await b0Verifier();
+  const older = b0Check({ id: 1, completedAt: '2026-08-20T08:00:00.000Z' });
+  const latestFailure = b0Check({ id: 2, completedAt: '2026-08-20T09:00:00.000Z', conclusion: 'failure' });
+  await assert.rejects(
+    verifier.verifyRequiredChecks(b0FixtureApi([older, latestFailure]), B0_HEAD, B0_EXPECTED, B0_MERGED_AT),
+    b0Error('CHECK_SUCCESS_MISSING'),
+  );
+
+  const afterMerge = b0Check({ id: 3, completedAt: '2026-08-20T13:00:00.000Z' });
+  const selected = await verifier.verifyRequiredChecks(b0FixtureApi([afterMerge, older]), B0_HEAD, B0_EXPECTED, B0_MERGED_AT) as { checkRunId: number }[];
+  assert.equal(selected[0]?.checkRunId, 1);
+
+  const tied = b0Check({ id: 4, completedAt: '2026-08-20T08:00:00.000Z' });
+  await assert.rejects(
+    verifier.verifyRequiredChecks(b0FixtureApi([older, tied]), B0_HEAD, B0_EXPECTED, B0_MERGED_AT),
+    b0Error('CHECK_SET_INVALID'),
+  );
+  const newest = b0Check({ id: 5, completedAt: '2026-08-20T10:00:00.000Z' });
+  await assert.rejects(
+    verifier.verifyRequiredChecks(b0FixtureApi([newest, older, tied]), B0_HEAD, B0_EXPECTED, B0_MERGED_AT),
+    b0Error('CHECK_SET_INVALID'),
+  );
+  await assert.rejects(
+    verifier.verifyRequiredChecks(b0FixtureApi([]), B0_HEAD, B0_EXPECTED, B0_MERGED_AT),
+    b0Error('CHECK_SUCCESS_MISSING'),
+  );
+});
+
+test('B0 candidate field and provenance mutations never displace older valid authority (REQ-2.1-2.11/4.9/4.10)', async () => {
+  const verifier = await b0Verifier();
+  const older = b0Check({ id: 10, completedAt: '2026-08-20T08:00:00.000Z' });
+  const newest = b0Check({ id: 20, completedAt: '2026-08-20T09:00:00.000Z' });
+  const preliminaryMutations: [string, (value: Record<string, unknown>) => void][] = [
+    ['name', (value) => { value.name = 'other'; }],
+    ['head', (value) => { value.head_sha = 'b'.repeat(40); }],
+    ['status', (value) => { value.status = 'in_progress'; }],
+    ['app id', (value) => { value.app = { id: 1, slug: 'github-actions' }; }],
+    ['app slug', (value) => { value.app = { id: 15368, slug: 'other' }; }],
+    ['completed time', (value) => { value.completed_at = 'invalid'; }],
+    ['details URL', (value) => { value.details_url = 'https://github.com/other/repo/actions/runs/1/job/2'; }],
+  ];
+  for (const [name, mutate] of preliminaryMutations) {
+    const invalid = structuredClone(newest);
+    mutate(invalid);
+    const evidence = await verifier.verifyRequiredChecks(b0FixtureApi([invalid, older]), B0_HEAD, B0_EXPECTED, B0_MERGED_AT) as { checkRunId: number }[];
+    assert.equal(evidence[0]?.checkRunId, 10, name);
+  }
+
+  const newestIds = detailsIds(newest);
+  if (newestIds === null) throw new Error('fixture source missing');
+  const workflowMutations: [string, (value: Record<string, unknown>) => void][] = [
+    ['path', (value) => { value.path = '.github/workflows/other.yml'; }],
+    ['name', (value) => { value.name = 'Other'; }],
+    ['event', (value) => { value.event = 'push'; }],
+    ['head', (value) => { value.head_sha = 'b'.repeat(40); }],
+    ['run attempt', (value) => { value.run_attempt = 0; }],
+  ];
+  for (const [name, mutate] of workflowMutations) {
+    const invalidWorkflow = b0Workflow(newestIds.runId);
+    mutate(invalidWorkflow);
+    const evidence = await verifier.verifyRequiredChecks(
+      b0FixtureApi([newest, older], { workflows: { [newestIds.runId]: invalidWorkflow } }),
+      B0_HEAD,
+      B0_EXPECTED,
+      B0_MERGED_AT,
+    ) as { checkRunId: number }[];
+    assert.equal(evidence[0]?.checkRunId, 10, name);
+  }
+
+  const jobMutations: [string, (value: Record<string, unknown>) => void][] = [
+    ['job run id', (value) => { value.run_id = 999; }],
+    ['job name', (value) => { value.name = 'other'; }],
+    ['job head', (value) => { value.head_sha = 'b'.repeat(40); }],
+  ];
+  for (const [name, mutate] of jobMutations) {
+    const invalidJob = b0Job(newestIds.jobId, newestIds.runId);
+    mutate(invalidJob);
+    const evidence = await verifier.verifyRequiredChecks(
+      b0FixtureApi([newest, older], { jobs: { [`${newestIds.runId}:1`]: [invalidJob] } }),
+      B0_HEAD,
+      B0_EXPECTED,
+      B0_MERGED_AT,
+    ) as { checkRunId: number }[];
+    assert.equal(evidence[0]?.checkRunId, 10, name);
+  }
+});
+
+test('B0 exact job ID binds one attempt and lookup bounds fail closed (REQ-2.13-2.20/4.2-4.4)', async () => {
+  const verifier = await b0Verifier();
+  const check = b0Check({ id: 30, completedAt: '2026-08-20T09:00:00.000Z', runId: 55, jobId: 66 });
+  const workflow = b0Workflow(55, 2);
+  const attemptTwoApi = b0FixtureApi([check], {
+    workflows: { 55: workflow },
+    jobs: { '55:1': [], '55:2': [b0Job(66, 55)] },
+  });
+  const evidence = await verifier.verifyRequiredChecks(attemptTwoApi, B0_HEAD, B0_EXPECTED, B0_MERGED_AT) as { runAttempt: number }[];
+  assert.equal(evidence[0]?.runAttempt, 2);
+
+  for (const jobs of [
+    { '55:1': [], '55:2': [] },
+    { '55:1': [b0Job(66, 55)], '55:2': [b0Job(66, 55)] },
+  ]) {
+    await assert.rejects(
+      verifier.verifyRequiredChecks(b0FixtureApi([check], { workflows: { 55: workflow }, jobs }), B0_HEAD, B0_EXPECTED, B0_MERGED_AT),
+      b0Error('CHECK_SOURCE_MISMATCH'),
+    );
+  }
+
+  await assert.rejects(
+    verifier.verifyRequiredChecks(
+      b0FixtureApi([check], { workflows: { 55: b0Workflow(55, 26) } }),
+      B0_HEAD,
+      B0_EXPECTED,
+      B0_MERGED_AT,
+    ),
+    b0Error('API_LOOKUP_LIMIT'),
+  );
+
+  const manyChecks = Array.from({ length: 5 }, (_, index) => b0Check({
+    id: 100 + index,
+    completedAt: `2026-08-20T0${index + 1}:00:00.000Z`,
+    runId: 200 + index,
+    jobId: 300 + index,
+  }));
+  const workflows = Object.fromEntries(manyChecks.map((row) => {
+    const ids = detailsIds(row);
+    if (ids === null) throw new Error('fixture source missing');
+    return [ids.runId, b0Workflow(ids.runId, 25)];
+  }));
+  await assert.rejects(
+    verifier.verifyRequiredChecks(b0FixtureApi(manyChecks, { workflows }), B0_HEAD, B0_EXPECTED, B0_MERGED_AT),
+    b0Error('API_LOOKUP_LIMIT'),
+  );
+
+  for (const options of [
+    { failPages: '/commits/' },
+    { failGet: '/actions/runs/' },
+    { failPages: '/actions/runs/' },
+  ]) {
+    await assert.rejects(
+      verifier.verifyRequiredChecks(b0FixtureApi([check], options), B0_HEAD, B0_EXPECTED, B0_MERGED_AT),
+      b0Error('API_REJECTED'),
+    );
+  }
+});
+
+test('B0 contexts resolve independently and evidence preserves canonical binding order (REQ-1.5-1.7/4.1-4.5/4.11/4.13)', async () => {
+  const verifier = await b0Verifier();
+  const guardContext = 'guards + spec-trace';
+  const checks = [
+    b0Check({ id: 40, completedAt: '2026-08-20T09:00:00.000Z', context: guardContext }),
+    b0Check({ id: 41, completedAt: '2026-08-20T10:00:00.000Z' }),
+  ];
+  const api = b0FixtureApi(checks);
+  const evidence = await verifier.verifyRequiredChecks(
+    api,
+    B0_HEAD,
+    [{ context: B0_CONTEXT, integrationId: 15368 }, { context: guardContext, integrationId: 15368 }],
+    B0_MERGED_AT,
+  ) as { name: string }[];
+  assert.deepEqual(evidence.map((row) => row.name), [B0_CONTEXT, guardContext]);
+  assert.equal('write' in api, false);
+  assert.equal(api.requests.some((path) => !path.startsWith('/')), false);
+});
+
+test('B0 pr-head reads only current-attempt jobs and validates exact current source (REQ-3/4.12)', async () => {
+  const verifier = await b0Verifier();
+  const authority = {
+    headSha: B0_HEAD,
+    ruleset: {
+      updatedAt: '2026-08-20T04:00:00.000Z',
+      binding: { requiredStatusChecks: B0_EXPECTED },
+    },
   };
-  await assert.rejects(verifier.verifyRequiredChecks(duplicateApi, head, expected, mergedAt));
+  const source = {
+    id: 66,
+    name: B0_CONTEXT,
+    head_sha: B0_HEAD,
+    status: 'in_progress',
+    app: { id: 15368, slug: 'github-actions' },
+  };
+  const validApi = b0FixtureApi([], {
+    workflows: { 55: b0Workflow(55, 2) },
+    jobs: { '55:2': [b0Job(66, 55)] },
+    sourceChecks: { 66: source },
+  });
+  const current = await verifier.verifyCurrentRun(validApi, { runId: 55 }, authority);
+  assert.equal(current.sourceCheckRunId, 66);
+  assert.equal(validApi.requests.includes('/actions/runs/55/attempts/2/jobs'), true);
+  assert.equal(validApi.requests.some((path) => path.includes('/jobs?filter=all')), false);
+
+  for (const rows of [[], [b0Job(66, 55), b0Job(67, 55)]]) {
+    await assert.rejects(
+      verifier.verifyCurrentRun(
+        b0FixtureApi([], { workflows: { 55: b0Workflow(55, 2) }, jobs: { '55:2': rows }, sourceChecks: { 66: source } }),
+        { runId: 55 },
+        authority,
+      ),
+      b0Error('SOURCE_CHECK_AMBIGUOUS'),
+    );
+  }
+
+  const sourceMutations: [string, (value: Record<string, unknown>) => void][] = [
+    ['head', (value) => { value.head_sha = 'b'.repeat(40); }],
+    ['status', (value) => { value.status = 'completed'; }],
+    ['app id', (value) => { value.app = { id: 1, slug: 'github-actions' }; }],
+    ['app slug', (value) => { value.app = { id: 15368, slug: 'other' }; }],
+  ];
+  for (const [name, mutate] of sourceMutations) {
+    const invalid = structuredClone(source);
+    mutate(invalid);
+    await assert.rejects(
+      verifier.verifyCurrentRun(
+        b0FixtureApi([], {
+          workflows: { 55: b0Workflow(55, 2) },
+          jobs: { '55:2': [b0Job(66, 55)] },
+          sourceChecks: { 66: invalid },
+        }),
+        { runId: 55 },
+        authority,
+      ),
+      b0Error('CHECK_SOURCE_MISMATCH'),
+      name,
+    );
+  }
 });
