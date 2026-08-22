@@ -18,6 +18,8 @@ const CHECK_NAME = 'B0 bootstrap authority';
 const TARGET_REF = 'refs/heads/develop';
 const MAX_API_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 10;
+const MAX_RUN_ATTEMPTS = 25;
+const MAX_ATTEMPT_LOOKUPS = 100;
 
 export const EXACT_OPERATIONS = Object.freeze({
   '.ai/policies/agent-capabilities.json': 'added',
@@ -187,15 +189,54 @@ export class AuthenticatedReadApi {
     }
   }
 
-  async pages(path, key = null) {
+  async pages(path, key = null, { requireStableKeyedCollection = false } = {}) {
     const values = [];
-    for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const seenIds = new Set();
+    let expectedTotal = null;
+    let firstPageIds = null;
+    const pagePath = (page) => {
       const separator = path.includes('?') ? '&' : '?';
-      const payload = await this.get(`${path}${separator}per_page=100&page=${page}`);
-      const pageValues = key === null ? payload : asObject(payload, 'API_INVALID_SHAPE', path)[key];
-      const array = asArray(pageValues, 'API_INVALID_SHAPE', path);
+      return `${path}${separator}per_page=100&page=${page}`;
+    };
+    const readPage = async (page, stabilityProbe = false) => {
+      const payload = await this.get(pagePath(page));
+      if (key === null) return { array: asArray(payload, 'API_INVALID_SHAPE', path), ids: null };
+      const object = asObject(payload, 'API_INVALID_SHAPE', path);
+      const array = asArray(object[key], 'API_INVALID_SHAPE', path);
+      if (!requireStableKeyedCollection) return { array, ids: null };
+      const total = object.total_count;
+      assertCondition(Number.isSafeInteger(total) && total >= 0, 'API_COLLECTION_CHANGED', `${path}:invalid total_count`);
+      if (expectedTotal === null) expectedTotal = total;
+      assertCondition(total === expectedTotal, 'API_COLLECTION_CHANGED', `${path}:total_count changed`);
+      const ids = array.map((raw) => {
+        const row = asObject(raw, 'API_INVALID_SHAPE', `${path}:row`);
+        assertCondition(Number.isSafeInteger(row.id) && row.id > 0, 'API_COLLECTION_CHANGED', `${path}:invalid row id`);
+        return row.id;
+      });
+      if (!stabilityProbe) {
+        for (const id of ids) {
+          assertCondition(!seenIds.has(id), 'API_COLLECTION_CHANGED', `${path}:duplicate row id`);
+          seenIds.add(id);
+        }
+      }
+      return { array, ids };
+    };
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const { array, ids } = await readPage(page);
+      if (page === 1) firstPageIds = ids;
       values.push(...array);
-      if (array.length < 100) return values;
+      if (array.length < 100) {
+        if (requireStableKeyedCollection) {
+          assertCondition(values.length === expectedTotal, 'API_COLLECTION_CHANGED', `${path}:row count mismatch`);
+          const probe = await readPage(1, true);
+          assertCondition(
+            JSON.stringify(probe.ids) === JSON.stringify(firstPageIds),
+            'API_COLLECTION_CHANGED',
+            `${path}:page 1 changed`,
+          );
+        }
+        return values;
+      }
     }
     reject('API_PAGE_LIMIT', path);
   }
@@ -499,18 +540,22 @@ function verifyNoReachableBootstrap(baseSha) {
   }
 }
 
-async function verifyCurrentRun(api, context, authority) {
+export async function verifyCurrentRun(api, context, authority) {
   const runId = exactPositiveInteger(Number(context.runId), 'GITHUB_RUN_ID');
   const run = asObject(await api.get(`/actions/runs/${runId}`), 'RUN_INVALID', 'workflow run');
   assertCondition(run.event === 'pull_request', 'RUN_INVALID', 'event must be pull_request');
   assertCondition(run.path === '.github/workflows/ci.yml' && run.name === 'CI', 'RUN_SOURCE_MISMATCH', 'unexpected workflow');
   assertCondition(run.head_sha === authority.headSha, 'RUN_HEAD_MISMATCH', String(run.head_sha));
-  exactPositiveInteger(Number(run.run_attempt), 'run attempt');
+  const runAttempt = exactPositiveInteger(Number(run.run_attempt), 'run attempt');
   const startedAt = Date.parse(String(run.run_started_at));
   assertCondition(Number.isFinite(startedAt), 'RUN_TIME_INVALID', 'run_started_at');
   assertCondition(Date.parse(authority.ruleset.updatedAt) <= startedAt, 'RULESET_CHANGED_AFTER_RUN', 'ruleset changed after run began');
-  const jobs = asObject(await api.get(`/actions/runs/${runId}/jobs?filter=all`), 'RUN_INVALID', 'workflow jobs');
-  const source = asArray(jobs.jobs, 'RUN_INVALID', 'workflow jobs').filter((job) => job?.name === CHECK_NAME);
+  const jobs = await api.pages(
+    `/actions/runs/${runId}/attempts/${runAttempt}/jobs`,
+    'jobs',
+    { requireStableKeyedCollection: true },
+  );
+  const source = jobs.filter((job) => job?.name === CHECK_NAME);
   assertCondition(source.length === 1, 'SOURCE_CHECK_AMBIGUOUS', `found ${source.length} source jobs`);
   const sourceCheckRunId = exactPositiveInteger(source[0].id, 'source check run id');
   const sourceCheck = asObject(await api.get(`/check-runs/${sourceCheckRunId}`), 'CHECK_INVALID', 'source check run');
@@ -536,68 +581,142 @@ export async function verifyRequiredChecks(api, headSha, expectedChecks, mergedA
   const completedBy = Date.parse(String(mergedAt));
   assertCondition(Number.isFinite(completedBy), 'MERGE_TIME_INVALID', 'merged_at');
   const results = [];
-  for (const expected of expectedChecks) {
-    const payload = asObject(
-      await api.get(`/commits/${headSha}/check-runs?check_name=${encodeURIComponent(expected.context)}&filter=latest&per_page=100`, {
-        accept: 'application/vnd.github+json',
-      }),
-      'CHECK_INVALID',
-      'check-runs',
-    );
-    const runs = asArray(payload.check_runs, 'CHECK_INVALID', 'check_runs').filter((run) => run?.name === expected.context);
-    assertCondition(runs.length === 1, 'CHECK_SET_INVALID', `${expected.context}:${runs.length}`);
-    const selected = asObject(runs[0], 'CHECK_INVALID', expected.context);
-    assertCondition(
-      selected.head_sha === headSha
-        && selected.status === 'completed'
-        && selected.conclusion === 'success'
-        && selected.app?.slug === 'github-actions'
-        && selected.app?.id === expected.integrationId
-        && Number.isFinite(Date.parse(String(selected.completed_at)))
-        && Date.parse(String(selected.completed_at)) <= completedBy,
-      'CHECK_SUCCESS_MISSING',
-      expected.context,
-    );
+  const workflowMemo = new Map();
+  let attemptLookups = 0;
+
+  const detailsSource = (value) => {
     let details;
     try {
-      details = new URL(selected.details_url);
+      details = new URL(value);
     } catch {
-      reject('CHECK_SOURCE_MISMATCH', 'invalid details URL');
+      return null;
     }
     const segments = details.pathname.split('/').filter(Boolean);
-    assertCondition(
-      details.protocol === 'https:'
-        && details.hostname === 'github.com'
-        && segments[0] === api.repository.owner
-        && segments[1] === api.repository.repo
-        && segments[2] === 'actions'
-        && segments[3] === 'runs'
-        && /^\d+$/.test(segments[4] ?? '')
-        && segments[5] === 'job'
-        && /^\d+$/.test(segments[6] ?? ''),
-      'CHECK_SOURCE_MISMATCH',
-      'check is not an Actions job in this repository',
+    if (
+      details.protocol !== 'https:'
+      || details.hostname !== 'github.com'
+      || details.username !== ''
+      || details.password !== ''
+      || details.port !== ''
+      || details.search !== ''
+      || details.hash !== ''
+      || segments.length !== 7
+      || segments[0] !== api.repository.owner
+      || segments[1] !== api.repository.repo
+      || segments[2] !== 'actions'
+      || segments[3] !== 'runs'
+      || !/^\d+$/.test(segments[4])
+      || segments[5] !== 'job'
+      || !/^\d+$/.test(segments[6])
+    ) return null;
+    const workflowRunId = Number(segments[4]);
+    const jobId = Number(segments[6]);
+    if (!Number.isSafeInteger(workflowRunId) || workflowRunId <= 0 || !Number.isSafeInteger(jobId) || jobId <= 0) return null;
+    return { workflowRunId, jobId };
+  };
+
+  const workflowAuthority = async (workflowRunId) => {
+    if (workflowMemo.has(workflowRunId)) return workflowMemo.get(workflowRunId);
+    const workflowRun = asObject(await api.get(`/actions/runs/${workflowRunId}`), 'RUN_INVALID', 'workflow run');
+    const runAttempt = Number(workflowRun.run_attempt);
+    const valid = workflowRun.id === workflowRunId
+      && workflowRun.path === '.github/workflows/ci.yml'
+      && workflowRun.name === 'CI'
+      && workflowRun.event === 'pull_request'
+      && workflowRun.head_sha === headSha
+      && Number.isSafeInteger(runAttempt)
+      && runAttempt > 0;
+    if (!valid) {
+      const unresolved = { valid: false };
+      workflowMemo.set(workflowRunId, unresolved);
+      return unresolved;
+    }
+    assertCondition(runAttempt <= MAX_RUN_ATTEMPTS, 'API_LOOKUP_LIMIT', `${workflowRunId}:run_attempt=${runAttempt}`);
+    const jobsById = new Map();
+    for (let attempt = 1; attempt <= runAttempt; attempt += 1) {
+      attemptLookups += 1;
+      assertCondition(attemptLookups <= MAX_ATTEMPT_LOOKUPS, 'API_LOOKUP_LIMIT', 'attempt lookup budget exhausted');
+      const jobs = await api.pages(
+        `/actions/runs/${workflowRunId}/attempts/${attempt}/jobs`,
+        'jobs',
+        { requireStableKeyedCollection: true },
+      );
+      for (const raw of jobs) {
+        const job = asObject(raw, 'API_INVALID_SHAPE', `workflow ${workflowRunId} job`);
+        const id = exactPositiveInteger(job.id, `workflow ${workflowRunId} job id`);
+        const occurrences = jobsById.get(id) ?? [];
+        occurrences.push({ attempt, job });
+        jobsById.set(id, occurrences);
+      }
+    }
+    const resolved = { valid: true, workflowRun, runAttempt, jobsById };
+    workflowMemo.set(workflowRunId, resolved);
+    return resolved;
+  };
+
+  for (const expected of expectedChecks) {
+    const runs = await api.pages(
+      `/commits/${headSha}/check-runs?check_name=${encodeURIComponent(expected.context)}&filter=all`,
+      'check_runs',
+      { requireStableKeyedCollection: true },
     );
-    const workflowRun = asObject(await api.get(`/actions/runs/${segments[4]}`), 'RUN_INVALID', 'passing workflow run');
-    assertCondition(
-      workflowRun.path === '.github/workflows/ci.yml'
-        && workflowRun.name === 'CI'
-        && workflowRun.event === 'pull_request'
-        && workflowRun.head_sha === headSha
-        && Number(workflowRun.run_attempt) >= 1,
-      'CHECK_SOURCE_MISMATCH',
-      'passing check does not bind exact-head CI run',
-    );
+    const candidates = [];
+    for (const raw of runs) {
+      const check = asObject(raw, 'CHECK_INVALID', expected.context);
+      const completedAtMs = Date.parse(String(check.completed_at));
+      if (
+        check.name !== expected.context
+        || check.head_sha !== headSha
+        || check.status !== 'completed'
+        || check.app?.slug !== 'github-actions'
+        || check.app?.id !== expected.integrationId
+        || !Number.isFinite(completedAtMs)
+        || completedAtMs > completedBy
+      ) continue;
+      const source = detailsSource(check.details_url);
+      if (source === null) continue;
+      const workflow = await workflowAuthority(source.workflowRunId);
+      if (!workflow.valid) continue;
+      const matches = workflow.jobsById.get(source.jobId) ?? [];
+      assertCondition(matches.length === 1, 'CHECK_SOURCE_MISMATCH', `${source.jobId}:found ${matches.length} attempts`);
+      const { attempt, job } = matches[0];
+      if (
+        job.run_id !== source.workflowRunId
+        || job.name !== expected.context
+        || job.head_sha !== headSha
+      ) continue;
+      candidates.push({
+        checkRunId: exactPositiveInteger(check.id, 'check run id'),
+        name: check.name,
+        headSha: check.head_sha,
+        conclusion: check.conclusion,
+        appId: check.app.id,
+        appSlug: check.app.slug,
+        workflowRunId: source.workflowRunId,
+        runAttempt: attempt,
+        completedAt: check.completed_at,
+        completedAtMs,
+      });
+    }
+    assertCondition(candidates.length > 0, 'CHECK_SUCCESS_MISSING', expected.context);
+    const completedTimes = new Set();
+    for (const candidate of candidates) {
+      assertCondition(!completedTimes.has(candidate.completedAtMs), 'CHECK_SET_INVALID', `${expected.context}:duplicate completed_at`);
+      completedTimes.add(candidate.completedAtMs);
+    }
+    candidates.sort((left, right) => right.completedAtMs - left.completedAtMs);
+    const selected = candidates[0];
+    assertCondition(selected.conclusion === 'success', 'CHECK_SUCCESS_MISSING', expected.context);
     results.push({
-      checkRunId: exactPositiveInteger(selected.id, 'check run id'),
+      checkRunId: selected.checkRunId,
       name: selected.name,
-      headSha: selected.head_sha,
+      headSha: selected.headSha,
       conclusion: 'SUCCESS',
-      appId: selected.app.id,
-      appSlug: selected.app.slug,
-      workflowRunId: exactPositiveInteger(workflowRun.id, 'workflow run id'),
-      runAttempt: exactPositiveInteger(Number(workflowRun.run_attempt), 'workflow run attempt'),
-      completedAt: selected.completed_at,
+      appId: selected.appId,
+      appSlug: selected.appSlug,
+      workflowRunId: selected.workflowRunId,
+      runAttempt: selected.runAttempt,
+      completedAt: selected.completedAt,
     });
   }
   return results;
