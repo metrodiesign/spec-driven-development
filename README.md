@@ -37,7 +37,7 @@ pnpm workspace ที่ประกอบด้วย package ต่อไป�
 |---|---|---|
 | `core/` | `core` | Ring 0 deterministic core, execution/evidence และ PR gate kernel ปลอด vendor name |
 | `aal/` | `aal` | Ring 1 protocol/routing/conformance + blind PR review panel/Judge |
-| `adapters/` | `adapters` | Ring 2 wire/transport สำหรับ Claude, Codex, Gemini CLI และ OpenCode DeepSeek |
+| `adapters/` | `adapters` | Ring 2 wire/transport สำหรับ Claude, Codex, Gemini CLI, OpenCode DeepSeek, Z.ai GLM-5.3 และ OpenCode GLM-5.3 |
 | `console/backend` | `console-backend` | Fastify/PTY/WS + PR gate manager/API/CLI/GitHub trust boundary, bin `platform` |
 | `console/web` | `console-web` | React 19 SPA รวม PR Quality operator surface |
 | `spikes/` | `spikes` | สคริปต์ verification/spike (§15) ไม่ใช่ production code |
@@ -80,7 +80,10 @@ pnpm vendor-check   # ตรวจว่า core/ และ aal/ ปลอด ve
 ## 5. CI ตรวจอะไรบ้าง
 
 Core CI (`.github/workflows/ci.yml`) ยิงเมื่อ `pull_request` และ `push` บน `main`/`develop`
-มีสอง job:
+มีสาม job:
+
+- **job `b0_bootstrap`** (`ubuntu-latest`) — ตรวจ one-time single-operator authority ด้วย
+  `.ai/bin/check-b0-bootstrap.mjs` ก่อนงาน CI หลัก
 
 - **job `platform`** (`macos-latest`) — vendor-name check, golden manifest verifier,
   ติดตั้งด้วย `pnpm install --frozen-lockfile`, `pnpm audit --prod --audit-level high`,
@@ -143,6 +146,8 @@ logic ตัวจริงของ guard ทั้งหมดอยู่ใ�
   ที่ยังไม่ทำ
 - patch นอก roadmap stage หลัง Stage 4: v1.8 (context-accumulation),
   v1.9 (write-provenance), v1.10 (run-command-prompt-contract)
-- Universal PR Quality Gate implement เสร็จใน feature branch แต่ production activation ต้องผ่าน
+- Universal PR Quality Gate implementation อยู่บน `develop` แล้ว แต่ production activation ต้องผ่าน
   runner/secrets/four-lineage conformance/canary/ruleset และ public-repo abuse control ตาม runbook
+- B0 single-operator authority bootstrap อยู่บน `develop` แล้ว: policy snapshot, append-only
+  governance records และ verifier ถูกตรวจใน CI job `b0_bootstrap`
 - `.ai/specs/context-accumulation/tasks.md` ยังปิดไม่ครบ (1 จาก 4 task)

@@ -50,7 +50,7 @@ spec ใน `.ai/specs/<feature>/` ยังเป็น source of truth — iss
 dependency audit, typecheck, lint, scoped/full tests, guard regression, lessons, secret scan และ
 spec trace. PR quality gate แยกเป็น unprivileged analysis + trusted finalize.
 
-หลัง production canary ให้ maintainer require exact checks ต่อไปนี้บน `develop`:
+หลัง production canary ให้ maintainer ตรวจว่า ruleset บน `develop` require exact checks ต่อไปนี้:
 
 ```text
 platform (vendor check + typecheck + lint + tests)
@@ -58,8 +58,9 @@ guards + spec-trace
 Universal PR Quality Gate
 ```
 
-สถานะตรวจ 2026-08-10: repository ยังไม่มี branch protection/ruleset จึงยังไม่ block merge
-ฝั่ง server. วิธีเปิด runner, secrets, conformance, canary และ ruleset อยู่ใน
+Project canon บันทึก ruleset `protected-main-develop` ครอบ `main`/`develop` และ require
+สอง check หลักด้านบนแล้ว. `Universal PR Quality Gate` ยังไม่ควรเพิ่มเป็น required จนกว่า
+runner, secrets, conformance และ canary จะผ่านตาม
 [08-pr-quality-gate-production.md](08-pr-quality-gate-production.md).
 
 ## 6.6 gh cheat-sheet (อ่าน/ทำมือ)
@@ -77,5 +78,6 @@ gh issue close <n> --comment "..."
 1. `gh auth login` (ต่อคน)
 2. `scripts/bootstrap-labels.sh` สร้าง label
 3. maintainer: ทำ production activation + canary ตาม `08-pr-quality-gate-production.md`
-4. maintainer: เปิด ruleset `develop` ให้ require PR review + exact checks ทั้งสามชื่อ
+4. maintainer: ตรวจ ruleset `develop` ให้ require PR review + สอง check หลัก; เพิ่ม
+   `Universal PR Quality Gate` หลัง canary เท่านั้น
 5. รัน `/spec-sync-github <feature>` ครั้งแรก -> ตรวจ preview -> ยืนยัน
