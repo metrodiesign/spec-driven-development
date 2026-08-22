@@ -72,7 +72,7 @@ store, orchestrator loop, lease, security policy และ vendor-neutral PR gat
 
 ข้อห้ามที่บังคับจริง: **`core/` (และ `aal/`) ห้ามปรากฏชื่อ vendor** — regex
 `claude|anthropic|codex|glm|openai` (case-insensitive ทั้งต้นไม้ รวม comment และ test) บังคับด้วย
-`scripts/check-core-vendor-free.sh` ซึ่งรันใน CI ที่ `.github/workflows/ci.yml:41` **script
+`scripts/check-core-vendor-free.sh` ซึ่งรันใน CI ที่ `.github/workflows/ci.yml` **script
 ตัวเดียวกันนี้สแกน `aal/` ด้วย ไม่ใช่แค่ `core/`** — ดูรายละเอียดที่ [หัวข้อ `aal/`](#aal-ring-1)
 
 ### โครงภายใน
@@ -253,8 +253,8 @@ return {
 - **ไม่เหมาะ**: การรัน command/เขียนไฟล์ (→ `core`), การแปล wire หรือเรียก SDK (→ `adapters`),
   อะไรที่ต้องรู้ชื่อ vendor (ผิด INV-7)
 
-**test**: 16 ไฟล์ `*.test.ts` ข้าง source รวม `pr-review/panel.test.ts`
-รันด้วย `pnpm --filter aal test`
+**test**: tests co-located กับ source รวม `pr-review/panel.test.ts`; รันด้วย
+`pnpm --filter aal test`
 
 ---
 
@@ -281,8 +281,9 @@ execute อะไรเอง** (การรันเป็นของ core) �
 
 ### โครงภายใน
 
-`anthropic.ts`, `codex.ts`, `reasoning-cli.ts`, live transports (`live.ts`, `codex-live.ts`,
-`reasoning-cli-live.ts`), `control.ts`, `wire.ts` และ `_template.ts`. `wire.ts` รวม vocabulary กลาง:
+`anthropic.ts`, `codex.ts`, `openai-compatible.ts`, `reasoning-cli.ts`, live transports
+(`live.ts`, `codex-live.ts`, `openai-compatible-live.ts`, `reasoning-cli-live.ts`), `control.ts`,
+`wire.ts` และ `_template.ts`. `wire.ts` รวม vocabulary กลาง:
 `buildProposePrompt`, `normalizeActions`
 (`wire.ts:22`), `classifyAdapterError`, `unfence` และ `protocolBlock()` (`wire.ts:55`) ที่สอน
 action DSL ให้โมเดล
@@ -299,9 +300,9 @@ stub path never touch this, so no quota is spent in tests` — live wiring ถ�
 ### entry point / public API
 
 `adapters/src/index.ts` เป็น public surface (ประกาศ `RING = 2`) และ export live adapter ที่ใช้จริง
-สำหรับ Claude, Codex, Gemini CLI และ OpenCode DeepSeek รวม `providerEnvironment`/
-`linkCallControl` — แต่ **ไม่** export `_template.ts`. แต่ละ adapter implement
-`AdapterInterface` ของ `aal`.
+สำหรับ Claude, Codex, Gemini CLI, OpenCode DeepSeek, Z.ai GLM-5.3 และ OpenCode GLM-5.3 รวม
+`providerEnvironment`/`linkCallControl` — แต่ **ไม่** export `_template.ts`. แต่ละ adapter
+implement `AdapterInterface` ของ `aal`.
 
 ### ตัวอย่างจากโค้ดจริง
 
@@ -329,7 +330,7 @@ for await (const msg of opts.query({
 - **ไม่เหมาะ**: routing/breaker (→ `aal`), execution/gate (→ `core`), business logic ใด ๆ
   (ผิด INV-8)
 
-**test**: 7 ไฟล์ `*.test.ts` รวม `reasoning-cli.test.ts`, รันด้วย
+**test**: tests ของ wire, SDK, CLI, OpenAI-compatible และ conformance อยู่ข้าง source; รันด้วย
 `pnpm --filter adapters test`. Live provider behavior ยืนยันด้วย manual conformance แยกจาก CI.
 
 ---
@@ -345,9 +346,10 @@ Gate manager/API/CLI/GitHub trust boundary. Package ชื่อ `console-backen
 ### รับผิดชอบอะไร
 
 เปิด/จัดการ PTY session, สตรีม terminal ผ่าน WS, เป็นหน้า HTTP ให้ loop run (approvals,
-steering, kill, deploy decision), จัดการ PR run/list/detail/cancel/override, pin Git/verify
-workflow artifact/publish Check Run และเป็น CLI dispatcher (`platform`) สำหรับ console, loop,
-conformance, governance, auditor, pr-gate. ไม่ own deterministic decision ของ core.
+steering, kill, deploy decision), สร้าง read-only control-center projections, จัดการ PR
+run/list/detail/cancel/override, pin Git/verify workflow artifact/publish Check Run และเป็น
+CLI dispatcher (`platform`) สำหรับ console, loop, conformance, governance, auditor, pr-gate.
+ไม่ own deterministic decision ของ core.
 
 ### โครงภายใน
 
@@ -355,6 +357,8 @@ conformance, governance, auditor, pr-gate. ไม่ own deterministic decision 
   เป็น placeholder เปล่า (`export {};`) ไม่ใช่ entry
 - `src/app.ts` มี `buildApp()` ที่ประกอบ route ทั้งหมด (PTY, loop, auth, memory ฯลฯ)
 - `src/loop-run.ts` คือที่ประกอบ core (`createExecutor` + `runTaskLoop` + `createGateRunner`)
+- `src/control-center.ts` คือ read-only projector สำหรับ Core/AAL/Adapters, runs, governance,
+  calibration และ PR Quality
 - `src/pr-gate/` คือ composition, manager, GitHub read/report, exact Git/snapshot, policy,
   context, checks, artifacts และ workflow provenance
 - `src/pr-gate-cli.ts` คือ direct operator command; `app.ts` expose `/api/pr-quality/*`
@@ -400,8 +404,8 @@ app.post<{ Body: Partial<CreateSessionInput> }>('/api/term/sessions', async (req
   PR gate lifecycle และการต่อ Console เข้า Human Plane ของ core
 - **ไม่เหมาะ**: execution/gate logic (→ `core`), routing ของ agent (→ `aal`), UI (→ `console/web`)
 
-**test**: 58 ไฟล์ `*.test.ts` ใต้ `src/`/`test/` รวม PR gate acceptance/trust/fault cases,
-รันด้วย `pnpm --filter console-backend test`.
+**test**: tests ใต้ `src/`/`test/` รวม PR gate acceptance/trust/fault cases; รันด้วย
+`pnpm --filter console-backend test`.
 
 ---
 
@@ -421,12 +425,14 @@ presentation)`
 
 ### โครงภายใน
 
-- component ระดับบน (`.tsx`): `App.tsx`, `Chat.tsx`, `I18nContext.tsx`, `Issues.tsx`,
-  `Login.tsx`, `Loop.tsx`, `PrQuality.tsx`, `Sched.tsx`, `Surfaces.tsx`, `TerminalPanel.tsx`, `main.tsx`,
-  และ hook `useFetch.ts`
-- `src/logic/` — pure logic module 14 ตัว (`auth`, `chat`, `fetchState`, `format`, `govern`,
-  `i18n`, `issues`, `loop`, `observe`, `pr-quality`, `sched`, `surfaces`, `term`, `theme`) แต่ละตัว
-  มี `.test.ts` คู่ + `smoke.test.ts`
+- component ระดับบน (`.tsx`): `App.tsx`, `Console.tsx`, `Dashboard.tsx`, `Core.tsx`, `Aal.tsx`,
+  `Adapters.tsx`, `Governance.tsx`, `Chat.tsx`, `Issues.tsx`, `Login.tsx`, `Loop.tsx`,
+  `PrQuality.tsx`, `Sched.tsx`, `Surfaces.tsx`, `TerminalPanel.tsx` และ `main.tsx`
+- context/hook/helper: `DraftContext.tsx`, `I18nContext.tsx`, `useFetch.ts`,
+  `usePendingMutation.ts`, `dialog.ts`
+- `src/logic/` — pure logic modules ของ auth, navigation, read state, control center, dashboard,
+  governance, i18n, loop, PR quality, scheduler, surfaces, terminal และ formatting; tests อยู่
+  ข้าง source และมี `smoke.test.ts` สำหรับ cross-module smoke check
 
 ### entry point / public API
 
@@ -450,7 +456,7 @@ export function interpretAuthProbe(status: number): AuthGateState {
   การต่อ API ของ backend
 - **ไม่เหมาะ**: logic ฝั่ง server (→ `console/backend`), agent/execution (→ `aal`/`core`)
 
-**test**: `console/web/package.json:7` จำกัด scope ไว้ที่ `src/logic/**/*.test.ts` (15 ไฟล์)
+**test**: `console/web/package.json` จำกัด scope ไว้ที่ `src/logic/**/*.test.ts`
 รันด้วย `pnpm --filter console-web test` เหตุผล: `node --test` ไม่มี DOM และรีโปนี้ไม่มี test
 runner สำหรับ component จึงแยก pure logic ออกมาให้ทดสอบได้โดยไม่ต้องพึ่ง DOM — **ไฟล์ `.tsx`
 ไม่มี unit test ในรีโปนี้** (ไม่มี `*.test.tsx` เลย)
@@ -472,11 +478,11 @@ pane-loop automation, GitHub label bridge หมายเหตุ: **`.githooks
 
 ### โครงภายใน
 
-24 ไฟล์ จัดกลุ่มตามหน้าที่:
+จัดกลุ่มตามหน้าที่:
 
 | กลุ่ม | ไฟล์ |
 |---|---|
-| CI scope | `ci-secret-scope.sh`, `ci-test-scope.sh` |
+| CI scope | `ci-evidence-scope.sh`, `ci-secret-scope.sh`, `ci-test-scope.sh` |
 | guard/check | `check-core-vendor-free.sh`, `check-golden-manifests.sh`, `lessons-coverage-check.sh` |
 | spec tooling | `spec-trace.sh`→`spec_trace.py`, `spec-slice.sh`, `spec-state.sh`, `spec-archive.sh`, `spec-to-goal.sh`→`spec_to_goal.py`, `spec-goal-drift.sh`→`spec_goal_drift.py`, `spec-metrics.py` |
 | cost/session | `cost_lib.py`, `cost-summary.py`, `inject-cost.py`, `session-cost.py`, `backfill-cost.sh` |
@@ -495,11 +501,10 @@ pane-loop automation, GitHub label bridge หมายเหตุ: **`.githooks
 
 ### ตัวอย่างจากโค้ดจริง (caller จริง)
 
-- CI: `.github/workflows/ci.yml:41` รัน `scripts/check-core-vendor-free.sh`, `:69` รัน
-  `scripts/ci-test-scope.sh "$GITHUB_EVENT_NAME" "$GITHUB_BASE_REF"`, `:120` รัน
-  `scripts/ci-secret-scope.sh ...`
-- SessionStart hook: `.claude/settings.json:44` เรียก `scripts/session-start-active-specs.sh`
-- skill: `.claude/skills/spec-implement/SKILL.md:24,33` เรียก `spec-state.sh` และ `spec-slice.sh`
+- CI: `.github/workflows/ci.yml` รัน vendor check, `ci-test-scope.sh`,
+  `ci-secret-scope.sh` และ `ci-evidence-scope.sh`
+- SessionStart hook เรียก `scripts/session-start-active-specs.sh`
+- `spec-implement` เรียก `spec-state.sh` และ `spec-slice.sh`
 
 `scripts/spec-metrics.py` เป็นกรณีพิเศษ: **ไม่พบ automated caller** (ไม่มีใน CI workflow, git
 hook หรือ SessionStart) เท่าที่ตรวจได้ ที่พบใน `.claude/` มีสองจุดคือ (1) test harness ของมันเอง

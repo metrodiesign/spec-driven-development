@@ -15,19 +15,22 @@
 
 ## 4.2 CI และ PR quality gate
 
-Workflow ปัจจุบันสร้าง check สามชื่อที่ production ruleset ต้อง require:
+Core CI ปัจจุบันมีสาม job/check; active ruleset require สอง checkหลัก และ PR gate มี custom check
+แยกหลัง canary:
 
 | Check | พิสูจน์อะไร |
 |---|---|
 | `platform (vendor check + typecheck + lint + tests)` | frozen install, high+ audit, vendor check, typecheck, lint, tests |
 | `guards + spec-trace` | guard regression, lessons, secret scan, spec trace |
-| `Universal PR Quality Gate` | exact-head deterministic evidence + four-lineage review/Judge |
+| `Universal PR Quality Gate` | exact-head deterministic evidence + four-lineage review/Judge; require หลัง canary |
 
 - ห้าม merge ข้าม failing/missing required check
 - ห้าม commit `.only` / `.skip` ค้างใน test
 - coverage ห้ามต่ำกว่าเกณฑ์
 - Workflow file อย่างเดียวไม่ block merge; ต้องมี server-side ruleset/branch protection
-- สถานะตรวจ 2026-08-10: `develop` ยังไม่ protected และ rulesets ว่าง จึงยังเป็น advisory
+- สถานะตาม project canon: ruleset `protected-main-develop` ครอบ `main`/`develop` และ require
+  `platform (vendor check + typecheck + lint + tests)` กับ `guards + spec-trace`; `Universal PR
+  Quality Gate` ยังต้องผ่าน canary ก่อนเพิ่มเป็น required check
 - เปิด custom check หลัง real canary เท่านั้น; ขั้น production เต็มอยู่ใน
   [08-pr-quality-gate-production.md](08-pr-quality-gate-production.md)
 
@@ -76,11 +79,11 @@ Workflow ปัจจุบันสร้าง check สามชื่อท�
 - คุยกับ user + output เป็นภาษาไทยเสมอ (ยกเว้น code/command/path/error/technical term)
 - **ห้าม emoji ในไฟล์ `.md` ทุกชนิด**
 
-## 4.9 Model routing
+## 4.9 Model / provider routing
 
-default = **Opus 4.8 (1M context)** (ดู global `~/.claude/CLAUDE.md`):
-
-- งานใหญ่/ใกล้ปิด หรือต้อง reasoning หนัก -> plan mode + ใส่คำว่า `ultrathink` ใน prompt
-  (keyword จริงตัวเดียวที่ CC รู้จัก) หรือยก `/effort` เป็น `xhigh` ชั่วคราว
-- error เดิมซ้ำ 2 ครั้ง -> หยุด Shift+Tab กลับ plan mode (อย่าด้นสด)
-- งานแตะหลายไฟล์/หลายโมดูล -> Shift+Tab กลับ plan mode ก่อน
+- ใช้ model, effort, flag และ command ตาม runtime ที่กำลังรัน; ห้ามคัด alias หรือ keyword
+  ของ provider อื่นมาใช้ข้าม harness
+- Codex อ่านค่า default จาก `~/.codex/config.toml`; Claude อ่านจาก settings/agent config
+  ของ Claude; explicit thread/profile/CLI selection มี precedence สูงกว่า default
+- งานหลายไฟล์ให้ทำ structured plan; error เดิมซ้ำสองครั้งให้หยุดวิธีเดิม อ่าน evidence แล้ว
+  เปลี่ยน hypothesis หรือ tool

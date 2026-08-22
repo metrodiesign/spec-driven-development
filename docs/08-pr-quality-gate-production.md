@@ -6,21 +6,22 @@
 
 ระบบตรวจ PR จาก exact current head ด้วย deterministic checks, blind reviewer panel สี่ lineage, Evidence Judge และ Check Run ที่แยก `systemDecision` ออกจาก `effectiveDecision`. Source of truth ของ runtime คือ `.ai/policies/pr-quality-gate.json`, `.github/workflows/pr-quality-*.yml` และ `console/backend/src/pr-gate/`.
 
-สถานะตรวจจริงวันที่ 2026-08-10:
+สถานะจาก checkout และ project canon วันที่ 2026-08-22:
 
 | รายการ | หลักฐานปัจจุบัน | ผลต่อ production |
 |---|---|---|
-| Implementation | PR [#138](https://github.com/metrodiesign/spec-driven-development/pull/138) ยัง `OPEN` ณ เวลาตรวจ | โค้ดยังไม่อยู่บน default branch `develop` |
-| Analysis workflow | check เขียวเพราะ one-time bootstrap; install, analysis และ artifact steps ถูก skip | ยังไม่ใช่ end-to-end gate pass |
-| Finalize workflow | ยังไม่อยู่บน default branch จึงยังไม่ถูก GitHub register | custom check `Universal PR Quality Gate` ยังไม่เกิด |
-| Self-hosted runner | repository runners = `0` | finalize job รันไม่ได้หลัง workflow ถูก merge |
-| Repository secrets | repository secrets = `0` | reviewer สี่ lineage ใช้งานไม่ได้ |
-| Server-side enforcement | branch protection ตอบ `404 Branch not protected`; rulesets = `[]` | CI/gate เป็น advisory; GitHub ยังไม่ block merge |
-| Conformance | Claude และ Codex มี record ล่าสุดที่ผ่าน; Gemini CLI และ OpenCode DeepSeek ไม่มี record | reviewer coverage ยังไม่ครบ production eligibility |
+| Implementation | โค้ด PR gate อยู่บน `develop` แล้ว (`d52e3b5` และ workflow ปัจจุบัน) | ไม่ใช่ bootstrap-only control plane อีกต่อไป |
+| Analysis workflow | `.github/workflows/pr-quality-analysis.yml` อยู่บน default branch | ต้องรัน canary เพื่อยืนยัน end-to-end artifact flow |
+| Finalize workflow | `.github/workflows/pr-quality-finalize.yml` อยู่บน default branch | ต้องมี dedicated runner และ `checks: write` จึง publish ได้ |
+| B0 authority | `b0_bootstrap` job และ `.ai/bin/check-b0-bootstrap.mjs` ตรวจ one-time single-operator authority | กัน replay/duplicate authority ก่อนพึ่ง required checks |
+| Self-hosted runner | สถานะ runner เป็น external state ไม่อยู่ใน checkout นี้ | ตรวจ GitHub ก่อน activation; ห้ามสมมติว่า runner online |
+| Repository secrets | สถานะ secrets เป็น external state ไม่อยู่ใน checkout นี้ | ตรวจ presence แบบไม่อ่านค่า ก่อน activation |
+| Server-side enforcement | project canon บันทึก ruleset `protected-main-develop` ครอบ `main`/`develop` และ require สอง CI checks | `Universal PR Quality Gate` ยังเพิ่มเป็น required ได้หลัง canary เท่านั้น |
+| Conformance | มี committed records ล่าสุดของ Claude, Codex และ OpenCode GLM; PR gate ยังต้องใช้ Claude, Codex, Gemini CLI และ OpenCode DeepSeek | Gemini CLI/OpenCode DeepSeek ยังต้องมี record ก่อน reviewer coverage ครบ |
 | Repository exposure | repository เป็น `PUBLIC` | ต้องปิด abuse path ก่อนผูก runner และ paid credentials |
 | Actions supply chain | workflow ปัจจุบันอ้าง `actions/*@v4`, `actions/setup-python@v5` และ `pnpm/action-setup@v4` | moving tags ไม่ immutable; ต้อง pin full commit SHA ผ่าน reviewed PR ก่อน production |
 
-สรุป: implementation ผ่าน test แต่ production activation ยังไม่เสร็จ. ห้ามตั้ง `Universal PR Quality Gate` เป็น required check ก่อนมี canary end-to-end ที่สร้าง check นี้จริง.
+สรุป: implementation อยู่บน default branch และผ่าน test แต่ production activation ยังไม่เสร็จ. ห้ามตั้ง `Universal PR Quality Gate` เป็น required check ก่อนมี canary end-to-end ที่สร้าง check นี้จริง.
 
 ### Production blocker สำหรับ public repository
 
@@ -74,6 +75,7 @@ PR decision channels (`finalize`, Direct CLI, Console และ REST) ใช้ 
 | pnpm | `11.9.0`; repository pin ผ่าน `packageManager` |
 | Git | ต้อง fetch exact PR refs และ pinned objects ได้ |
 | Provider runtime | Claude ใช้ installed SDK; Codex ต้องมี `codex`; Gemini ต้องมี `gemini`; OpenCode DeepSeek ต้องมี `opencode` |
+| General loop adapters | `platform conformance --live` รองรับ `zai` และ `opencode-glm` เพิ่ม แต่สอง lineage นี้ยังไม่อยู่ใน PR gate panel |
 | Network | runner ติดต่อ GitHub/Actions, package registry และ provider endpoints ผ่าน outbound HTTPS; deterministic PR commands ยังถูก network-deny |
 | Storage | service account ต้องเขียน `~/.platform/pr-gate` และ repository `.ai/calibration` ได้ |
 
@@ -106,7 +108,7 @@ Workflow dependency ทุกตัวต้อง pin ด้วย full commit 
 
 Model override ที่ PR gate runtime รองรับคือ `PR_GATE_CLAUDE_MODEL`, `PR_GATE_CODEX_MODEL`, `PR_GATE_GEMINI_MODEL` และ `PR_GATE_DEEPSEEK_MODEL`. Workflow ปัจจุบันไม่ส่งตัวแปรเหล่านี้ จึงใช้ provider defaults.
 
-ข้อจำกัดปัจจุบัน: eligibility ตรวจ `adapterId` และผล P1-P8 แต่ยังไม่ enforce อายุหรือ `modelVersion` ของ record. `conformance --live` รับ model override เดียวกับ gate เฉพาะ Gemini/OpenCode; Claude ใช้ automation policy model และ Codex ใช้ CLI default. Production จึงต้องปล่อย override ทั้งสี่ว่างตาม workflow ปัจจุบัน. การเปิด override ต้องผ่าน reviewed code/workflow change, สร้าง conformance record จาก model เดียวกัน และเพิ่ม operator check อายุ/`modelVersion`; ห้ามเปิด Claude/Codex override จน conformance path เลือก model เดียวกับ gate ได้.
+ข้อจำกัดปัจจุบัน: eligibility ตรวจ `adapterId` และผล P1-P8 แต่ยังไม่ enforce อายุหรือ `modelVersion` ของ record. PR gate ใช้สี่ lineage เดิม; `conformance --live` รองรับ `zai` และ `opencode-glm` สำหรับ general loop เพิ่ม แต่ไม่ได้เพิ่ม reviewer slot อัตโนมัติ. Production จึงต้องปล่อย override ของ PR gate ว่างตาม workflow ปัจจุบัน. การเปิด override ต้องผ่าน reviewed code/workflow change, สร้าง conformance record จาก model เดียวกัน และเพิ่ม operator check อายุ/`modelVersion`.
 
 ### Policy ปัจจุบัน
 
@@ -145,7 +147,7 @@ Rename ตรวจทั้ง previous path และ current path. Classifica
 
 ทำตามลำดับ. Public repository ต้องแก้ production blocker ด้าน abuse control ก่อนข้อ 2.
 
-1. Merge implementation PR เข้า default branch ผ่าน CI และ review ปกติ. One-time bootstrap SHA ใช้ได้เฉพาะ PR แรก; ห้ามแก้หรือ reuse exemption. จากนั้นเปิด reviewed PR แยกเพื่อ pin ทุก `uses:` เป็น full commit SHA และเพิ่ม public-repo abuse control ก่อนผูก runner/secrets.
+1. ยืนยันว่า implementation PR และ B0 bootstrap อยู่บน default branch ผ่าน CI และ review ปกติแล้ว. One-time bootstrap SHA ใช้ได้เฉพาะ PR แรก; ห้ามแก้หรือ reuse exemption. จากนั้นเปิด reviewed PR แยกเพื่อ pin ทุก `uses:` เป็น full commit SHA และเพิ่ม public-repo abuse control ก่อนผูก runner/secrets.
 
 2. เปิด GitHub `Settings > Actions > Runners > New self-hosted runner`, เลือก macOS แล้วรันคำสั่ง registration ที่ GitHub สร้างให้บน dedicated host. Token registration มีอายุสั้นและห้ามบันทึกลงเอกสารหรือ log. ติดตั้ง runner เป็น service เพื่อให้กลับมาหลัง reboot.
 
@@ -190,6 +192,13 @@ node console/backend/bin/platform.ts conformance --live --lineage claude --force
 node console/backend/bin/platform.ts conformance --live --lineage codex --force-quota-override
 node console/backend/bin/platform.ts conformance --live --lineage gemini-cli --force-quota-override
 node console/backend/bin/platform.ts conformance --live --lineage opencode-deepseek --force-quota-override
+```
+
+General loop adapter ที่ไม่ใช่ PR gate panel ตรวจแยกได้ด้วย:
+
+```bash
+node console/backend/bin/platform.ts conformance --live --lineage zai --force-quota-override
+node console/backend/bin/platform.ts conformance --live --lineage opencode-glm --force-quota-override
 ```
 
 ใช้ `--force-quota-override` เฉพาะหลังมนุษย์ตรวจ headroom; มัน bypass แค่ estimator ที่ไม่มี percentage ไม่ bypass hard budget. ต้องเห็น P1-P8 `PASS` ทุก lineage และ commit record/evidence ผ่าน PR หลัง secret scan. รันใหม่หลัง model, adapter, auth หรือ provider behavior เปลี่ยน.

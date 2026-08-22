@@ -1,13 +1,13 @@
 # 5. Hooks / Guardrails
 
-ระบบ guard ปัจจุบันมี check engine กลางชุดเดียวที่ `.ai/bin/`; Claude, Codex, OpenCode, git hooks และ CI เป็น thin adapters. Tier 1 (`.githooks` + CI) คือ durable floor: local hook ครอบ clone ที่ wire แล้ว, CI ครอบ event ที่ workflow match และ server จะ block merge เมื่อ ruleset require check. In-session hooks ให้ feedback เร็วเพิ่มเติม.
+ระบบ guard ปัจจุบันมี check engine กลางชุดเดียวที่ `.ai/bin/`; Claude, Codex, OpenCode, Pi, git hooks และ CI เป็น thin adapters. Tier 1 (`.githooks` + CI) คือ durable floor: local hook ครอบ clone ที่ wire แล้ว, CI ครอบ event ที่ workflow match และ server จะ block merge เมื่อ ruleset require check. In-session hooks ให้ feedback เร็วเพิ่มเติม.
 
 ## 5.1 Enforcement model
 
 | Tier | Caller | สิ่งที่ครอบ | Enforcement |
 |---|---|---|---|
 | 1 | `.githooks/pre-commit`, `.githooks/pre-push`, `.github/workflows/ci.yml` | ทุก agent + มนุษย์ | commit/push/CI floor |
-| 2 | Claude hooks, Codex hooks, OpenCode plugin | harness ที่รองรับ pre/post-tool hook | block ก่อน command หรือหลัง task edit |
+| 2 | Claude hooks, Codex hooks, OpenCode plugin, Pi extension | harness ที่รองรับ tool hook | block ก่อน command หรือหลัง task edit |
 | 3 | `AGENTS.md`, `.ai/shared/SECURITY_RULES.md`, workflows/roles | ทุก harness | procedural; ใช้เมื่อ harness ไม่มี hook |
 
 Logic/regex ต้องแก้ที่ `.ai/bin/` เท่านั้น. ห้าม fork policy ไปไว้ใน adapter; adapter มีหน้าที่ parse payload แล้วส่ง input เข้า engine.
@@ -41,6 +41,7 @@ Codex interactive ต้องเปิด `/hooks` แล้ว review/trust pr
 | `.ai/bin/check-spec-edit.sh` | requirements path | advisory เมื่อแก้ approved requirements ทั้งที่ task ค้าง |
 | `.ai/bin/check-evidence.sh` | tasks content + mode | ตรวจ `Evidence:` ต่อ newly-completed task |
 | `.ai/bin/gate-task.sh` | tasks path/content + env | รัน typecheck/test + strict Evidence gate ตอน flip `[x]` |
+| `.ai/bin/check-b0-bootstrap.mjs` | CI bootstrap context | ตรวจ one-time single-operator authority และ exact CI composition |
 | `.ai/bin/install.sh` | current git clone | wire Tier 1 floor |
 
 Convention ของ command guards: exit 0 = allow, exit 2 = block พร้อม stderr. `check-spec-edit.sh` เตือนแต่ไม่ block.
@@ -52,7 +53,7 @@ Convention ของ command guards: exit 0 = allow, exit 2 = block พร้อ
 | Claude | `.claude/settings.json` -> `.claude/hooks/` -> `.ai/bin/` | fire ผ่าน `PreToolUse`, `PostToolUse`, `PreCompact`, `SessionStart` |
 | Codex | `.codex/config.toml` -> `.codex/hooks/` -> `.ai/bin/` | interactive ต้อง trust hooks ผ่าน `/hooks` |
 | OpenCode | `.opencode/plugins/ai-guard.js` และ spec/task adapters -> `.ai/bin/` | plugin แปลง exit 2 เป็น tool error |
-| Pi | ไม่มี core pre-tool hook | ใช้ procedural check + Tier 1 |
+| Pi | `.pi/extensions/sdd-enforcement.ts` | `tool_call` เรียก destructive/bypass guard และ task gate |
 | Git | `.githooks/` | ต้อง wire `core.hooksPath` ต่อ clone |
 | CI | `.github/workflows/ci.yml` | server run ไม่พึ่ง local hook setup |
 
@@ -106,14 +107,18 @@ Git pre-commit ไม่ rerun full tests; มัน scan secrets และต�
 
 `pre-push` อ่าน Git ref tuples แล้ว block push ไป `main`/`develop`, remote ref deletion และ non-fast-forward push.
 
-CI มี exact check names:
+CI มี job/check names:
 
 ```text
+B0 bootstrap authority
 platform (vendor check + typecheck + lint + tests)
 guards + spec-trace
 ```
 
-Workflow file ไม่ทำให้ check required เอง. สถานะตรวจ 2026-08-10 ยังไม่มี branch protection/ruleset; production ต้องเปิด server-side enforcement หลัง canary ตาม [08-pr-quality-gate-production.md](08-pr-quality-gate-production.md).
+Active ruleset require `platform (vendor check + typecheck + lint + tests)` และ
+`guards + spec-trace`. `B0 bootstrap authority` เป็น bootstrap verifier ไม่ใช่ required
+check ถาวร; `Universal PR Quality Gate` ต้องเพิ่มหลัง canary ตาม
+[08-pr-quality-gate-production.md](08-pr-quality-gate-production.md).
 
 ## 5.7 Tests และ troubleshooting
 
