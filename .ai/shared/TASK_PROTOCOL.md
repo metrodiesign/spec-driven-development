@@ -8,7 +8,7 @@ code, ALWAYS**. Do not jump to implementation for any non-trivial feature.
 
 ## The non-negotiable workflow
 
-Every feature flows through three artifacts under `specs/<feature-name>/`, IN ORDER,
+Every feature flows through three artifacts under `.ai/specs/<feature-name>/`, IN ORDER,
 with an **APPROVAL GATE** after each:
 
 1. `requirements.md` — WHAT the system must do (behavior, in [EARS notation](EARS.md))
@@ -75,8 +75,10 @@ complete task end-to-end in one pass, even when it spans many files.
 3. **Identify affected files** — list every file you expect to create or edit. The
    filesystem is ground truth; checkboxes and git log can lie, and untracked files do
    not appear in `git diff --stat`. Reconcile `tasks.md` against reality first.
-4. **Plan** — an internal TODO list for the whole task. State a brief plan with a
-   verify check per step.
+4. **Plan** — จัดทำ task-level implementation plan โดยใช้โครง canonical ใน
+   [OUTPUT_FORMATS.md](OUTPUT_FORMATS.md) และ
+   [implementation plan template](../templates/implementation-plan-template.md) แบบกรอกข้อมูลได้ คง
+   execution steps เป็นรายละเอียดการทำงานภายใน approved cohesive task.
 5. **Minimal change** — implement the WHOLE task in one cohesive pass. Touch only what
    the task requires. Match existing conventions exactly.
 6. **Tests** — write or extend tests proving the task satisfies its IDs. See
@@ -90,6 +92,22 @@ complete task end-to-end in one pass, even when it spans many files.
    [CONTEXT_MANAGEMENT.md](CONTEXT_MANAGEMENT.md).
 9. **Risks** — surface anything risky, deferred, or assumed in the summary (and a risk
    report when warranted — see [OUTPUT_FORMATS.md](OUTPUT_FORMATS.md)).
+
+### Planning contract
+
+task-level implementation plan ต้องระบุเป้าหมายและ `REQ-ID`/`F-ID`/`B-ID` ที่เชื่อมโยง,
+scope boundary, ไฟล์ที่ได้รับผลกระทบพร้อมสิ่งที่จะทำและเหตุผล, load-bearing decisions,
+reuse anchors, dependency-ordered steps พร้อม executable verification รวมถึง blockers,
+open questions หรือ assumptions ทั้งหมด เพิ่ม risks เฉพาะเมื่อเกี่ยวข้อง ใช้โครง plan ใน
+[OUTPUT_FORMATS.md](OUTPUT_FORMATS.md), กรอก
+[implementation plan template](../templates/implementation-plan-template.md) และให้รายละเอียด
+ด้าน test และ security เป็นไปตาม [TESTING_PROTOCOL.md](TESTING_PROTOCOL.md) และ
+[SECURITY_RULES.md](SECURITY_RULES.md)
+
+Execution steps เป็น working detail ภายใน approved cohesive task เดียว ส่วน review, checkbox
+และ `Evidence:` ยังคงอยู่ที่ task boundary หาก plan มี migration, destructive หรือ
+irreversible operation หรือ breaking external contract ให้บันทึก rollback และ recovery,
+compatibility impact และ affected consumers ตาม owner docs ข้างต้น
 
 Pause for confirmation at each TASK boundary (not after every file). Implement several
 tasks in one go only when explicitly asked (a range or "all"), proceeding in
