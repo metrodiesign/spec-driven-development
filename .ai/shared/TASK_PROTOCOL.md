@@ -6,6 +6,41 @@
 This project practices STRICT spec-driven development: **specifications come before
 code, ALWAYS**. Do not jump to implementation for any non-trivial feature.
 
+## ภาษาของผลลัพธ์
+
+ทุก `spec-*` และทุก harness ใช้นโยบายนี้ร่วมกัน: สร้างหรือแก้ข้อความอธิบายเป็นภาษาไทย
+ทั้ง requirements (เนื้อหา User Story และ Acceptance Criteria), design, tasks, bugfix,
+implementation plan, review/test report, handoff, retro, ชื่อและเนื้อหา issue ที่ sync
+รวมถึงข้อความที่สื่อสารกับผู้ใช้
+
+template ภาษาอังกฤษกำหนดโครงสร้าง ไม่ใช่ภาษาของผลลัพธ์ เติมชื่อ feature/task และเนื้อหา
+เป็นภาษาไทย คงหัวข้อบังคับตาม template เดิม ส่วนหัวข้อที่ตั้งเองใช้ภาษาไทย
+เมื่อแก้ spec เดิม ให้ปรับข้อความเฉพาะ scope งาน ไม่แปลเอกสารเก่าย้อนหลังทั้งชุด
+
+| ส่วน | สิ่งที่คงเดิม |
+|---|---|
+| ข้อมูลทางเทคนิค | code, identifier, command, path, technical term และ raw error/log |
+| Requirement | REQ-ID / F-ID / B-ID และ EARS keywords: THE SYSTEM SHALL, WHEN, WHILE, WHERE, IF, THEN |
+| สถานะและ schema | `Status:` พร้อมค่า enum เดิม, schema keys และ checkbox syntax |
+| Task metadata | `Satisfies:`, `Depends on:`, `Verify:`, `Batch:` และ `Evidence:` พร้อม keys ภายใน |
+| โครงเอกสาร | หัวข้อบังคับและคอลัมน์ตาราง เช่น Requirement Traceability, Design element, REQ, Section |
+
+ค่าในคอลัมน์ `Section` ต้องตรงกับ heading จริงที่อ้างอิง แม้ heading นั้นเป็นภาษาไทย
+
+ตัวอย่างรูปแบบภาษาไทย (task ยังไม่เสร็จ; ไม่ใช่หลักฐานว่า test ผ่าน):
+
+```markdown
+## REQ-1: การบันทึกฉบับร่าง
+**Acceptance Criteria (EARS):**
+- 1.1 WHEN ผู้ใช้กดบันทึก THE SYSTEM SHALL บันทึกเนื้อหาปัจจุบันเป็นฉบับร่าง
+
+- [ ] 1. บันทึกฉบับร่าง — ผู้ใช้เรียกคืนเนื้อหาที่บันทึกไว้ได้
+     Satisfies: REQ-1.1. Verify: ทดสอบบันทึกแล้วโหลดกลับและเปรียบเทียบเนื้อหา.
+```
+
+ก่อนส่งมอบ อ่านผลลัพธ์ซ้ำ: เนื้อหาที่สร้างหรือแก้เป็นภาษาไทย, machine contract คงเดิม,
+traceability อ้างอิงได้จริง และ Evidence ระบุเฉพาะคำสั่งกับผลที่รันและสังเกตจริง
+
 ## The non-negotiable workflow
 
 Every feature flows through three artifacts under `.ai/specs/<feature-name>/`, IN ORDER,
