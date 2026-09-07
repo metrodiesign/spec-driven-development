@@ -889,5 +889,137 @@ else
 fi
 
 echo "---"
+# sdd-thai-artifacts REQ-2.1/2.2/2.3: Thai prose keeps the existing machine contract.
+echo "=== spec-trace: EARS lint accepts five Thai forms, malformed Thai fails, English remains valid ==="
+OUT=$(PYTHONPATH="$REPO_ROOT/scripts" python3 - <<'PY' 2>&1
+from spec_trace import ears_ok
+
+valid_thai = [
+    "ระบบต้องบันทึกฉบับร่าง",
+    "เมื่อผู้ใช้กดบันทึก ระบบต้องเก็บเนื้อหาฉบับร่าง",
+    "ขณะที่ระบบออฟไลน์ ระบบต้องเก็บงานไว้ในเครื่อง",
+    "ในกรณีที่เปิดใช้คุณสมบัติบันทึกอัตโนมัติ ระบบต้องบันทึกทุกนาที",
+    "หากบันทึกไม่สำเร็จ ระบบต้องแจ้งข้อผิดพลาด",
+]
+malformed_thai = [
+    "ระบบต้อง",
+    "เมื่อ ระบบต้องบันทึกฉบับร่าง",
+    "ขณะที่ระบบออฟไลน์ ระบบต้อง",
+    "ข้อความอธิบายกล่าวถึงคำว่า ระบบต้องบันทึก เท่านั้น",
+]
+valid_english = [
+    "THE SYSTEM SHALL save the draft",
+    "WHEN the user saves, THE SYSTEM SHALL persist the draft",
+    "IF saving fails THEN show an error",
+]
+assert all(ears_ok(text) for text in valid_thai)
+assert not any(ears_ok(text) for text in malformed_thai)
+assert all(ears_ok(text) for text in valid_english)
+PY
+); RC=$?
+if [ "$RC" -eq 0 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: Thai EARS grammar :: rc=$RC :: $OUT"
+fi
+
+echo "=== Thai artifacts: slice, trace and Evidence retain their contracts ==="
+R="$(new_repo)"
+CLEAN_DIRS+=("$R")
+mkdir -p "$R/.ai/specs/thai-artifacts"
+cat > "$R/.ai/specs/thai-artifacts/requirements.md" <<'EOF'
+# ข้อกำหนด: การบันทึกฉบับร่าง
+> Status: draft
+## REQ-1: การบันทึกฉบับร่าง
+**ความต้องการของผู้ใช้:** ในฐานะผู้ใช้ ฉันต้องการบันทึกฉบับร่าง เพื่อกลับมาแก้ไขภายหลัง
+**เกณฑ์การยอมรับ:**
+- 1.1 ระบบต้องบันทึกฉบับร่าง
+- 1.2 เมื่อผู้ใช้กดบันทึก ระบบต้องเก็บเนื้อหาฉบับร่าง
+- 1.3 ขณะที่ระบบออฟไลน์ ระบบต้องเก็บงานไว้ในเครื่อง
+- 1.4 ในกรณีที่เปิดใช้คุณสมบัติบันทึกอัตโนมัติ ระบบต้องบันทึกทุกนาที
+- 1.5 หากบันทึกไม่สำเร็จ ระบบต้องแจ้งข้อผิดพลาด
+EOF
+cat > "$R/.ai/specs/thai-artifacts/design.md" <<'EOF'
+# Design: การบันทึกฉบับร่าง
+> Status: draft
+## การจัดเก็บฉบับร่าง
+เก็บข้อความและเวลาแก้ไขล่าสุดสำหรับเรียกคืน
+## Requirement Traceability
+| Design element | REQ | Section |
+|---|---|---|
+| การเก็บข้อมูลผู้ใช้ | REQ-1 | การจัดเก็บฉบับร่าง |
+EOF
+cat > "$R/.ai/specs/thai-artifacts/tasks.md" <<'EOF'
+# Implementation Tasks: การบันทึกฉบับร่าง
+> Status: draft
+- [x] 1. บันทึกและเรียกคืนฉบับร่าง
+  Satisfies: REQ-1
+  Verify: ทดสอบบันทึกแล้วโหลดกลับ
+
+  Evidence:
+
+  - test: `printf '%s' draft` -> draft (ข้อมูลจำลองสำหรับทดสอบ parser)
+  - deviations: ไม่มี (ข้อมูลจำลอง)
+
+EOF
+OUT=$( cd "$R" && "$SLICE" thai-artifacts 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -qF 'บันทึกและเรียกคืนฉบับร่าง' \
+  && printf '%s' "$OUT" | grep -qF '> Status: draft' \
+  && printf '%s' "$OUT" | grep -qF 'เมื่อผู้ใช้กดบันทึก ระบบต้องเก็บเนื้อหาฉบับร่าง' \
+  && printf '%s' "$OUT" | grep -qF 'เก็บข้อความและเวลาแก้ไขล่าสุดสำหรับเรียกคืน' \
+  && ! printf '%s' "$OUT" | grep -q 'MISSING:'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: Thai slice :: rc=$RC :: $OUT"
+fi
+OUT=$( cd "$R" && "$SPEC_TRACE" thai-artifacts "$R/.ai/specs" 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: Thai trace :: rc=$RC :: $OUT"
+fi
+OUT=$( bash "$REPO_ROOT/.ai/bin/check-evidence.sh" --strict < "$R/.ai/specs/thai-artifacts/tasks.md" 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: Thai Evidence :: rc=$RC :: $OUT"
+fi
+printf '%s\n' '- [x] 1. งานภาษาไทยที่ขาดหลักฐาน' > "$R/.ai/specs/thai-artifacts/tasks.md"
+OUT=$( bash "$REPO_ROOT/.ai/bin/check-evidence.sh" --strict < "$R/.ai/specs/thai-artifacts/tasks.md" 2>&1 ); RC=$?
+if [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -qF 'งานภาษาไทยที่ขาดหลักฐาน'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: Thai task without Evidence must fail :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-to-goal: readable Evidence block stays outside task title, Satisfies and Verify ==="
+OUT=$(PYTHONPATH="$REPO_ROOT/scripts" python3 - <<'PY' 2>&1
+from spec_to_goal import task_maps
+
+tasks = """- [x] 1. บันทึกและเรียกคืนฉบับร่าง
+  Satisfies: REQ-1.1
+  Verify: ทดสอบบันทึกแล้วโหลดกลับ
+
+  Evidence:
+
+  - test: ผ่าน
+  - deviations: ไม่มี
+
+"""
+entry = task_maps(tasks, {1: {1}})[0]
+assert entry["title"] == "บันทึกและเรียกคืนฉบับร่าง"
+assert entry["refs"] == {(1, 1)}
+assert entry["verify"] == "ทดสอบบันทึกแล้วโหลดกลับ"
+assert "Evidence" not in repr(entry)
+assert "test: ผ่าน" not in repr(entry)
+PY
+); RC=$?
+if [ "$RC" -eq 0 ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: readable Evidence task parsing :: rc=$RC :: $OUT"
+fi
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

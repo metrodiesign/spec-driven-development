@@ -6,6 +6,8 @@ argument-hint: <task id, range like 1-3, or "all">
 
 # Implement task(s): $ARGUMENTS
 
+ก่อนสร้างหรือแก้ผลลัพธ์ อ่านและใช้ [นโยบายภาษาของผลลัพธ์](../../../.ai/shared/TASK_PROTOCOL.md#ภาษาของผลลัพธ์)
+
 Resolve $ARGUMENTS to the target task(s): a single id (e.g. 2), a range (1-3), or
 all incomplete tasks. For multiple tasks, work in dependency order.
 
@@ -49,11 +51,10 @@ For EACH task:
 4. Mark the task "- [x]" in tasks.md, state which IDs are now satisfied, AND in
    the SAME edit append an `Evidence:` block directly under that task line — the
    box and the evidence flip together. Record what you actually ran and observed
-   (not the planned `Verify:` line):
-       Evidence:
-         - test: `<exact command>` -> <result, e.g. 47 passed / 0 failed>
-         - viewports: 375 OK | 768 OK | 1440 OK   (browser tasks; else `n/a — logic-only`)
-         - deviations: <none | what differed from design/requirements and why>
+   (not the planned `Verify:` line). ใช้รูปแบบเต็มจาก
+   [ตัวอย่างหลักฐาน](../../../.ai/shared/TESTING_PROTOCOL.md#evidence-block-format):
+   ระยะเยื้องสองช่อง เว้นบรรทัดก่อนและหลัง `Evidence:` และแสดงแต่ละผลตรวจเป็นรายการย่อย
+   ตรวจหน้าตัวอย่าง Markdown ว่าหลักฐานไม่รวมกับคำอธิบายงานเป็นย่อหน้าเดียว
    For a browser task you must have Read references/browser-verify.md and verified
    `clientWidth === target` at each viewport — record the values, never assert a
    pass you did not observe; if a check could not be run, say so in `deviations:`.

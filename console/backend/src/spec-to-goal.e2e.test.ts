@@ -175,6 +175,54 @@ test('complete spec: exit 0, active ACs pass freezeContract, 1:1 mapping, no pen
   });
 });
 
+test('Thai requirements H1 and readable Evidence format generate the same title and task contract', { skip }, () => {
+  withSpecsDir((dir) => {
+    const requirements = [
+      '# ข้อกำหนด: การบันทึกฉบับร่าง',
+      HEADER,
+      '',
+      '## ภาพรวม',
+      '',
+      'บันทึกงานเพื่อกลับมาแก้ไขภายหลัง',
+      '',
+      '## REQ-1: การบันทึกฉบับร่าง',
+      '',
+      '**ความต้องการของผู้ใช้:** ในฐานะผู้ใช้ ฉันต้องการบันทึกฉบับร่าง',
+      '',
+      '**เกณฑ์การยอมรับ:**',
+      '',
+      '- 1.1 เมื่อผู้ใช้กดบันทึก ระบบต้องเก็บเนื้อหาฉบับร่าง',
+      '',
+    ].join('\n');
+    const tasks = [
+      '# รายการงาน: การบันทึกฉบับร่าง',
+      HEADER,
+      '',
+      '- [x] 1. บันทึกและเรียกคืนฉบับร่าง',
+      '  Satisfies: REQ-1.1',
+      '  Verify: node --test draft.test.ts',
+      '',
+      '  Evidence:',
+      '',
+      '  - test: `node --test draft.test.ts` -> 1 ผ่าน',
+      '  - deviations: ไม่มี',
+      '',
+    ].join('\n');
+    writeSpec(dir, 'thai-fixture', { requirements, tasks });
+
+    const res = generate(dir, 'thai-fixture');
+    assert.equal(res.status, 0, res.stderr);
+    const doc = parseYaml(readFileSync(res.draftPath, 'utf8'));
+    assert.equal(doc.goal.title, 'การบันทึกฉบับร่าง');
+    assert.equal(doc.acceptance_criteria[0].description, 'เมื่อผู้ใช้กดบันทึก ระบบต้องเก็บเนื้อหาฉบับร่าง');
+    assert.equal(doc.acceptance_criteria[0].verification, 'node --test draft.test.ts');
+
+    const { graph } = readGraph(dir, 'thai-fixture');
+    assert.equal(graph.tasks[0]!.title, 'บันทึกและเรียกคืนฉบับร่าง');
+    assert.deepEqual(graph.tasks[0]!.satisfies, ['AC-1.1']);
+  });
+});
+
 test('Satisfies semantics match spec_trace: whole-REQ, dash range, REQ-N.M all route to their own Verify (REQ-2.3/2.4)', { skip }, () => {
   withSpecsDir((dir) => {
     writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });

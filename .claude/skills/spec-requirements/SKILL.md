@@ -6,6 +6,8 @@ argument-hint: <feature folder name (optional)>
 
 # Generate requirements.md
 
+ก่อนสร้างหรือแก้ผลลัพธ์ อ่านและใช้ [นโยบายภาษาของผลลัพธ์](../../../.ai/shared/TASK_PROTOCOL.md#ภาษาของผลลัพธ์)
+
 Resolve the target spec folder: use $ARGUMENTS if given; otherwise use the
 feature folder created by /spec-new in this conversation. If neither identifies
 one and `.ai/specs/` holds several features, list them and ask — never guess.
@@ -32,31 +34,36 @@ review, update the table to match before approval.
 
 Write `.ai/specs/<feature>/requirements.md` with this structure:
 
-  # Requirements: <Feature Name>
+  # ข้อกำหนด: <ชื่อฟีเจอร์>
   > Status: draft
 
-  ## Overview
-  <one paragraph tying this to product.md>
+  ## ภาพรวม
 
-  ## REQ-1: <Capability, e.g. User Registration>
-  **User Story:** As a <role>, I want <goal>, so that <benefit>.
-  **Acceptance Criteria (EARS):**
-  - 1.1  THE SYSTEM SHALL <behavior>                               (ubiquitous)
-  - 1.2  WHEN <event> THE SYSTEM SHALL <behavior>                  (event-driven)
-  - 1.3  WHILE <state> THE SYSTEM SHALL <behavior>                 (state-driven)
-  - 1.4  WHERE <feature is included> THE SYSTEM SHALL <behavior>   (optional)
-  - 1.5  IF <error condition> THEN THE SYSTEM SHALL <response>     (error handling)
+  <หนึ่งย่อหน้าเชื่อมโยงงานกับ product.md>
 
-  (repeat REQ-2, REQ-3, ...)
+  ## REQ-1: <ความสามารถ เช่น การลงทะเบียนผู้ใช้>
 
-  ## Edge Cases & Open Questions
-  <anything ambiguous>
+  **ความต้องการของผู้ใช้:** ในฐานะ<บทบาท> ฉันต้องการ<เป้าหมาย> เพื่อให้<ประโยชน์>
+
+  **เกณฑ์การยอมรับ:**
+
+  - 1.1  ระบบต้อง<พฤติกรรม>                                  (ข้อกำหนดทั่วไป)
+  - 1.2  เมื่อ<เหตุการณ์> ระบบต้อง<พฤติกรรม>                  (ตอบสนองต่อเหตุการณ์)
+  - 1.3  ขณะที่<สถานะ> ระบบต้อง<พฤติกรรม>                     (ระหว่างอยู่ในสถานะ)
+  - 1.4  ในกรณีที่<เปิดใช้คุณสมบัตินี้> ระบบต้อง<พฤติกรรม>              (เมื่อเปิดใช้คุณสมบัติ)
+  - 1.5  หาก<เงื่อนไขผิดพลาด> ระบบต้อง<การตอบสนอง>        (จัดการข้อผิดพลาด)
+
+  (เพิ่ม REQ-2, REQ-3, ... ตามความสามารถที่ต้องการ)
+
+  ## กรณีพิเศษและคำถามที่ยังไม่ยุติ
+
+  <ประเด็นที่ยังไม่ชัดเจน>
 
 Rules: every requirement is atomic, testable, and has a stable ID. One observable
 behavior per criterion — split compound criteria joined by "and"; reject
 subjective wording ("fast", "user-friendly", "looks good") unless quantified
 with a measurable threshold. Cover the happy path AND error/edge cases (use
-IF...THEN).
+รูปประโยค “หาก… ระบบต้อง…” ตาม EARS.md).
 
 When done: STOP. Show me a summary and ask me to review. In derive mode the
 design already exists, so suggest `/spec-tasks` next (or `/spec-analyze` first
