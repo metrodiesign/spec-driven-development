@@ -6,6 +6,8 @@ argument-hint: <feature folder name (optional)>
 
 # Generate tasks.md
 
+ก่อนสร้างหรือแก้ผลลัพธ์ อ่านและใช้ [นโยบายภาษาของผลลัพธ์](../../../.ai/shared/TASK_PROTOCOL.md#ภาษาของผลลัพธ์)
+
 Resolve the target spec: use $ARGUMENTS if given; if `.ai/specs/` holds more
 than one feature and none was named, list them and ask — never guess.
 
@@ -18,33 +20,37 @@ confirmation first — and if I confirm, flip the draft one(s) to
 model: each task is a COHESIVE, INDEPENDENTLY VERIFIABLE slice that you can
 implement end-to-end in one pass, even if it spans many files.
 
-# Implementation Tasks: <Feature Name>
+# รายการงาน: <ชื่อฟีเจอร์>
 > Status: draft
 
-> Each task is a cohesive, independently verifiable slice. Implement a whole task
-> in one pass (it may touch many files). Decompose into sub-steps yourself at
-> execution time — do NOT pre-split tasks here.
+> แต่ละ task เป็นงานที่เชื่อมโยงกันและตรวจรับแยกได้ ลงมือให้ครบในรอบเดียวแม้แตะหลายไฟล์
+> แตกขั้นตอนย่อยตอนลงมือ ไม่แยกเป็น task ย่อยไว้ล่วงหน้าในเอกสารนี้
 
-- [ ] 1. <Cohesive capability> — <one line: scope + what "done" means>
-     Satisfies: REQ-1 (all criteria). Verify: <test / command>.
-- [ ] 2. <Cohesive capability> — <scope + done>
-     Satisfies: REQ-2. Depends on: 1. Verify: <test / command>.
-- [ ] 3. <Cohesive capability> [optional] — <scope + done>
-     Satisfies: REQ-3. Batch: B1.
-- [ ] 4. <Cohesive capability> — <scope + done>
-     Satisfies: REQ-4. Batch: B1.
+- [ ] 1. <ความสามารถที่ทำครบในงานเดียว> — <ขอบเขตและเกณฑ์เสร็จในหนึ่งบรรทัด>
+  Satisfies: REQ-1 (ทุกเกณฑ์). Verify: <test หรือคำสั่งตรวจ>.
+
+- [ ] 2. <ความสามารถที่ทำครบในงานเดียว> — <ขอบเขตและเกณฑ์เสร็จ>
+  Satisfies: REQ-2. Depends on: 1. Verify: <test หรือคำสั่งตรวจ>.
+
+- [ ] 3. <ความสามารถที่ทำครบในงานเดียว> [optional] — <ขอบเขตและเกณฑ์เสร็จ>
+  Satisfies: REQ-3. Batch: B1.
+
+- [ ] 4. <ความสามารถที่ทำครบในงานเดียว> — <ขอบเขตและเกณฑ์เสร็จ>
+  Satisfies: REQ-4. Batch: B1.
+
+ใช้ระยะเยื้องสองช่องตามตัวอย่าง คงข้อมูลอ้างอิงติดกับบรรทัดงาน เมื่อเติมหลักฐานให้เว้นบรรทัดก่อนและหลัง `Evidence:`
+แล้วใช้รายการย่อยตาม `.ai/shared/TESTING_PROTOCOL.md` ตรวจหน้าตัวอย่าง Markdown ก่อนส่งมอบ
 
 ## Suggested execution batches
 
-> DEFAULT for a COUPLED feature (tasks share primitives/data/lib): run ALL tasks in
-> ONE session — `scripts/pane-loop.sh <feature> all-in-one` (or `/spec-implement all`).
-> Separate sessions do NOT share cache, so each one re-pays the cold cache-write to
-> re-acquire shared context — measured ~30-40% more expensive for coupled work.
-> Split into separate sessions/panes ONLY for accuracy: a genuinely INDEPENDENT task
-> (no shared state), or to isolate a CORE domain (e.g. pricing logic) from long-context
-> drift — a conscious accuracy trade, not a cost win.
-> `Batch:` tags still group small same-type tasks for finer control; feed with `+`
-> (`scripts/pane-loop.sh <feature> 3+4`).
+> ค่าเริ่มต้นสำหรับฟีเจอร์ที่ tasks ใช้ primitives/data/lib ร่วมกัน: รันทั้งหมดใน session เดียว
+> ด้วย `scripts/pane-loop.sh <feature> all-in-one` หรือ `/spec-implement all`
+> session แยกไม่ใช้ cache ร่วมกัน จึงต้องจ่าย cold cache-write เพื่อโหลด context ซ้ำ
+> งานที่เกี่ยวข้องกันวัดได้ว่าแพงขึ้นประมาณ 30–40%
+> แยก session/pane เพื่อความแม่นยำเฉพาะงานที่เป็นอิสระจริง ไม่มี shared state
+> หรือเพื่อแยก CORE domain เช่น pricing logic จาก context drift โดยยอมรับค่าใช้จ่ายเพิ่ม
+> `Batch:` ยังใช้จัดกลุ่มงานเล็กชนิดเดียวกัน ส่งกลุ่มด้วย `+`
+> (`scripts/pane-loop.sh <feature> 3+4`)
 
 Rules:
 

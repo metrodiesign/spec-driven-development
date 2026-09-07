@@ -6,6 +6,8 @@ argument-hint: <feature folder name (optional)>
 
 # Generate design.md
 
+ก่อนสร้างหรือแก้ผลลัพธ์ อ่านและใช้ [นโยบายภาษาของผลลัพธ์](../../../.ai/shared/TASK_PROTOCOL.md#ภาษาของผลลัพธ์)
+
 Resolve the target spec: use $ARGUMENTS if given; if `.ai/specs/` holds more
 than one feature and none was named, list them and ask — never guess.
 
@@ -28,19 +30,18 @@ never guess the mode.
 
 Then write `.ai/specs/<feature>/design.md`:
 
-  # Design: <Feature Name>
+  # Design: <ชื่อฟีเจอร์>
   > Status: draft
 
-  ## Architecture Overview        — components and responsibilities
-  ## Sequence Diagrams            — Mermaid for key flows
-  ## Data Models & Interfaces     — schemas, types, API contracts
-  ## Technology Decisions         — choices + rationale (prefer tech.md)
-  ## Error Handling Strategy      — how each error case is handled
-  ## Testing Strategy             — unit/integration/property; map to REQ IDs
-  ## Requirement Traceability     — table: | Design element | REQ | Section |; Section
-                                    MUST be the exact text of a real `## ` heading
-                                    elsewhere in this same design.md (scripts/spec-slice.sh
-                                    matches it by exact string equality, not substring)
+  ## Architecture Overview        — ส่วนประกอบและหน้าที่
+  ## Sequence Diagrams            — Mermaid แสดงลำดับงานสำคัญ
+  ## Data Models & Interfaces     — schema, type และสัญญา API
+  ## Technology Decisions         — ทางเลือกและเหตุผล (อ้าง tech.md ก่อน)
+  ## Error Handling Strategy      — วิธีจัดการข้อผิดพลาดแต่ละกรณี
+  ## Testing Strategy             — unit/integration/property พร้อม REQ-ID ที่ครอบคลุม
+  ## Requirement Traceability     — ตาราง: | Design element | REQ | Section |; ค่า Section
+                                    ต้องตรงกับข้อความ heading `## ` จริงใน design.md นี้
+                                    โดย scripts/spec-slice.sh เทียบข้อความตรงตัว ไม่ใช่ substring
 
 Sync mode: if design.md already exists and requirements.md changed after it was
 written, do NOT regenerate the whole file — patch only the sections affected by

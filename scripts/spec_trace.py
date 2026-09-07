@@ -10,7 +10,8 @@
      - prefix:          REQ-1.2
      - ทั้ง REQ:        REQ-1 / REQ-1 (all criteria) -> ทุกเกณฑ์ของ REQ-1
    วงเล็บกำกับ เช่น `(partial)` ไม่ทำให้ parse พัง.
-2. EARS lint — ทุกเกณฑ์ต้องมี THE SYSTEM SHALL / WHEN / WHILE / WHERE / IF...THEN
+2. EARS lint — ทุกเกณฑ์ต้องตรงรูปประโยคภาษาไทย `ระบบต้อง ...` หรือรูปมีเงื่อนไข
+   `เมื่อ` / `ขณะที่` / `ในกรณีที่` / `หาก` หรือรูปภาษาอังกฤษเดิม
    (ดูข้อความเต็มของเกณฑ์รวมบรรทัดต่อเนื่องที่ indent).
 3. sliceability — spec ที่ยังมี unchecked task ต้องมี traceability table ซึ่งมี column
    `REQ`/`Satisfies` และ `Section`; ค่า `Section` ต้องตรงกับ real `##` heading แบบ exact match.
@@ -41,6 +42,12 @@ REF_RE = re.compile(
 EARS_KEYWORD_RE = re.compile(r"(?<![A-Za-z])(?:WHEN|WHILE|WHERE)(?![A-Za-z])")
 EARS_IF_RE = re.compile(r"(?<![A-Za-z])IF(?![A-Za-z])")
 EARS_THEN_RE = re.compile(r"(?<![A-Za-z])THEN(?![A-Za-z])")
+THAI_EARS_RE = re.compile(
+    r"^(?:"
+    r"ระบบต้อง\s*\S.*"
+    r"|(?:เมื่อ|ขณะที่|ในกรณีที่|หาก)\s*\S.*?\s+ระบบต้อง\s*\S.*"
+    r")$"
+)
 
 
 def parse_requirements(text):
@@ -246,7 +253,9 @@ def ears_ok(text):
         return True
     if EARS_KEYWORD_RE.search(text):
         return True
-    return bool(EARS_IF_RE.search(text) and EARS_THEN_RE.search(text))
+    if EARS_IF_RE.search(text) and EARS_THEN_RE.search(text):
+        return True
+    return bool(THAI_EARS_RE.fullmatch(text.strip()))
 
 
 def run(feature, specs_dir):
@@ -284,8 +293,9 @@ def run(feature, specs_dir):
     # --- EARS lint ---
     ears_bad = [f"{maj}.{mnr}: {text[:80]}" for maj, mnr, text in criteria if not ears_ok(text)]
     if ears_bad:
-        problems.append(("EARS lint ไม่ผ่าน (ต้องมี THE SYSTEM SHALL / WHEN / WHILE / WHERE / "
-                         "IF...THEN):", ears_bad))
+        problems.append(("EARS lint ไม่ผ่าน (ใช้ 'ระบบต้อง <พฤติกรรม>', "
+                         "'<เมื่อ|ขณะที่|ในกรณีที่|หาก><เงื่อนไข> ระบบต้อง <พฤติกรรม>' "
+                         "หรือรูป EARS ภาษาอังกฤษ):", ears_bad))
 
     criteria_by_req = {}
     for maj, mnr, _ in criteria:

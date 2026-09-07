@@ -89,13 +89,15 @@ def fail(msg):
 
 
 def title_from_h1(text, fallback):
-    """goal.title จาก H1 (REQ-3.2): strip prefix 'Requirements' + separator นำหน้า
-    (':' / '—' / '-') — รองรับทั้ง `# Requirements: <name>` และ `# Requirements — <name>`."""
+    """goal.title จาก H1 (REQ-3.2): strip prefix `Requirements` / `ข้อกำหนด`
+    และ separator นำหน้า (`:` / `—` / `-`)."""
     for line in text.splitlines():
         if line.startswith("# "):
             t = line[2:].strip()
             if t.startswith("Requirements"):
                 t = t[len("Requirements"):]
+            elif t.startswith("ข้อกำหนด"):
+                t = t[len("ข้อกำหนด"):]
             return t.lstrip(" :—-").strip() or fallback
     return fallback
 

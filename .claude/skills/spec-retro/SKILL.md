@@ -11,6 +11,9 @@ allowed-tools:
 
 # Session Retrospective (lean)
 
+ก่อนสร้างหรือแก้ artifact ให้ใช้
+[นโยบายภาษาของผลลัพธ์](../../../.ai/shared/TASK_PROTOCOL.md#ภาษาของผลลัพธ์)
+
 Produce a SHORT retrospective. Run at the END of a work session, BEFORE /clear or
 compaction, while the full session history is still in context.
 
@@ -74,9 +77,9 @@ purpose to cut output cost.
    ## Session Cost
 
    - Session ID: `<resolved-uuid>` (ค่า literal จาก `echo $CLAUDE_CODE_SESSION_ID` — ไม่ใช่ชื่อ env var)
-   - Total (estimated; subscription bills nothing per token): $X.XX
-   - Duration ~Xm / Lines +A / -B (from ledger)
-   - Source: `.cost.total_cost_usd` via `~/.claude/cost-sessions/<resolved-uuid>.json`
+   - Total (ค่าประมาณ โดย subscription ไม่คิดค่าบริการต่อ token): $X.XX
+   - Duration ~Xm / Lines +A / -B (จาก ledger)
+   - Source: `.cost.total_cost_usd` ผ่าน `~/.claude/cost-sessions/<resolved-uuid>.json`
 
    <BREAKDOWN>
    (แทนด้วย output ของ `scripts/session-cost.py --breakdown-only` — ตาราง token/model

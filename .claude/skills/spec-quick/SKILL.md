@@ -6,6 +6,8 @@ argument-hint: <short description of the feature>
 
 # Quick Spec (no gates)
 
+ก่อนสร้างหรือแก้ผลลัพธ์ อ่านและใช้ [นโยบายภาษาของผลลัพธ์](../../../.ai/shared/TASK_PROTOCOL.md#ภาษาของผลลัพธ์)
+
 The feature idea is: $ARGUMENTS
 
 This is the gate-free path the constitution allows for SMALL, well-understood features.
