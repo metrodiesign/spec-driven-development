@@ -1,6 +1,7 @@
 # Personal, per-project overrides — never commit
 CLAUDE.local.md
 .claude/settings.local.json
+.DS_Store
 
 # Dependencies / build
 node_modules/
