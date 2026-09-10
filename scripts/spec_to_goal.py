@@ -29,13 +29,6 @@ import spec_trace
 
 USAGE = "usage: scripts/spec-to-goal.sh <feature> [--force] [--specs-dir <path>]"
 
-# marker ภายใน task block — ลำดับใดก็ได้; segment ของ marker ตัดท้ายที่ marker ถัดไป
-MARKER_RE = re.compile(r"Satisfies:|Verify:|Depends on:|Batch:")
-
-# หัว task block: checkbox (indent ได้ — iter_task_blocks รับผ่าน lstrip) + ordinal
-# ที่กลายเป็น `T-<n>` ใน task graph (phase5-stage4 REQ-2.1/2.9)
-TASK_HEAD_RE = re.compile(r"^\s*- \[[ x]\]\s*(\d+)\.\s*")
-
 # grammar ของ `Depends on:` แคบโดยเจตนา (REQ-2.6): อ่านเฉพาะ run แรกของเลขคั่น
 # จุลภาคที่ติดกับ marker แล้วหยุดที่อักขระแรกที่ไม่เข้ารูป — prose/วงเล็บที่ตามหลัง
 # เลขจึงไม่ถูกนับเป็น dependency (spec จริงเขียน `Depends on: 1 (เหตุผล...)`)
@@ -120,45 +113,30 @@ def task_maps(tasks_text, criteria_by_req):
     ห้ามเกิด (REQ-2.6/2.8/2.9).
     """
     entries = []
-    seen_ordinals = set()
-    for block in spec_trace.iter_task_blocks(tasks_text):
-        head = TASK_HEAD_RE.match(block)
-        if head is None:
-            raise SpecError(f"task block has no leading ordinal '- [ ] N.': {block[:60]}")
-        ordinal = int(head.group(1))
-        if ordinal in seen_ordinals:
-            raise SpecError(f"duplicate task ordinal {ordinal} in tasks.md: {block[:60]}")
-        seen_ordinals.add(ordinal)
-
-        rest = block[head.end():]
-        first_marker = MARKER_RE.search(rest)
-        # ไม่มี marker เลย -> ทั้งท้าย block เป็น title (D13)
-        title = (rest[:first_marker.start()] if first_marker else rest).strip()[:120].rstrip()
-
-        markers = list(MARKER_RE.finditer(block))
+    try:
+        roots = spec_trace.parse_task_hierarchy(tasks_text)
+    except spec_trace.TaskHierarchyError as error:
+        raise SpecError(str(error)) from error
+    seen_ordinals = {int(root.ordinal) for root in roots}
+    for root in roots:
+        ordinal = int(root.ordinal)
         refs = set()
-        verify_cmd = ""
-        depends = []
-        for j, m in enumerate(markers):
-            end = markers[j + 1].start() if j + 1 < len(markers) else len(block)
-            segment = block[m.end():end]
-            if m.group(0) == "Satisfies:":
+        for segment in root.satisfies:
+            refs |= spec_trace.expand_refs(segment, criteria_by_req)
+        for child in root.children:
+            for segment in child.satisfies:
                 refs |= spec_trace.expand_refs(segment, criteria_by_req)
-            elif m.group(0) == "Verify:" and not verify_cmd:
-                verify_cmd = segment.strip()
-            elif m.group(0) == "Depends on:":
-                # ทุก occurrence สะสมเหมือน Satisfies: — task ที่ *อธิบาย* marker นี้
-                # ในเนื้อความ (backtick) มี `Depends on:` ปลอมมาก่อนตัวจริง; ถ้าเอา
-                # occurrence แรกอย่างเดียว dependency จริงจะหายเงียบ
-                run = DEPENDS_RE.match(block, m.end())
-                if run:
-                    depends += [int(n) for n in re.split(r"\s*,\s*", run.group(1))]
+        depends = []
+        for segment in root.depends:
+            run = DEPENDS_RE.match(segment)
+            if run:
+                depends += [int(n) for n in re.split(r"\s*,\s*", run.group(1))]
         for major, minor in sorted(refs):
             if minor not in criteria_by_req.get(major, ()):
                 raise SpecError(f"task {ordinal} Satisfies ref AC-{major}.{minor} has no "
                                 "matching criterion in requirements.md")
-        entries.append({"ordinal": ordinal, "title": title, "refs": refs,
-                        "depends": list(dict.fromkeys(depends)), "verify": verify_cmd})
+        entries.append({"ordinal": ordinal, "title": root.headline[:120].rstrip(), "refs": refs,
+                        "depends": list(dict.fromkeys(depends)), "verify": root.verify})
 
     for entry in entries:
         for dep in entry["depends"]:

@@ -76,6 +76,13 @@ commit_content "$FIXTURE" $'- [x] 1. Complete me\n     Evidence: suite passed\n'
 run_scope "$FIXTURE" push "" "$BEFORE"
 expect_rc 0 "push inline Evidence"
 
+echo "=== fenced completed checkbox added in transcript is not selected ==="
+new_fixture $'- [x] 1. Historical\n     Evidence: suite passed\n'
+FIXTURE="$NEW_FIXTURE"
+commit_content "$FIXTURE" $'```md\n- [x] 9. fenced completed example\n```\n- [x] 1. Historical\n     Evidence: suite passed\n       - transcript: `- [x] 8. evidence checkbox`\n'
+run_scope "$FIXTURE" pull_request develop ""
+expect_rc 0 "fenced/Evidence completed checkbox stays opaque"
+
 echo "=== placeholder Evidence reports file and opening line ==="
 new_fixture $'- [ ] 1. Complete me\n'
 FIXTURE="$NEW_FIXTURE"
@@ -94,12 +101,12 @@ commit_content "$FIXTURE" $'# New heading\n- [x] 1. Historical\n     Evidence: T
 run_scope "$FIXTURE" pull_request develop ""
 expect_rc 0 "unrelated tasks.md edit"
 
-echo "=== duplicate opening text selects new physical line only ==="
+echo "=== repeated headline selects new physical line only ==="
 new_fixture $'- [x] 1. Duplicate\n     Evidence: TODO\n- [ ] 2. Open\n'
 FIXTURE="$NEW_FIXTURE"
-commit_content "$FIXTURE" $'- [x] 1. Duplicate\n     Evidence: TODO\n- [x] 1. Duplicate\n     Evidence: suite passed\n'
+commit_content "$FIXTURE" $'- [x] 1. Duplicate\n     Evidence: TODO\n- [x] 2. Duplicate\n     Evidence: suite passed\n'
 run_scope "$FIXTURE" pull_request develop ""
-expect_rc 0 "duplicate opening-line identity"
+expect_rc 0 "repeated-headline physical-line identity"
 
 echo "=== moved and edited completed task remains newly selected ==="
 new_fixture $'- [x] 1. Move me\n     Evidence: suite passed\n- [ ] 2. Anchor\n'

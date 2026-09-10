@@ -41,7 +41,13 @@ ls -la "$SPEC_DIR/"
 echo ""
 echo "== [b] checkboxes: $SPEC_DIR/tasks.md =="
 if [[ -f "$SPEC_DIR/tasks.md" ]]; then
-  grep -n '^- \[.\]' "$SPEC_DIR/tasks.md" || echo "(ไม่มีบรรทัด checkbox ใน tasks.md)"
+  PYTHONPATH="$REPO/scripts" python3 - "$SPEC_DIR/tasks.md" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+rows = spec_trace.task_checkbox_lines(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print("\n".join(f"{line}:{text}" for line, text in rows) or "(ไม่มีบรรทัด checkbox ใน tasks.md)")
+PY
 else
   echo "(ยังไม่มี tasks.md — phase นี้ยังไปไม่ถึง tasks)"
 fi

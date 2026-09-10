@@ -70,6 +70,30 @@ OUT=$("$ENGINE" "$SANDBOX/.claude/specs/approved-open/tasks.md"); assert silent 
 OUT=$("$ENGINE" "/tmp/random/notes.md"); assert silent "engine: unrelated path"          "$?" "$OUT"
 OUT=$("$ENGINE" "$AI_APPROVED_OPEN"); assert warn "engine: canonical .ai/specs approved + open" "$?" "$OUT"
 
+mkdir -p "$SANDBOX/.ai/specs/approved-nested"
+NESTED_REQ="$SANDBOX/.ai/specs/approved-nested/requirements.md"
+printf '> Status: approved 2026-09-10\n' > "$NESTED_REQ"
+printf -- '- [ ] 1. root open\n  - [ ] 1.1 child open\n' > "$SANDBOX/.ai/specs/approved-nested/tasks.md"
+OUT=$("$ENGINE" "$NESTED_REQ")
+if printf '%s' "$OUT" | grep -q 'ยังมี 1 task ค้าง'; then
+  assert warn "engine: nested child does not inflate open root count" "$?" "$OUT"
+else
+  fail=$((fail + 1)); echo "FAIL [engine: nested count] expected exactly 1 root task :: $OUT"
+fi
+
+mkdir -p "$SANDBOX/.ai/specs/approved-fenced-done"
+FENCED_DONE_REQ="$SANDBOX/.ai/specs/approved-fenced-done/requirements.md"
+printf '> Status: approved 2026-09-10\n' > "$FENCED_DONE_REQ"
+cat > "$SANDBOX/.ai/specs/approved-fenced-done/tasks.md" <<'EOF'
+```md
+- [ ] 9. fenced pending example
+```
+- [x] 1. real done
+  - Evidence: passed
+    - transcript: `- [ ] 8. pending-looking evidence`
+EOF
+OUT=$("$ENGINE" "$FENCED_DONE_REQ"); assert silent "engine: fenced/Evidence pending checkbox is opaque" "$?" "$OUT"
+
 # ---- Claude adapter: {"tool_input":{"file_path":...}} -> additionalContext JSON on stdout ----
 OUT=$(printf '{"tool_input":{"file_path":%s}}' "$(printf '%s' "$APPROVED_OPEN" | jq -Rs .)" | "$CLAUDE_HOOK" 2>/dev/null)
 assert warn   "claude: approved + open -> additionalContext" "$?" "$OUT"

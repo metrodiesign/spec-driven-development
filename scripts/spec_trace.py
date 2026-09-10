@@ -21,6 +21,7 @@ requirements.md ที่ไม่มีหัวข้อ `## REQ-N:` เลย
 """
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REQ_HEADING_RE = re.compile(r"^## REQ-(\d+):")
@@ -48,6 +49,277 @@ THAI_EARS_RE = re.compile(
     r"|(?:เมื่อ|ขณะที่|ในกรณีที่|หาก)\s*\S.*?\s+ระบบต้อง\s*\S.*"
     r")$"
 )
+
+ROOT_TASK_RE = re.compile(r"^- \[([ xX])\]\s*(\d+)\.\s+(.+?)\s*$")
+CHILD_TASK_RE = re.compile(r"^  - \[([ xX])\]\s*(\d+)\.(\d+)\s+(.+?)\s*$")
+CHECKBOX_RE = re.compile(r"^[ \t]*- \[[ xX]\]")
+META_LINE_RE = re.compile(r"^(?:-\s+)?(Satisfies|Verify|Depends on|Batch):\s*(.*)$")
+META_TOKEN_RE = re.compile(r"(?:^|\s)(Satisfies|Verify|Depends on|Batch):")
+EVIDENCE_LINE_RE = re.compile(r"^(?:-\s+)?Evidence:\s*(.*)$", re.IGNORECASE)
+FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+
+
+class TaskHierarchyError(ValueError):
+    """tasks.md ผิด grammar hierarchy; ข้อความระบุบรรทัดและ task ID."""
+
+
+@dataclass
+class TaskNode:
+    ordinal: str
+    line: int
+    checked: bool
+    headline: str
+    satisfies: list[str] = field(default_factory=list)
+    verify: str = ""
+    depends: list[str] = field(default_factory=list)
+    batch: str = ""
+    evidence_line: int | None = None
+
+
+@dataclass
+class TaskRoot(TaskNode):
+    children: list[TaskNode] = field(default_factory=list)
+
+
+def _metadata_values(text: str):
+    markers = list(META_TOKEN_RE.finditer(text))
+    values = []
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        values.append((marker.group(1), text[marker.end():end].strip()))
+    return values
+
+
+def _metadata(line: str):
+    """คืนข้อความ metadata บน owner-detail line; `- ` หน้า marker เป็น optional."""
+    stripped = line.lstrip(" ")
+    if META_LINE_RE.match(stripped) is None:
+        return None
+    return stripped[2:] if stripped.startswith("- ") else stripped
+
+
+def _headline_metadata(text: str):
+    """แยก headline จาก legacy metadata ที่อยู่บนบรรทัด checkbox เดียวกัน."""
+    marker = META_TOKEN_RE.search(text)
+    if marker is None:
+        return text, None
+    return text[:marker.start()].strip(), text[marker.start():].strip()
+
+
+def _apply_metadata(owner: TaskNode, values):
+    for marker, value in values:
+        if marker == "Satisfies":
+            owner.satisfies.append(value)
+        elif marker == "Verify" and not owner.verify:
+            owner.verify = value
+        elif marker == "Depends on":
+            owner.depends.append(value)
+        elif marker == "Batch" and not owner.batch:
+            owner.batch = value
+
+
+def parse_task_hierarchy(tasks_text: str) -> list[TaskRoot]:
+    """Parse root `N.` และ child `N.M` แบบสองระดับ พร้อม validate fail-closed.
+
+    Blank lines ไม่ปิด root. Fenced blocks และเนื้อหาใต้ Evidence เป็น opaque.
+    Root metadata อยู่ indent 2; child metadataอยู่ indent 4. Flat legacy ที่ไม่มี
+    children ยังรับ continuation indentation เดิมได้.
+    """
+    roots: list[TaskRoot] = []
+    root_ids: set[str] = set()
+    child_ids: set[str] = set()
+    current_root: TaskRoot | None = None
+    current_child: TaskNode | None = None
+    fence_char = ""
+    fence_length = 0
+    evidence_indent: int | None = None
+    pending_owner: TaskNode | None = None
+    pending_metadata: list[str] = []
+    pending_indent = 0
+
+    def flush_metadata():
+        nonlocal pending_owner, pending_metadata, pending_indent
+        if pending_owner is not None:
+            _apply_metadata(pending_owner, _metadata_values(" ".join(pending_metadata)))
+        pending_owner = None
+        pending_metadata = []
+        pending_indent = 0
+
+    def add_metadata(owner: TaskNode, text: str, indent: int):
+        nonlocal pending_owner, pending_indent
+        if pending_owner is not owner:
+            flush_metadata()
+            pending_owner = owner
+            pending_indent = indent
+        pending_metadata.append(text.strip())
+
+    for line_no, line in enumerate(tasks_text.splitlines(), start=1):
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+
+        if evidence_indent is not None:
+            evidence_bullet = (indent == evidence_indent and stripped.startswith("- ")
+                               and not CHECKBOX_RE.match(line))
+            if not stripped or indent > evidence_indent or evidence_bullet:
+                continue
+            evidence_indent = None
+
+        fence_match = FENCE_RE.match(line)
+        if fence_match:
+            flush_metadata()
+            delimiter = fence_match.group(1)
+            if not fence_char:
+                fence_char, fence_length = delimiter[0], len(delimiter)
+            elif delimiter[0] == fence_char and len(delimiter) >= fence_length:
+                fence_char, fence_length = "", 0
+            continue
+        if fence_char:
+            continue
+
+        root_match = ROOT_TASK_RE.match(line)
+        if root_match:
+            flush_metadata()
+            ordinal = root_match.group(2)
+            if len(ordinal) > 1 and ordinal.startswith("0"):
+                raise TaskHierarchyError(f"line {line_no}: root task ID {ordinal} has a leading zero")
+            if ordinal in root_ids:
+                raise TaskHierarchyError(f"line {line_no}: duplicate root task ID {ordinal}")
+            headline, metadata = _headline_metadata(root_match.group(3))
+            current_root = TaskRoot(
+                ordinal=ordinal,
+                line=line_no,
+                checked=root_match.group(1).lower() == "x",
+                headline=headline,
+            )
+            roots.append(current_root)
+            root_ids.add(ordinal)
+            current_child = None
+            if metadata is not None:
+                add_metadata(current_root, metadata, 0)
+            continue
+
+        child_match = CHILD_TASK_RE.match(line)
+        if child_match:
+            flush_metadata()
+            ordinal = f"{child_match.group(2)}.{child_match.group(3)}"
+            if ((len(child_match.group(2)) > 1 and child_match.group(2).startswith("0")) or
+                    (len(child_match.group(3)) > 1 and child_match.group(3).startswith("0"))):
+                raise TaskHierarchyError(f"line {line_no}: child task ID {ordinal} has a leading zero")
+            if current_root is None:
+                raise TaskHierarchyError(f"line {line_no}: orphan child task ID {ordinal}")
+            if child_match.group(2) != current_root.ordinal:
+                raise TaskHierarchyError(
+                    f"line {line_no}: child task ID {ordinal} does not belong to "
+                    f"root {current_root.ordinal}")
+            if ordinal in child_ids:
+                raise TaskHierarchyError(f"line {line_no}: duplicate child task ID {ordinal}")
+            if current_root.evidence_line is not None:
+                raise TaskHierarchyError(
+                    f"line {line_no}: child task ID {ordinal} appears after root Evidence")
+            headline, metadata = _headline_metadata(child_match.group(4))
+            current_child = TaskNode(
+                ordinal=ordinal,
+                line=line_no,
+                checked=child_match.group(1).lower() == "x",
+                headline=headline,
+            )
+            current_root.children.append(current_child)
+            child_ids.add(ordinal)
+            if metadata is not None:
+                add_metadata(current_child, metadata, 4)
+            continue
+
+        if CHECKBOX_RE.match(line):
+            flush_metadata()
+            tail = stripped.split("]", 1)[1].strip() if "]" in stripped else ""
+            token = tail.split(maxsplit=1)[0] if tail else "<missing>"
+            reason = "task nesting deeper than N.M" if indent > 2 or token.count(".") > 1 \
+                else "invalid task ID or indentation"
+            raise TaskHierarchyError(f"line {line_no}: {reason}: {token}")
+
+        evidence = EVIDENCE_LINE_RE.match(stripped)
+        if evidence and current_root is not None:
+            flush_metadata()
+            owner: TaskNode | None = None
+            if current_root.children:
+                if indent == 2:
+                    owner = current_root
+                elif indent == 4 and current_child is not None:
+                    owner = current_child
+            elif indent > 0:
+                owner = current_root
+            if owner is not None:
+                owner.evidence_line = line_no
+                evidence_indent = indent
+                continue
+
+        if current_root is None or not stripped:
+            flush_metadata()
+            continue
+
+        owner: TaskNode | None = None
+        if current_root.children:
+            if indent == 2:
+                owner = current_root
+            elif indent == 4 and current_child is not None:
+                owner = current_child
+        elif indent > 0:
+            owner = current_root
+        metadata = _metadata(line)
+        continuation_indent = 1 if pending_indent == 0 else pending_indent
+        if (metadata is None and pending_owner is not None and indent >= continuation_indent
+                and not stripped.startswith("- ")):
+            pending_metadata.append(stripped)
+            continue
+        if owner is None:
+            flush_metadata()
+            continue
+        if metadata is not None:
+            add_metadata(owner, metadata, indent)
+            continue
+        flush_metadata()
+
+    flush_metadata()
+    if fence_char:
+        raise TaskHierarchyError("line EOF: unclosed fenced block in tasks.md")
+    return roots
+
+
+def root_task_ids(tasks_text: str, checked: bool | None = None) -> list[str]:
+    """คืน root execution IDs ตามลำดับ; optional filter ตาม checkbox state."""
+    return [
+        root.ordinal for root in parse_task_hierarchy(tasks_text)
+        if checked is None or root.checked == checked
+    ]
+
+
+def root_task_block(tasks_text: str, ordinal: str) -> str:
+    """คืน root subtree แบบ verbatim โดยใช้ parser line boundaries."""
+    lines = tasks_text.splitlines()
+    roots = parse_task_hierarchy(tasks_text)
+    for index, root in enumerate(roots):
+        if root.ordinal == ordinal:
+            end = roots[index + 1].line - 1 if index + 1 < len(roots) else len(lines)
+            return "\n".join(lines[root.line - 1:end])
+    return ""
+
+
+def task_checkbox_lines(tasks_text: str, checked: bool | None = None) -> list[tuple[int, str]]:
+    """คืน checkbox จริงของ root/child พร้อมเลขบรรทัด; fence/Evidence ถูก parser กรองแล้ว."""
+    lines = tasks_text.splitlines()
+    nodes = [node for root in parse_task_hierarchy(tasks_text) for node in [root, *root.children]]
+    return [
+        (node.line, lines[node.line - 1]) for node in nodes
+        if checked is None or node.checked == checked
+    ]
+
+
+def root_task_done(tasks_text: str, ordinal: str) -> bool:
+    """จริงเมื่อพบ root ที่ปิดแล้วและ children ทุกตัวปิดแล้ว."""
+    return any(
+        root.ordinal == ordinal and root.checked and all(child.checked for child in root.children)
+        for root in parse_task_hierarchy(tasks_text)
+    )
 
 
 def parse_requirements(text):
@@ -197,55 +469,27 @@ def traceability_slice_problems(trace, design_text, criteria_by_req):
 
 
 def iter_task_blocks(tasks_text):
-    """yield task block ละหนึ่งข้อความ: บรรทัด checkbox (`- [ ]`/`- [x]`) + บรรทัด
-    ต่อเนื่องที่ indent (ไม่ว่าง, ไม่ใช่ checkbox ใหม่) join ด้วยช่องว่างเดียว.
-
-    block สิ้นสุดที่บรรทัดต่อเนื่องบรรทัดแรกที่ขึ้นต้นด้วย `Evidence:`
-    (case-insensitive — นิยามเดียวกับ floor engine .ai/bin/check-evidence.sh):
-    Evidence transcript เป็น result artifact ไม่ใช่ spec marker — ถ้าปล่อยเข้า
-    block เนื้อ transcript ที่ quote `Satisfies:`/`Verify:` จะถูก parse เป็น
-    ref/command ปลอม (fake coverage ใน spec-trace gate, PR #102 fanout review).
-    ตัดแบบ line-anchored เท่านั้น — คำว่า `Evidence:` กลางบรรทัด (เช่นใน Verify
-    command) ไม่ใช่จุดตัด.
-
-    เป็น single source ของนิยาม task boundary — `satisfies_text` (ตัวตรวจ coverage)
-    และ `spec_to_goal.py` (per-task Satisfies↔Verify association) เดินไฟล์ผ่าน
-    helper ตัวเดียวกัน semantics จึงไม่ drift.
-
-    checkbox literal นี้เป็น python dialect แยกเจตนาจาก .ai/bin/lib-guard.sh's CB_*
-    (bash-only unification, REQ-3.2 ของ sdd-guard-dedup) — ไม่ unify ข้ามภาษา.
-    """
-    lines = tasks_text.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        i += 1
-        if not line.lstrip().startswith(("- [ ]", "- [x]")):
-            continue
-        parts = [line]
-        while i < len(lines):
-            nxt = lines[i]
-            if not nxt.strip() or not nxt[0].isspace():
-                break
-            if nxt.lstrip().startswith(("- [ ]", "- [x]")):
-                break
-            if nxt.lstrip().lower().startswith("evidence:"):
-                break
-            parts.append(nxt.strip())
-            i += 1
-        yield " ".join(parts)
+    """Compatibility wrapper: yield root execution blocks จาก structured parser."""
+    for root in parse_task_hierarchy(tasks_text):
+        markers = [f"- [{'x' if root.checked else ' '}] {root.ordinal}. {root.headline}"]
+        markers.extend(f"Satisfies: {value}" for value in root.satisfies)
+        markers.extend(f"Satisfies: {value}" for child in root.children
+                       for value in child.satisfies)
+        if root.verify:
+            markers.append(f"Verify: {root.verify}")
+        markers.extend(f"Depends on: {value}" for value in root.depends)
+        if root.batch:
+            markers.append(f"Batch: {root.batch}")
+        yield " ".join(markers)
 
 
 def satisfies_text(tasks_text):
-    """รวมเฉพาะส่วนอ้างอิงหลัง `Satisfies:` ของแต่ละ task block
-    (ตัดท้ายที่ Depends on:/Verify:/Batch:) — build บน `iter_task_blocks`."""
-    segments = []
-    for block in iter_task_blocks(tasks_text):
-        if "Satisfies:" not in block:
-            continue
-        segments.append(
-            re.split(r"Depends on:|Verify:|Batch:", block.split("Satisfies:", 1)[1])[0])
-    return "\n".join(segments)
+    """รวม Satisfies ของ root และ children เป็น coverage ของ root execution units."""
+    return "\n".join(
+        value
+        for root in parse_task_hierarchy(tasks_text)
+        for value in root.satisfies + [ref for child in root.children for ref in child.satisfies]
+    )
 
 
 def ears_ok(text):
@@ -325,14 +569,21 @@ def run(feature, specs_dir):
         print(f"ไม่พบไฟล์ {tasks_path} (spec แบบ REQ-based ต้องมี tasks.md)", file=sys.stderr)
         return 1
     tasks_text = tasks_path.read_text(encoding="utf-8")
-    tasks_covered = expand_refs(satisfies_text(tasks_text), criteria_by_req)
+    try:
+        roots = parse_task_hierarchy(tasks_text)
+        tasks_covered = expand_refs("\n".join(
+            value for root in roots
+            for value in root.satisfies + [ref for child in root.children for ref in child.satisfies]
+        ), criteria_by_req)
+    except TaskHierarchyError as error:
+        print(f"tasks.md hierarchy ไม่ถูกต้อง: {error}", file=sys.stderr)
+        return 1
     missing = [f"{a}.{b}" for a, b in all_ids if (a, b) not in tasks_covered]
     if missing:
         problems.append(("เกณฑ์ที่ไม่ถูกอ้างใน tasks.md (บรรทัด Satisfies:):", missing))
 
     # Closed specs ไม่ต้อง retrofit; active work ต้องรับรองว่า spec-slice ใช้ table ได้จริง.
-    if trace is not None and any(
-            line.lstrip().startswith("- [ ]") for line in tasks_text.splitlines()):
+    if trace is not None and any(not root.checked for root in roots):
         slice_problems = traceability_slice_problems(trace, design_text, criteria_by_req)
         if slice_problems:
             problems.append(("Requirement Traceability ใช้กับ spec-slice ไม่ได้:",

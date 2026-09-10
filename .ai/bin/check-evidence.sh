@@ -73,54 +73,115 @@ EV_FAIL=$(printf '%s\n' "$CONTENT" | awk -v mode="$MODE" -v select_file="$SELECT
             lc != "-" && lc != "." && lc != "none" && lc != "pending" && \
             lc != "n/a (write path)")
   }
-  # A checkbox line starts a new task region. Track only [x] regions for Evidence.
-  /^[[:space:]]*-[[:space:]]\[[xX]\]/ {
-    if (in_x && needs_check && !have_ev) { print prev_task; failed=1 }
-    in_x=1; have_ev=0; ev_open=0
-    prev_task=$0
-    needs_check = (mode == "--strict") || (mode == "--added-only" && ($0 in selected)) || \
-                  (mode == "--lines-strict" && (NR in selected))
-    if (mode == "--lines-strict" && needs_check) seen[NR]=1
-    next
+  function indent_of(v,   n) {
+    n=0
+    while (substr(v, n + 1, 1) == " " || substr(v, n + 1, 1) == "\t") n++
+    return n
   }
-  /^[[:space:]]*-[[:space:]]\[[[:space:]]\]/ {
-    # a [ ] (unchecked) task closes any open [x] region.
-    if (in_x && needs_check && !have_ev) { print prev_task; failed=1 }
-    in_x=0; have_ev=0; ev_open=0
-    next
+  function fence_run(v,   c,n,lead) {
+    lead=0
+    while (substr(v, lead + 1, 1) == " " || substr(v, lead + 1, 1) == "\t") lead++
+    v=substr(v, lead + 1)
+    c=substr(v, 1, 1)
+    if (c != "`" && c != "~") return 0
+    n=0
+    while (substr(v, n + 1, 1) == c) n++
+    return n >= 3 ? n : 0
+  }
+  function hierarchy_error(message) {
+    print message > "/dev/stderr"
+    parse_error=1
+  }
+  function selected_node(line_no, text) {
+    return (mode == "--strict") || (mode == "--added-only" && (text in selected)) || \
+           (mode == "--lines-strict" && (line_no in selected))
+  }
+  function record_evidence(owner, value) {
+    if (mode == "--added-only") have_ev[owner]=1
+    else if (nontrivial(value)) have_ev[owner]=1
+    else if (trim(value) == "") collect_evidence=1
   }
   {
-    if (in_x && !have_ev) {
-      line=$0
-      if (mode == "--added-only") {
-        # PRESENCE-ONLY (pre-commit semantics): any Evidence: line counts, trivial or not.
-        if (line ~ /^[[:space:]]*[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:/) { have_ev=1 }
-      } else {
-        # --strict (gate-task semantics): the documented multiline block format is an
-        # Evidence: header followed by bullets, so the value can live inline on the
-        # header OR on a following bullet. Either non-trivial form satisfies the gate.
-        if (line ~ /^[[:space:]]*[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:/) {
-          val=line
-          sub(/^[[:space:]]*[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:[[:space:]]*/, "", val)
-          # ONLY a truly empty Evidence: header opens bullet-collection mode. A
-          # non-empty but placeholder header (Evidence: TODO) stays trivial and must
-          # NOT open the block — else a later non-evidence bullet would rescue it.
-          if (nontrivial(val)) { have_ev=1 } else if (trim(val) == "") { ev_open=1 }
-        } else if (ev_open && line ~ /^[[:space:]]*-[[:space:]]/) {
-          # a bullet inside an open Evidence block. Strip the dash AND an optional
-          # key: label (test:/viewports:/deviations:) so a placeholder VALUE
-          # (- test: TODO) is judged on the value, not the ever-non-trivial label.
-          val=line
-          sub(/^[[:space:]]*-[[:space:]]*/, "", val)
+    line=$0
+    indent=indent_of(line)
+    stripped=substr(line, indent + 1)
+
+    if (evidence_region) {
+      evidence_bullet=(indent == evidence_indent && stripped ~ /^-[[:space:]]/ && stripped !~ /^- \[[ xX]\]/)
+      if (stripped == "" || indent > evidence_indent || evidence_bullet) {
+        if (collect_evidence && stripped ~ /^-[[:space:]]/) {
+          val=stripped
+          sub(/^-[[:space:]]*/, "", val)
           sub(/^[^[:space:]:]+:[[:space:]]*/, "", val)
-          if (nontrivial(val)) { have_ev=1 }
+          if (nontrivial(val)) have_ev[evidence_owner]=1
         }
+        next
+      }
+      evidence_region=0; collect_evidence=0
+    }
+
+    run=fence_run(line)
+    if (run) {
+      char=substr(stripped, 1, 1)
+      if (!in_fence) { in_fence=1; fence_char=char; fence_len=run }
+      else if (char == fence_char && run >= fence_len) { in_fence=0 }
+      next
+    }
+    if (in_fence) next
+
+    if (stripped ~ /^- \[[ xX]\]/) {
+      tail=stripped
+      sub(/^- \[[ xX]\][[:space:]]*/, "", tail)
+      split(tail, words, /[[:space:]]+/)
+      id=words[1]
+      checked=(stripped ~ /^- \[[xX]\]/)
+      if (indent == 0 && id ~ /^[0-9]+\.$/) {
+        sub(/\.$/, "", id)
+        if (id ~ /^0[0-9]/) hierarchy_error("line " NR ": root task ID " id " has a leading zero")
+        else if (id in root_seen) hierarchy_error("line " NR ": duplicate root task ID " id)
+        root_seen[id]=NR; current_root=NR; current_root_id=id; current_child=0
+        root_has_children[NR]=0
+      } else if (indent == 2 && id ~ /^[0-9]+\.[0-9]+$/) {
+        split(id, parts, ".")
+        if (!current_root) hierarchy_error("line " NR ": orphan child task ID " id)
+        else if (parts[1] != current_root_id) hierarchy_error("line " NR ": child task ID " id " does not belong to root " current_root_id)
+        else if (id in child_seen) hierarchy_error("line " NR ": duplicate child task ID " id)
+        else if (root_evidence[current_root]) hierarchy_error("line " NR ": child task ID " id " appears after root Evidence")
+        if (parts[1] ~ /^0[0-9]/ || parts[2] ~ /^0[0-9]/) hierarchy_error("line " NR ": child task ID " id " has a leading zero")
+        child_seen[id]=NR; current_child=NR; parent[NR]=current_root
+        root_has_children[current_root]=1
+        if (!checked) root_pending[current_root]=1
+      } else {
+        hierarchy_error("line " NR ": invalid task ID or nesting: " id)
+      }
+      node[NR]=1; task_text[NR]=line; is_checked[NR]=checked
+      if (mode == "--lines-strict" && checked && (NR in selected)) seen[NR]=1
+      next
+    }
+
+    lower=tolower(stripped)
+    evidence_text=lower
+    if (evidence_text ~ /^-[[:space:]]+evidence:/) sub(/^-[[:space:]]+/, "", evidence_text)
+    if (evidence_text ~ /^evidence:/ && current_root) {
+      owner=0
+      if (root_has_children[current_root]) {
+        if (indent == 2) owner=current_root
+        else if (indent == 4 && current_child) owner=current_child
+      } else if (indent > 0) owner=current_root
+      if (owner) {
+        original=stripped
+        if (original ~ /^-[[:space:]]+/) sub(/^-[[:space:]]+/, "", original)
+        sub(/^[Ee][Vv][Ii][Dd][Ee][Nn][Cc][Ee]:[[:space:]]*/, "", original)
+        if (owner == current_root) root_evidence[current_root]=1
+        record_evidence(owner, original)
+        evidence_region=1; evidence_owner=owner; evidence_indent=indent
+        next
       }
     }
   }
   END {
-    if (selection_error) exit 2
-    if (in_x && needs_check && !have_ev) { print prev_task; failed=1 }
+    if (in_fence) hierarchy_error("line EOF: unclosed fenced block in tasks.md")
+    if (selection_error || parse_error) exit 2
     if (mode == "--lines-strict") {
       for (line_no in selected) {
         if (!(line_no in seen)) {
@@ -128,6 +189,16 @@ EV_FAIL=$(printf '%s\n' "$CONTENT" | awk -v mode="$MODE" -v select_file="$SELECT
           selection_error=1
         }
       }
+    }
+    if (selection_error) exit 2
+    for (line_no in node) {
+      if (!is_checked[line_no] || !selected_node(line_no, task_text[line_no])) continue
+      if (!have_ev[line_no] || (root_has_children[line_no] && root_pending[line_no])) {
+        failed_line[line_no]=1
+      }
+    }
+    for (line_no=1; line_no<=NR; line_no++) {
+      if (failed_line[line_no]) { print task_text[line_no]; failed=1 }
     }
     exit (selection_error ? 2 : (failed ? 1 : 0))
   }

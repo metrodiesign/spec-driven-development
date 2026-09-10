@@ -45,7 +45,14 @@ OUT=$( cd "$R" && "$ARCHIVE" feat-b 2>&1 ); RC=$?
 echo "=== spec-archive: clean feature moves via git mv (REQ-1.1) ==="
 R="$(new_repo)"
 mkdir -p "$R/.ai/specs/feat-c"
-printf -- '- [x] 1. done\n     Evidence: yes\n' > "$R/.ai/specs/feat-c/tasks.md"
+cat > "$R/.ai/specs/feat-c/tasks.md" <<'EOF'
+```md
+- [ ] 9. fenced pending example
+```
+- [x] 1. done
+     Evidence: yes
+       - transcript: `- [ ] 8. pending-looking evidence`
+EOF
 ( cd "$R" && git add -A && git commit -q -m base )
 OUT=$( cd "$R" && "$ARCHIVE" feat-c 2>&1 ); RC=$?
 MOVED=$( cd "$R" && git status --short | grep -c '^R.*feat-c.*archive/feat-c' || true)
@@ -147,6 +154,131 @@ fi
 echo "=== spec-slice: unknown task id -> exit 1, lists available (REQ-3.3) ==="
 OUT=$( cd "$R" && "$SLICE" slice-fixture 99 2>&1 ); RC=$?
 if [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -q 'available: 1 2'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: unknown task id :: rc=$RC :: $OUT"; fi
+
+echo "=== spec-slice: nested root keeps subtree, unions child refs, rejects child selection ==="
+cat > "$R/.ai/specs/slice-fixture/tasks.md" <<'EOF'
+# Tasks: Slice Fixture
+> Status: approved 2099-01-01
+```md
+- [ ] 1. Fenced fake root
+```
+- [ ] 1. Root task
+  - Satisfies: REQ-1
+  - Verify: root command
+
+  - [ ] 1.1 Child task
+    - Satisfies:
+      REQ-2
+    - Verify: child command
+  - Evidence:
+    - transcript: `- [x] 9. Evidence checkbox`
+EOF
+OUT=$( cd "$R" && "$SLICE" slice-fixture 1 2>&1 ); RC=$?
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -q '1.1 Child task' \
+  && ! printf '%s' "$OUT" | grep -q 'Fenced fake root' \
+  && printf '%s' "$OUT" | grep -q '== REQ-1' \
+  && printf '%s' "$OUT" | grep -q '== REQ-2'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: nested root slice :: rc=$RC :: $OUT"
+fi
+OUT=$( cd "$R" && "$SLICE" slice-fixture 1.1 2>&1 ); RC=$?
+if [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -q 'not an executable root task'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: child selection rejection :: rc=$RC :: $OUT"; fi
+
+echo "=== pane-loop projections ignore fenced/Evidence checkbox content ==="
+PANE_R="$(new_repo)"
+mkdir -p "$PANE_R/scripts" "$PANE_R/.ai/specs/pane-fixture" "$PANE_R/bin"
+cp "$REPO_ROOT/scripts/pane-loop.sh" "$REPO_ROOT/scripts/spec_trace.py" "$PANE_R/scripts/"
+cat > "$PANE_R/.ai/specs/pane-fixture/tasks.md" <<'EOF'
+```md
+- [ ] 9. fenced pending root
+```
+- [x] 1. Real completed root
+  - [x] 1.1 Real completed child
+    - Evidence: child passed
+  - Evidence: root passed
+    - transcript: `- [ ] 8. pending-looking evidence`
+EOF
+cat > "$PANE_R/bin/osascript" <<'EOF'
+#!/bin/sh
+touch "${PANE_STUB_CALLED:?}"
+exit 1
+EOF
+chmod +x "$PANE_R/bin/osascript"
+OUT=$(cd "$PANE_R" && PANE_STUB_CALLED="$PANE_R/osascript-called" PATH="$PANE_R/bin:$PATH" scripts/pane-loop.sh pane-fixture all-in-one 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'ไม่มี task ที่จะรัน' && [ ! -e "$PANE_R/osascript-called" ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: pane all-in-one scheduled fenced/Evidence checkbox :: rc=$RC :: $OUT"
+fi
+
+for pane_mode in all-in-one default 1; do
+  pane_args=()
+  [ "$pane_mode" = default ] || pane_args+=("$pane_mode")
+  OUT=$(cd "$PANE_R" && PANELOOP_REEXEC=1 PANE_STUB_CALLED="$PANE_R/osascript-called-bash-$pane_mode" PATH="$PANE_R/bin:$PATH" bash scripts/pane-loop.sh pane-fixture "${pane_args[@]}" 2>&1); RC=$?
+  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'ไม่มี task ที่จะรัน' && [ ! -e "$PANE_R/osascript-called-bash-$pane_mode" ]; then
+    pass=$((pass+1))
+  else
+    fail=$((fail+1)); echo "FAIL: pane Bash $pane_mode scheduled completed/fenced/Evidence checkbox :: rc=$RC :: $OUT"
+  fi
+done
+
+PROJECTION=$(PYTHONPATH="$REPO_ROOT/scripts" python3 - "$PANE_R/.ai/specs/pane-fixture/tasks.md" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+print(spec_trace.root_task_ids(text, False), spec_trace.root_task_done(text, "1"))
+PY
+)
+if [ "$PROJECTION" = "[] True" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: pane manual/poll shared projection :: $PROJECTION"; fi
+
+echo "=== spec-state lists only parsed task checkboxes ==="
+cp "$REPO_ROOT/scripts/spec-state.sh" "$PANE_R/scripts/"
+OUT=$(cd "$PANE_R" && scripts/spec-state.sh pane-fixture 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'Real completed root' \
+  && ! printf '%s' "$OUT" | grep -q 'fenced pending root' \
+  && ! printf '%s' "$OUT" | grep -q 'pending-looking evidence'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: spec-state included opaque checkbox :: rc=$RC :: $OUT"
+fi
+
+echo "=== spec-trace closed root ignores fenced unchecked checkbox for sliceability ==="
+mkdir -p "$PANE_R/.ai/specs/trace-closed"
+cat > "$PANE_R/.ai/specs/trace-closed/requirements.md" <<'EOF'
+## REQ-1: Done
+- 1.1 THE SYSTEM SHALL finish.
+EOF
+cat > "$PANE_R/.ai/specs/trace-closed/design.md" <<'EOF'
+## Requirement Traceability
+| REQ | Design element |
+|---|---|
+| REQ-1 | done |
+EOF
+cat > "$PANE_R/.ai/specs/trace-closed/tasks.md" <<'EOF'
+```md
+- [ ] 9. fenced pending example
+```
+- [x] 1. Real completed root
+  - Satisfies: REQ-1
+  - Evidence: passed
+EOF
+OUT=$(cd "$PANE_R" && "$SPEC_TRACE" trace-closed .ai/specs 2>&1); RC=$?
+if [ "$RC" -eq 0 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: spec-trace treated fenced checkbox as active slice :: rc=$RC :: $OUT"; fi
+
+# Restore flat fixture for following legacy cases.
+cat > "$R/.ai/specs/slice-fixture/tasks.md" <<'EOF'
+# Tasks: Slice Fixture
+> Status: approved 2099-01-01
+- [ ] 1. First task
+     Satisfies: REQ-1
+     Verify: something
+- [ ] 2. Second task
+     Satisfies: REQ-2, REQ-9
+     Verify: something
+EOF
 
 echo "=== spec-slice: Satisfies naming an absent REQ -> MISSING present, exit 0 (REQ-3.4) ==="
 OUT=$( cd "$R" && "$SLICE" slice-fixture 2 2>&1 ); RC=$?
@@ -1019,6 +1151,19 @@ if [ "$RC" -eq 0 ]; then
   pass=$((pass+1))
 else
   fail=$((fail+1)); echo "FAIL: readable Evidence task parsing :: rc=$RC :: $OUT"
+fi
+
+echo "=== canonical skills lock root-only execution and GitHub child checklist projection ==="
+TASK_SKILL="$REPO_ROOT/.claude/skills/spec-tasks/SKILL.md"
+IMPLEMENT_SKILL="$REPO_ROOT/.claude/skills/spec-implement/SKILL.md"
+SYNC_SKILL="$REPO_ROOT/.claude/skills/spec-sync-github/SKILL.md"
+if grep -qF -- '- [ ] 1.1' "$TASK_SKILL" \
+  && grep -qF 'Reject child ID' "$IMPLEMENT_SKILL" \
+  && grep -qF 'one root = one sub-issue' "$SYNC_SKILL" \
+  && grep -qF 'ห้ามสร้าง' "$SYNC_SKILL"; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: canonical nested-task/GitHub projection instructions missing"
 fi
 
 echo "pass=$pass fail=$fail"

@@ -151,6 +151,54 @@ else
   fail=$((fail+1)); echo "FAIL: task with 2 contributing sessions should report sessions=2, cost=max (9.00) :: $OUT"
 fi
 
+echo "=== nested tasks: metrics and cost identities remain root-only ==="
+REPO8="$(new_repo)"
+HOME8="$(mktemp -d)"; CLEAN_DIRS+=("$HOME8")
+mkdir -p "$REPO8/.ai/specs/feat-nested"
+cat > "$REPO8/.ai/specs/feat-nested/tasks.md" <<'EOF'
+```md
+- [ ] 9. Fenced pending root
+  - [ ] 9.1 Fenced pending child
+```
+- [x] 1. Done root
+  - [x] 1.1 Done child
+    - Evidence: child passed
+  - Evidence: root passed
+    - transcript: `- [ ] 8. Evidence checkbox`
+- [ ] 2. Pending root
+  - [ ] 2.1 Pending child
+EOF
+( cd "$REPO8" && git add -A && git commit -q -m base )
+write_session "$HOME8" sess-n1 "$REPO8" 8.00 1 yes
+run_metrics "$REPO8" "$HOME8" --feature feat-nested
+if [ "$RC" -eq 0 ] \
+  && printf '%s' "$OUT" | grep -qE '\| feat-nested \| False \| 1/2 \| 8\.00 \|' \
+  && printf '%s' "$OUT" | grep -qE '\| 1 \| 1 \| 8\.0?0? \|' \
+  && ! printf '%s' "$OUT" | grep -qE '\| (1\.1|2\.1) \|'; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: nested metrics/cost must remain root-only :: $OUT"
+fi
+
+DIRECT=$(PYTHONPATH="$REPO_ROOT/scripts" python3 - "$REPO8/.ai/specs/feat-nested/tasks.md" "$SCRIPT" <<'PY'
+import importlib.util
+import sys
+
+from cost_lib import all_task_ids
+
+path, script = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("spec_metrics", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(module._task_counts(path), all_task_ids(path))
+PY
+)
+if [ "$DIRECT" = "{'total': 2, 'done': 1} [1, 2]" ]; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); echo "FAIL: direct metrics/cost projection includes fenced/transcript checkbox :: $DIRECT"
+fi
+
 echo "=== archived feature: span_days covers pre+post archive history, not just the move commit (REQ-1.1) ==="
 REPO7="$(new_repo)"
 HOME7="$(mktemp -d)"; CLEAN_DIRS+=("$HOME7")
@@ -190,7 +238,7 @@ else
 fi
 
 echo "=== offline: script imports only stdlib + cost_lib (REQ-1.4) ==="
-IMPORTS=$(grep -E '^import |^from ' "$SCRIPT" | grep -v 'cost_lib')
+IMPORTS=$(grep -E '^import |^from ' "$SCRIPT" | grep -vE 'cost_lib|spec_trace')
 BAD=$(printf '%s\n' "$IMPORTS" | grep -vE '^(import|from) (glob|json|os|re|subprocess|sys)\b')
 if [ -z "$BAD" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: non-stdlib import found: $BAD"; fi
 

@@ -8,16 +8,13 @@ checkbox ใน tasks.md) แก้ที่ไฟล์นี้ที่เด
 """
 import json, glob, os, re, sys
 
+from spec_trace import parse_task_hierarchy
+
 # ===== workflow-coupled config (แก้ที่นี่ที่เดียวถ้า workflow เปลี่ยน) =====
 IMPLEMENT_CMD = "/spec-implement"   # command ที่สั่ง implement task (มองหาใน transcript)
 RETRO_CMD     = "/spec-retro"       # command ที่ยืนยัน session ทำ retro จบ
 TASK_ID_RE    = r"\d+"              # รูปแบบ task id; slug/ทศนิยม -> r"[\w.\-]+"
 TASK_ID_NUMERIC = True              # id เป็นเลขล้วน? (กำหนดการ cast + sort)
-# บรรทัด task ใน tasks.md เช่น "- [ ] 3." / "- [x] 3." (รองรับ -/* และ x/X)
-# เจตนาไม่รวมกับ .ai/bin/lib-guard.sh's CB_* (bash-only unification, REQ-3.2 ของ
-# sdd-guard-dedup) — python dialect นี้แยกเจตนา ดู lib-guard.sh สำหรับฝั่ง bash guard
-TASKS_CHECKBOX_RE = r"^[-*] \[[ xX]\] (" + TASK_ID_RE + r")"
-
 # ===== derived (ไม่ผูก workflow) =====
 HOME   = os.path.expanduser("~")
 SLUG   = re.sub(r"[._/]", "-", os.getcwd())   # project dir slug ของ Claude Code
@@ -192,8 +189,8 @@ def all_task_ids(tasks_path):
     """รายการ task id (เรียง) จาก tasks.md."""
     if not os.path.exists(tasks_path):
         sys.exit(f"ไม่พบ {tasks_path}")
-    txt = open(tasks_path, encoding="utf-8").read()
-    ids = {_cast(x) for x in re.findall(TASKS_CHECKBOX_RE, txt, re.M)}
+    roots = parse_task_hierarchy(open(tasks_path, encoding="utf-8").read())
+    ids = {_cast(root.ordinal) for root in roots}
     if not ids:
         sys.exit(f"ไม่มี task ใน {tasks_path}")
     return sorted(ids)

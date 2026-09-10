@@ -15,6 +15,7 @@ set -euo pipefail
 FEATURE="${1:?usage: spec-slice.sh <feature> <task-id>}"
 TASK_ID="${2:?usage: spec-slice.sh <feature> <task-id>}"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+TOOL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FDIR="$REPO_ROOT/.ai/specs/$FEATURE"
 REQ_FILE="$FDIR/requirements.md"
 DESIGN_FILE="$FDIR/design.md"
@@ -22,6 +23,39 @@ TASKS_FILE="$FDIR/tasks.md"
 
 [ -d "$FDIR" ] || { echo "spec-slice: no such feature dir: $FDIR" >&2; exit 1; }
 [ -f "$TASKS_FILE" ] || { echo "spec-slice: $FEATURE has no tasks.md" >&2; exit 1; }
+
+# Validate hierarchy and resolve root+child Satisfies through the shared parser. Child IDs
+# are checklist identities, never executable slice IDs.
+if ! SATISFIES_NUMS=$(PYTHONPATH="$TOOL_ROOT/scripts" python3 - "$TASKS_FILE" "$TASK_ID" <<'PY'
+import sys
+from pathlib import Path
+
+import spec_trace
+
+tasks_path, wanted = Path(sys.argv[1]), sys.argv[2]
+try:
+    roots = spec_trace.parse_task_hierarchy(tasks_path.read_text(encoding="utf-8"))
+except spec_trace.TaskHierarchyError as error:
+    print(f"spec-slice: invalid tasks.md hierarchy: {error}", file=sys.stderr)
+    raise SystemExit(1)
+if not wanted.isdigit() or (root := next((item for item in roots if item.ordinal == wanted), None)) is None:
+    print(f"spec-slice: task id '{wanted}' is not an executable root task", file=sys.stderr)
+    print("available: " + (" ".join(item.ordinal for item in roots) or "none"), file=sys.stderr)
+    raise SystemExit(1)
+majors = set()
+for segment in root.satisfies + [value for child in root.children for value in child.satisfies]:
+    for match in spec_trace.REF_RE.finditer(segment):
+        if match.group("a1"):
+            majors.update((int(match.group("a1")), int(match.group("a2"))))
+        elif match.group("a"):
+            majors.add(int(match.group("a")))
+        else:
+            majors.add(int(match.group("whole")))
+print("\n".join(str(major) for major in sorted(majors)))
+PY
+); then
+  exit 1
+fi
 
 # Sentinel a fence-aware boundary scan prints (instead of silently running past
 # EOF still "inside" an unclosed ``` fence) so its bash caller can turn an
@@ -34,13 +68,14 @@ status_line() { # $1=file -> first "> Status:" line, or a placeholder
   [ -f "$1" ] && grep -m1 '^> Status:' "$1" 2>/dev/null || echo "(no Status header)"
 }
 
-# from the line matching checkbox+id (inclusive) to the next checkbox line (exclusive) or EOF.
+# Root subtree boundaries come from the shared fence/Evidence-aware parser.
 task_block() { # $1=file $2=task_id
-  awk -v id="$2" '
-    !started && $0 ~ ("^- \\[[ xX]\\][[:space:]]*" id "\\.") { started=1; print; next }
-    started && /^- \[[ xX]\]/ { exit }
-    started { print }
-  ' "$1"
+  PYTHONPATH="$TOOL_ROOT/scripts" python3 - "$1" "$2" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+print(spec_trace.root_task_block(Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[2]))
+PY
 }
 
 # from a "## REQ-<n>:" heading (inclusive) to the next "## " heading (exclusive) or EOF.
@@ -134,17 +169,9 @@ cell_at() { # $1=row $2=column_index (1-based)
 
 TASK_BLOCK=$(task_block "$TASKS_FILE" "$TASK_ID")
 if [ -z "$TASK_BLOCK" ]; then
-  AVAILABLE=$(grep -oE '^- \[[ xX]\][[:space:]]*[0-9]+\.' "$TASKS_FILE" 2>/dev/null \
-    | grep -oE '[0-9]+' | tr '\n' ' ')
   echo "spec-slice: task id '$TASK_ID' not found in $TASKS_FILE" >&2
-  echo "available: ${AVAILABLE:-none}" >&2
   exit 1
 fi
-
-# Satisfies: REQ ids on the task block -> parent REQ-N, deduped (criterion ids like
-# REQ-1.2 resolve to their parent ## REQ-1 block, per REQ-3.1).
-SATISFIES_NUMS=$(printf '%s\n' "$TASK_BLOCK" | grep -i 'Satisfies:' \
-  | grep -oE 'REQ-[0-9]+' | sed -E 's/REQ-//' | sort -un)
 
 echo "== STATUS =="
 echo "requirements.md: $(status_line "$REQ_FILE")"

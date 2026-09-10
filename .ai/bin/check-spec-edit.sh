@@ -35,7 +35,14 @@ grep -m1 -iE '^> *Status: *approved' "$FILE" >/dev/null 2>&1 || exit 0
 # only when the sibling tasks.md still has an open task
 TASKS="${FILE%/requirements.md}/tasks.md"
 [ -f "$TASKS" ] || exit 0
-OPEN=$(grep -cE '^[[:space:]]*- \[ \]' "$TASKS" 2>/dev/null)
+TOOL_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+OPEN=$(PYTHONPATH="$TOOL_ROOT/scripts" python3 - "$TASKS" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+print(len(spec_trace.root_task_ids(Path(sys.argv[1]).read_text(encoding="utf-8"), False)))
+PY
+)
 [ "${OPEN:-0}" -gt 0 ] 2>/dev/null || exit 0
 
 printf 'เตือน: %s ถูก mark approved แล้ว แต่ยังมี %s task ค้างใน tasks.md (- [ ]). การแก้ requirements ตอนนี้ต้อง propagate ไป design.md/tasks.md (CLAUDE.md: keep specs in sync) และอาจต้อง re-approve. ยืนยันว่าตั้งใจแก้.\n' "$FILE" "$OPEN"
