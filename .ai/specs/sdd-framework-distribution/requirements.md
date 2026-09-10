@@ -1,8 +1,10 @@
 # Requirements — SDD framework distribution
 
-Status: draft
+> Status: draft
 
 เอกสารนี้กำหนดพฤติกรรมของเครื่องมือกระจาย SDD framework จาก Git revision ไปยัง consumer repository แบบ local และ reproducible
+
+สถานะ `draft` หมายถึงยังไม่ได้บันทึก phase approval ของเอกสาร requirements เท่านั้น ไม่ใช่สถานะของ implementation ซึ่งทำเสร็จและผ่าน verification แล้ว
 
 ## REQ-1: Source snapshot
 
