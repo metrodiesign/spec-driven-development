@@ -61,6 +61,17 @@ TASKS="$SPECS_DIR/$FEATURE/tasks.md"
 RETRO_DIR="$SPECS_DIR/$FEATURE/retrospectives"
 [[ -f "$TASKS" ]] || { echo "ไม่พบ $TASKS" >&2; exit 1; }
 
+PYTHONPATH="$REPO/scripts" python3 - "$TASKS" <<'PY' || exit 1
+import sys
+from pathlib import Path
+import spec_trace
+try:
+    spec_trace.parse_task_hierarchy(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except spec_trace.TaskHierarchyError as error:
+    print(f"pane-loop: invalid tasks.md hierarchy: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+
 # เลือก task: arg หลัง feature = group แบบ manual (วิธี 2); ไม่มี args = ทุก task ค้าง
 # auto-group ตาม `Batch:` tag ใน tasks.md (วิธี 1). 1 group = 1 pane/session. id คั่น
 # ด้วย '+' ในกลุ่มเดียว = batch (1 retro/1 clear). manual args ทับ Batch tag เสมอ.
@@ -79,10 +90,11 @@ if [[ "${1:-}" == "all-in-one" || "${1:-}" == "--all-in-one" ]]; then ALLINONE=1
 GROUPS=""       # space-separated groups; id ในกลุ่มคั่นด้วย '+'
 if [[ -n "$ALLINONE" ]]; then
   # ทุก pending task (เรียงตามไฟล์) → 1 group เดียวคั่นด้วย '+' (ข้าม Batch tag/args อื่น)
-  GROUPS="$(python3 - "$TASKS" <<'PY'
-import re, sys
-ids = [m.group(1) for m in (re.match(r'^- \[ \] (\d+)\.', l) for l in open(sys.argv[1])) if m]
-print('+'.join(ids))
+  GROUPS="$(PYTHONPATH="$REPO/scripts" python3 - "$TASKS" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+print('+'.join(spec_trace.root_task_ids(Path(sys.argv[1]).read_text(encoding="utf-8"), False)))
 PY
 )"
   [[ -n "$GROUPS" ]] && echo "โหมด: all-in-one (1 session สำหรับทุก pending task)"
@@ -90,10 +102,20 @@ elif [[ $# -gt 0 ]]; then
   for grp in "$@"; do                       # แต่ละ arg = 1 group (1 pane)
     members=""
     for id in ${grp//+/ }; do               # แตก group เป็น id ตรวจทีละตัว
-      if grep -qE "^- \[x\] $id\." "$TASKS"; then     # เสร็จแล้ว → ข้าม กัน implement ซ้ำ
+      [[ "$id" =~ ^[0-9]+$ ]] || { echo "!!! task $id ไม่ใช่ executable root ID" >&2; exit 1; }
+      state="$(PYTHONPATH="$REPO/scripts" python3 - "$TASKS" "$id" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+roots = spec_trace.parse_task_hierarchy(Path(sys.argv[1]).read_text(encoding="utf-8"))
+root = next((item for item in roots if item.ordinal == sys.argv[2]), None)
+print("missing" if root is None else "done" if root.checked else "pending")
+PY
+)"
+      if [[ "$state" == "done" ]]; then     # เสร็จแล้ว → ข้าม กัน implement ซ้ำ
         echo "!!! task $id = [x] อยู่แล้ว — ข้าม" >&2; continue
       fi
-      grep -qE "^- \[ \] $id\." "$TASKS" || { echo "!!! task $id ไม่ใช่ pending/ไม่พบ — ข้าม" >&2; continue; }
+      [[ "$state" == "pending" ]] || { echo "!!! task $id ไม่ใช่ pending/ไม่พบ — ข้าม" >&2; continue; }
       members="${members:+$members+}$id"    # ต่อกลับด้วย '+' คงการ batch
     done
     [[ -n "$members" ]] && GROUPS="$GROUPS $members"
@@ -102,25 +124,13 @@ else
   # default: pending task ทุกตัว — auto-group ด้วย `Batch:` tag ใน tasks.md เอง
   # (tag เดียวกัน = group เดียว/pane เดียว; ไม่มี tag = อันละ pane). tag อยู่บรรทัด
   # task หรือบรรทัด continuation ก็ได้ → ใช้ python parse (portable, ไม่พึ่ง gawk).
-  GROUPS="$(python3 - "$TASKS" <<'PY'
-import re, sys
-lines = open(sys.argv[1]).read().splitlines()
-bullet = re.compile(r'^- \[([ x])\] (\d+)\.')
-btag   = re.compile(r'Batch:\s*([A-Za-z0-9_-]+)')
-order, batch = [], {}            # pending ids (file order); id -> tag
-cur, pending = None, False
-for ln in lines:
-    mb = bullet.match(ln)
-    if mb:
-        cur, pending = mb.group(2), (mb.group(1) == ' ')
-        if pending:
-            order.append(cur)
-            mt = btag.search(ln)
-            if mt: batch[cur] = mt.group(1)
-        continue
-    if cur is not None and pending:          # continuation line of current task
-        mt = btag.search(ln)
-        if mt: batch[cur] = mt.group(1)
+  GROUPS="$(PYTHONPATH="$REPO/scripts" python3 - "$TASKS" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+roots = spec_trace.parse_task_hierarchy(Path(sys.argv[1]).read_text(encoding="utf-8"))
+order = [root.ordinal for root in roots if not root.checked]
+batch = {root.ordinal: root.batch for root in roots if not root.checked and root.batch}
 groups, seen = [], {}            # preserve first-appearance order
 for idn in order:
     tag = batch.get(idn)
@@ -178,7 +188,15 @@ end tell
 APPLESCRIPT
 }
 
-task_done() { grep -qE "^- \[x\] $1\." "$TASKS"; }       # task $1 marked [x]?
+task_done() { # root $1 marked [x] และไม่มี child ค้าง?
+  PYTHONPATH="$REPO/scripts" python3 - "$TASKS" "$1" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+raise SystemExit(0 if spec_trace.root_task_done(
+    Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[2]) else 1)
+PY
+}
 
 wait_for() {  # $1=predicate-cmd-string  $2=timeout-s  -> 0 ok / 1 timeout
   local waited=0

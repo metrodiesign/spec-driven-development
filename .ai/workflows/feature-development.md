@@ -71,9 +71,9 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
    แต่ไม่มีขั้นต่ำหรือเพดานระดับ spec. ถ้าเกิน 10 ให้ตรวจว่า scope กว้างเกินไปหรือแตกเป็น
    micro-step; คงจำนวนใดก็ได้เมื่อทุก task cohesive, verify แยกได้, trace ถึง requirement และจบได้
    ในหนึ่งรอบ. ห้ามแยก behavior ที่ cohesive หรือรวม behavior ที่ไม่เกี่ยวกันเพียงเพื่อให้ได้จำนวน
-   เป้าหมาย. ห้าม pre-split เป็น
-   1.1/1.2 (model ที่ implement จัดการ micro-sequencing เองด้วย internal TODO). map แต่ละ task -> REQ IDs บนบรรทัด
-   `Satisfies:`. ก่อน STOP รัน `scripts/spec-trace.sh <feature>` — ทุก REQ ต้องปรากฏบน Satisfies:
+   เป้าหมาย. Root `N.` เป็น cohesive execution unit; children `N.M` เป็น checklist ภายใน
+   root ไม่ใช่ execution unit. map root/children -> REQ IDs ด้วย nested bullet `Satisfies:`.
+   ก่อน STOP รัน `scripts/spec-trace.sh <feature>` — ทุก REQ ต้องปรากฏบน Satisfies:
    ของอย่างน้อยหนึ่ง task; REQ ที่ไม่ถูกครอบ = blocker (รายงานดังๆ ห้าม skip เงียบ).
    -> verify: `scripts/spec-trace.sh <feature>` ผ่าน (REQ coverage ครบ); STOP for review.
 
@@ -84,8 +84,9 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
    พิสูจน์ REQ IDs. รัน the project typecheck command (via `SDD_TYPECHECK_CMD` env, หรือ package.json
    typecheck script) + the project test runner (declared via `SDD_TEST_CMD` env, หรือ package.json
    test script สำหรับ Node project). ก่อน mark task สุดท้าย (หรือ assembly task)
-   รัน `scripts/spec-trace.sh <feature>` อีกครั้ง. mark `- [x]` + แนบ `Evidence:` block ใน edit
-   เดียวกัน (test command + result, ผล UI-verify ถ้าโปรเจ็กต์ ship UI, deviations). pause ที่ TASK
+   รัน `scripts/spec-trace.sh <feature>` อีกครั้ง. mark children `- [x]` พร้อม Evidence แยกก่อน
+   แล้ว mark root `- [x]` พร้อม Evidence ตรวจรวมหลัง children (test command + result,
+   ผล UI-verify ถ้าโปรเจ็กต์ ship UI, deviations). pause ที่ root TASK
    boundary.
    -> verify: typecheck เขียว, test เขียว (ผ่าน `.ai/bin/gate-task.sh`), Evidence block ครบทุก task ที่ done.
 
@@ -117,7 +118,7 @@ artifact: STOP, สรุปให้ผู้ใช้ review, รอ approval 
 - เชื่อ checkbox/git log แทน filesystem — commit อ้าง task เสร็จ แต่ artifact จริงไม่มี
   (`scripts/spec-state.sh` มีไว้จับเคสนี้; `git diff --stat` ไม่เห็น untracked `??`).
 - mark `- [x]` โดยไม่แนบ Evidence หรือ Evidence เป็นบรรทัดที่ "วางแผน" ไม่ใช่ที่รันจริง.
-- pre-split task เป็น 1.1/1.2 ใน tasks.md (ผิด sizing สำหรับ model นี้).
+- schedule หรือคิด cost แยกให้ child `1.1/1.2`; child เป็น checklist ของ root เท่านั้น.
 - ลืม cross-check ทุก section ใน REQ-1.1 (ลำดับหน้า) เทียบ component ที่มีจริง ตอน assemble — section
   ที่ตกร่อง decomposition จับได้ที่ assembly เท่านั้น (สร้างเป็น prerequisite ของ assembly + flag,
   ไม่แก้เงียบ).

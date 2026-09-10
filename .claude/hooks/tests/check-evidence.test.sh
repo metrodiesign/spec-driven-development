@@ -219,8 +219,8 @@ LINE_CONTENT="$(printf '%s\n' \
   '# Tasks' \
   '- [x] 1. Duplicate opening' \
   '     Evidence: historical pass' \
-  '- [ ] separator' \
-  '- [x] 1. Duplicate opening' \
+  '- [ ] 2. separator' \
+  '- [x] 5. Duplicate opening' \
   '     Evidence: TODO' \
   '- [x] 3. Inline evidence' \
   '     Evidence: suite passed' \
@@ -247,6 +247,76 @@ check_lines_strict 2 "unchecked line is invalid selection" $'4\n'
 check_lines_strict 2 "zero is invalid selection" $'0\n'
 check_lines_strict 2 "duplicate line number is invalid selection" $'2\n2\n'
 check_lines_strict 0 "empty selection checks no historical task" ''
+
+echo "=== KIRO NESTED TASKS: Evidence ownership and root completion ==="
+check_nested() { # $1=expected rc $2=description $3=content
+  local expected="$1" description="$2" content="$3" result nested_rc
+  result=$(printf '%s\n' "$content" | "$EVIDENCE_ENGINE" --strict 2>&1)
+  nested_rc=$?
+  if [ "$nested_rc" -eq "$expected" ]; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1)); echo "FAIL [nested] $description -> exit $nested_rc (want $expected) :: $result"
+  fi
+}
+
+NESTED_GREEN="$(printf '%s\n' \
+  '- [x] 1. Root' \
+  '  - [x] 1.1 Child one' \
+  '    - Evidence: child one passed' \
+  '  - [x] 1.2 Child two' \
+  '    - Evidence:' \
+  '      - test: child two passed' \
+  '  - Evidence: root integration passed')"
+check_nested 0 "root Evidence after children belongs to root" "$NESTED_GREEN"
+check_nested 1 "root and sibling Evidence cannot rescue child" "$(printf '%s\n' \
+  '- [x] 1. Root' \
+  '  - [x] 1.1 Child missing proof' \
+  '  - [x] 1.2 Child evidenced' \
+  '    - Evidence: child two passed' \
+  '  - Evidence: root passed')"
+check_nested 1 "pending child blocks completed root" "$(printf '%s\n' \
+  '- [x] 1. Root' \
+  '  - [ ] 1.1 Pending child' \
+  '  - Evidence: root passed')"
+check_nested 1 "completed children do not replace root Evidence" "$(printf '%s\n' \
+  '- [x] 1. Root' \
+  '  - [x] 1.1 Child' \
+  '    - Evidence: child passed')"
+check_nested 0 "Evidence transcript checkbox and markers stay opaque" "$(printf '%s\n' \
+  '- [x] 1. Root' \
+  '  - [x] 1.1 Child' \
+  '    - Evidence:' \
+  '      - test: child passed' \
+  '      - [x] 9.9 transcript checkbox' \
+  '      - Verify: fake' \
+  '  - Evidence: root passed')"
+check_nested 0 "variable backtick and tilde fences stay opaque" "$(printf '%s\n' \
+  '````markdown' \
+  '- [x] 9. Fenced fake' \
+  '````' \
+  '~~~~markdown' \
+  '  - [x] 8.1 Fenced fake child' \
+  '~~~~' \
+  '- [x] 1. Real root' \
+  '  - Evidence: real proof')"
+check_nested 0 "nested detail fences at owner indent stay opaque" "$(printf '%s\n' \
+  '- [x] 1. Root' \
+  '  - [x] 1.1 Child' \
+  '    `````markdown' \
+  '    - [ ] 9.9 fenced fake child' \
+  '    `````' \
+  '    - Evidence: child proof' \
+  '  - Evidence: root proof')"
+check_nested 0 "flat legacy detail fences stay opaque" "$(printf '%s\n' \
+  '- [ ] 1. Flat root' \
+  '     ~~~~markdown' \
+  '     - [ ] 9.9 fenced fake child' \
+  '     ~~~~')"
+check_nested 2 "tab-indented completed checkbox fails closed" "$(printf '\t- [x] 1. Tabbed\\n\t  no evidence')"
+check_nested 2 "duplicate root fails hierarchy validation" "$(printf '%s\n' \
+  '- [ ] 1. First' \
+  '- [ ] 1. Duplicate')"
 
 echo "---"
 echo "pass=$pass fail=$fail"

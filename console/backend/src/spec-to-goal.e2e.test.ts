@@ -223,6 +223,115 @@ test('Thai requirements H1 and readable Evidence format generate the same title 
   });
 });
 
+test('nested tasks project one root, union child Satisfies, and keep root Verify authoritative', { skip }, () => {
+  withSpecsDir((dir) => {
+    const tasks = [
+      '# รายการงาน: nested fixture',
+      HEADER,
+      '',
+      '- [x] 1. Root execution unit',
+      '  - Satisfies: REQ-1.1,',
+      '    REQ-1.2',
+      '  - Verify: root-command &&',
+      '    root-command-two',
+      '  ~~~~markdown',
+      '  - [ ] 8. fenced root checkbox is opaque',
+      '  ~~~~',
+      '',
+      '  - [x] 1.1 Child one',
+      '    - Satisfies: REQ-2.1,',
+      '      REQ-2.2',
+      '    - Verify: child-command-one',
+      '    `````markdown',
+      '    - [ ] 9.9 fenced child checkbox is opaque',
+      '    `````',
+      '    - Evidence:',
+      '      - test: child one passed',
+      '      - transcript: Satisfies: REQ-99 Verify: fake-command',
+      '      - [x] 9.9 transcript checkbox is opaque',
+      '',
+      '  - [x] 1.2 Child two',
+      '    - Satisfies: REQ-2.3',
+      '    - Verify: child-command-two',
+      '    - Evidence: child two passed',
+      '',
+      '  - Evidence: root integration passed',
+      '',
+      '````markdown',
+      '- [ ] 8. fenced root is opaque',
+      '  - [ ] 8.1 fenced child is opaque',
+      '````',
+      '~~~~markdown',
+      '- [ ] 7. tilde-fenced root is opaque',
+      '~~~~',
+    ].join('\n');
+    writeSpec(dir, 'nested-fixture', { requirements: reqDoc(FULL_BODY), tasks });
+
+    const res = generate(dir, 'nested-fixture');
+    assert.equal(res.status, 0, res.stderr);
+    const doc = parseYaml(readFileSync(res.draftPath, 'utf8'));
+    assert.deepEqual(
+      doc.acceptance_criteria.map((ac: { id: string }) => ac.id),
+      ['AC-1.1', 'AC-1.2', 'AC-2.1', 'AC-2.2', 'AC-2.3'],
+    );
+    for (const ac of doc.acceptance_criteria) assert.equal(ac.verification, 'root-command && root-command-two');
+
+    const { graph } = readGraph(dir, 'nested-fixture');
+    assert.deepEqual(graph.tasks.map((task) => task.id), ['T-1']);
+    assert.deepEqual(graph.tasks[0]!.satisfies, ['AC-1.1', 'AC-1.2', 'AC-2.1', 'AC-2.2', 'AC-2.3']);
+  });
+});
+
+test('flat legacy inline and continuation metadata remain associated with their root', { skip }, () => {
+  withSpecsDir((dir) => {
+    const body = FULL_BODY;
+    const tasks = [
+      '- [ ] 1. Inline metadata Satisfies: 1.1 Verify: inline-command',
+      '- [ ] 2. Wrapped metadata values',
+      '     Satisfies: 1.2,',
+      '     REQ-2. Depends on:',
+      '     1. Verify: continuation-command &&',
+      '     continuation-command-two',
+    ].join('\n');
+    writeSpec(dir, 'flat-metadata', { requirements: reqDoc(body), tasks });
+    const res = generate(dir, 'flat-metadata');
+    assert.equal(res.status, 0, res.stderr);
+    const doc = parseYaml(readFileSync(res.draftPath, 'utf8'));
+    assert.deepEqual(doc.acceptance_criteria.map((ac: { verification: string }) => ac.verification), [
+      'inline-command',
+      'continuation-command && continuation-command-two',
+      'continuation-command && continuation-command-two',
+      'continuation-command && continuation-command-two',
+      'continuation-command && continuation-command-two',
+    ]);
+    const { graph } = readGraph(dir, 'flat-metadata');
+    assert.deepEqual(graph.tasks.map((task) => task.title), ['Inline metadata', 'Wrapped metadata values']);
+    assert.deepEqual(graph.tasks[1]!.satisfies, ['AC-1.2', 'AC-2.1', 'AC-2.2', 'AC-2.3']);
+    assert.deepEqual(graph.tasks[1]!.depends_on, ['T-1']);
+  });
+});
+
+test('nested task hierarchy rejects duplicate, orphan, wrong-parent, and deeper IDs with line evidence', { skip }, () => {
+  const cases = [
+    { tasks: '- [ ] 1. A\n- [ ] 1. B', error: /line 2: duplicate root task ID 1/ },
+    { tasks: '- [ ] 1. A\n  - [ ] 1.1 B\n  - [ ] 1.1 C', error: /line 3: duplicate child task ID 1\.1/ },
+    { tasks: '  - [ ] 1.1 Orphan', error: /line 1: orphan child task ID 1\.1/ },
+    { tasks: '- [ ] 2. A\n  - [ ] 1.1 Wrong', error: /line 2: child task ID 1\.1 does not belong to root 2/ },
+    { tasks: '- [ ] 1. A\n    - [ ] 1.1.1 Deep', error: /line 2: task nesting deeper than N\.M: 1\.1\.1/ },
+    { tasks: '- [ ] 1. A\n  - [ ] 1.01 Leading zero', error: /line 2: child task ID 1\.01 has a leading zero/ },
+  ];
+  withSpecsDir((dir) => {
+    for (const [index, fixture] of cases.entries()) {
+      const feature = `bad-hierarchy-${index}`;
+      writeSpec(dir, feature, { requirements: reqDoc(FULL_BODY), tasks: fixture.tasks });
+      const res = generate(dir, feature);
+      assert.equal(res.status, 1);
+      assert.match(res.stderr, fixture.error);
+      assert.equal(readdirSync(join(dir, feature)).some((name) => name.endsWith('.draft.yaml')), false);
+    }
+  });
+});
+
 test('Satisfies semantics match spec_trace: whole-REQ, dash range, REQ-N.M all route to their own Verify (REQ-2.3/2.4)', { skip }, () => {
   withSpecsDir((dir) => {
     writeSpec(dir, 'fixture-feat', { requirements: reqDoc(FULL_BODY), tasks: FULL_TASKS });
@@ -628,22 +737,22 @@ test('Depends on: grammar is narrow — the real stage-2 line (number + Thai par
   });
 });
 
-test('indented checkbox block + title fallback/cut: block head parsed through the indent, title cut at 120 chars (REQ-2.1/2.9, D13)', { skip }, () => {
+test('root checkbox + title fallback/cut: title is capped at 120 characters (REQ-2.1/2.9, D13)', { skip }, () => {
   withSpecsDir((dir) => {
     const body = ['## REQ-1: Indent', '', '- 1.1 THE SYSTEM SHALL a', '- 1.2 THE SYSTEM SHALL b'].join('\n');
-    const longTitle = 'Indented checkbox block carrying a title long enough that the generator must cut it at exactly one hundred twenty characters, dropping this tail.';
+    const longTitle = 'Root checkbox block carrying a title long enough that the generator must cut it at exactly one hundred twenty characters, dropping this tail.';
     const tasks = [
       '## A nested checklist',
       '',
-      `  - [ ] 1. ${longTitle}`,
-      '       Satisfies: 1.1. Verify: pnpm test one',
-      '  - [x] 2. Marker-less block keeps its whole remainder as the title.',
+      `- [ ] 1. ${longTitle}`,
+      '     Satisfies: 1.1. Verify: pnpm test one',
+      '- [x] 2. Marker-less block keeps its whole remainder as the title.',
     ].join('\n');
     writeSpec(dir, 'fixture-feat', { requirements: reqDoc(body), tasks });
     const res = generate(dir, 'fixture-feat');
     assert.equal(res.status, 0, res.stderr);
     const { graph } = readGraph(dir, 'fixture-feat');
-    assert.deepEqual(graph.tasks.map((t) => t.id), ['T-1', 'T-2'], 'indented checkboxes are task blocks');
+    assert.deepEqual(graph.tasks.map((t) => t.id), ['T-1', 'T-2']);
     assert.equal(graph.tasks[0]!.title, longTitle.slice(0, 120), 'title truncated to 120 (REQ-2.1)');
     assert.equal(graph.tasks[1]!.title, 'Marker-less block keeps its whole remainder as the title.', 'no marker -> whole remainder (D13)');
     assert.deepEqual(graph.tasks[1]!.satisfies, [], 'no Satisfies -> empty (shape-legal; freeze calls it an orphan)');
@@ -667,12 +776,17 @@ test('generation fails on a dangling Depends ref / dangling Satisfies id / missi
     {
       feature: 'no-ordinal',
       tasks: ['- [ ] 1. One.', '     Satisfies: 1.1. Verify: pnpm test one', '- [ ] Ordinal-less block that must be refused.', '     Satisfies: 1.2. Verify: pnpm test two'].join('\n'),
-      expect: /no leading ordinal '- \[ \] N\.': - \[ \] Ordinal-less block/,
+      expect: /line 3: invalid task ID or indentation: Ordinal-less/,
     },
     {
       feature: 'dup-ordinal',
       tasks: ['- [ ] 1. One.', '     Satisfies: 1.1. Verify: pnpm test one', '- [ ] 1. One again.', '     Satisfies: 1.2. Verify: pnpm test two'].join('\n'),
-      expect: /duplicate task ordinal 1 in tasks\.md/,
+      expect: /line 3: duplicate root task ID 1/,
+    },
+    {
+      feature: 'leading-zero',
+      tasks: ['- [ ] 01. One.', '     Satisfies: 1.1. Verify: pnpm test one'].join('\n'),
+      expect: /line 1: root task ID 01 has a leading zero/,
     },
   ];
   for (const c of cases) {

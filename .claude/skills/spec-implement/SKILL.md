@@ -8,8 +8,9 @@ argument-hint: <task id, range like 1-3, or "all">
 
 ก่อนสร้างหรือแก้ผลลัพธ์ อ่านและใช้ [นโยบายภาษาของผลลัพธ์](../../../.ai/shared/TASK_PROTOCOL.md#ภาษาของผลลัพธ์)
 
-Resolve $ARGUMENTS to the target task(s): a single id (e.g. 2), a range (1-3), or
-all incomplete tasks. For multiple tasks, work in dependency order.
+Resolve $ARGUMENTS to root task(s) only: a single id (e.g. 2), a range (1-3), or
+all incomplete roots. Reject child ID เช่น `1.1`; children ไม่ใช่ execution unit.
+For multiple roots, work in dependency order.
 
 Resolve the active spec first: if `.ai/specs/` holds more than one feature and
 the conversation does not name one, pick the single folder whose tasks.md still has
@@ -48,9 +49,10 @@ For EACH task:
    task in context rather than splitting it across turns.
 3. Write or extend tests proving it satisfies its REQ IDs (or F-IDs/B-IDs for a
    bugfix spec).
-4. Mark the task "- [x]" in tasks.md, state which IDs are now satisfied, AND in
-   the SAME edit append an `Evidence:` block directly under that task line — the
-   box and the evidence flip together. Record what you actually ran and observed
+4. Mark children `- [x]` พร้อม Evidence ของ child แต่ละตัวก่อน จากนั้น mark root
+   `- [x]` และ append root `Evidence:` หลัง childrenใน SAME edit. Root `Verify:`
+   เป็นคำสั่งตรวจรวม authoritative; child `Verify:` เป็นเอกสารประกอบ. ห้ามใช้
+   Evidence ของ root, parent หรือ sibling แทน child. Record what you actually ran and observed
    (not the planned `Verify:` line). ใช้รูปแบบเต็มจาก
    [ตัวอย่างหลักฐาน](../../../.ai/shared/TESTING_PROTOCOL.md#evidence-block-format):
    ระยะเยื้องสองช่อง เว้นบรรทัดก่อนและหลัง `Evidence:` และแสดงแต่ละผลตรวจเป็นรายการย่อย
@@ -65,7 +67,7 @@ For EACH task:
    browser-based verification, Read
    `.claude/skills/spec-implement/references/browser-verify.md` first.
 
-Pause for my confirmation at each TASK boundary (not after every file). When I
+Pause for my confirmation at each root TASK boundary (not after child/file). When I
 asked for a range or "all", continue to the next task after reporting, stopping
 early only if a test fails or a requirement turns out to be infeasible.
 

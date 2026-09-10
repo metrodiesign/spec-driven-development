@@ -37,8 +37,9 @@ esac
 RANGE="$BASE_SHA..$HEAD_SHA"
 FILES_TMP=$(mktemp) || fail_scope "cannot allocate file list"
 LINES_TMP=$(mktemp) || fail_scope "cannot allocate line selection"
+ADDED_TMP=$(mktemp) || fail_scope "cannot allocate added-line selection"
 CONTENT_TMP=$(mktemp) || fail_scope "cannot allocate content buffer"
-trap 'rm -f -- "$FILES_TMP" "$LINES_TMP" "$CONTENT_TMP"' EXIT
+trap 'rm -f -- "$FILES_TMP" "$LINES_TMP" "$ADDED_TMP" "$CONTENT_TMP"' EXIT
 
 git diff --name-only --diff-filter=ACMR -z "$RANGE" -- \
   ':(glob).ai/specs/**/tasks.md' ':(glob).claude/specs/**/tasks.md' \
@@ -65,13 +66,32 @@ while IFS= read -r -d '' file; do
     }
     in_hunk && /^\+/ {
       line=substr($0, 2)
-      if (line ~ /^[[:space:]]*-[[:space:]]\[[xX]\]/) print new_line
+      print new_line
       new_line++
       next
     }
     in_hunk && /^-/ { next }
     in_hunk && /^ / { new_line++; next }
-  ' > "$LINES_TMP" || fail_scope "cannot parse diff for $file"
+  ' > "$ADDED_TMP" || fail_scope "cannot parse diff for $file"
+
+  if ! PYTHONPATH="$REPO_ROOT/scripts" python3 - "$CONTENT_TMP" "$ADDED_TMP" > "$LINES_TMP" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+
+content_path, added_path = map(Path, sys.argv[1:])
+try:
+    checked_lines = {line for line, _ in spec_trace.task_checkbox_lines(
+        content_path.read_text(encoding="utf-8"), True)}
+except spec_trace.TaskHierarchyError as error:
+    print(f"invalid tasks.md hierarchy: {error}", file=sys.stderr)
+    raise SystemExit(1)
+added_lines = {int(line) for line in added_path.read_text().splitlines() if line}
+sys.stdout.write("\n".join(str(line) for line in sorted(checked_lines & added_lines)))
+PY
+  then
+    fail_scope "cannot parse task hierarchy for $file"
+  fi
 
   [ -s "$LINES_TMP" ] || continue
   if output=$("$ENGINE" --lines-strict "$LINES_TMP" < "$CONTENT_TMP"); then

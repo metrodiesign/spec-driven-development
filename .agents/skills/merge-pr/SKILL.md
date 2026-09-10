@@ -27,7 +27,9 @@ off to sync-branch's existing steps for everything after.
    env -u GH_TOKEN gh pr view <n> --json additions,deletions,labels,headRefOid,headRefName,files
    ```
    - **Evaluate the trigger**: phase-close (a `phase-close` label, OR the diff touches a
-     `.ai/specs/*/tasks.md` whose post-merge content has zero `- [ ]` lines left) OR size
+     `.ai/specs/*/tasks.md` whose post-merge content has zero pending root/child จาก
+     `spec_trace.task_checkbox_lines(..., checked=False)` ผ่าน `PYTHONPATH=scripts` (fence และ Evidence
+     transcript ไม่ใช่ task) OR size
      (`additions + deletions > diffThreshold` from `.ai/policies/review-standard.json` —
      default 400 if that file is missing/unparseable; still evaluate the gate, never
      fail-open to "no gate"). Neither → skip straight to step 1 (unchanged fast path).

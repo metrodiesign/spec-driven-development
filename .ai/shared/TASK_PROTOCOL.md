@@ -40,12 +40,20 @@ template ภาษาอังกฤษกำหนดโครงสร้า�
 - 1.1 เมื่อผู้ใช้กดบันทึก ระบบต้องบันทึกเนื้อหาปัจจุบันเป็นฉบับร่าง
 
 - [ ] 1. บันทึกฉบับร่าง — ผู้ใช้เรียกคืนเนื้อหาที่บันทึกไว้ได้
-  Satisfies: REQ-1.1. Verify: ทดสอบบันทึกแล้วโหลดกลับและเปรียบเทียบเนื้อหา.
+  - Satisfies: REQ-1.1.
+  - Verify: ทดสอบบันทึกแล้วโหลดกลับและเปรียบเทียบเนื้อหา.
+
+  - [ ] 1.1 บันทึกข้อมูลฉบับร่าง
+    - Satisfies: REQ-1.1.
+    - Verify: ทดสอบเฉพาะขั้นบันทึก.
 ```
 
-รายการงานใช้ระยะเยื้องสองช่องสำหรับข้อความภายในงาน เว้นบรรทัดก่อนและหลัง `Evidence:`
-แล้วแสดงผลตรวจเป็นรายการย่อยตาม [ตัวอย่างหลักฐาน](TESTING_PROTOCOL.md#evidence-block-format)
-คงข้อมูลอ้างอิงและวิธีตรวจติดกับบรรทัดงาน เพื่อให้ตัวอ่านยังจับคู่ได้ ตรวจทั้งผลที่แสดงและผลตัวอ่านก่อนส่งมอบ
+รายการงานใช้ GFM checkbox สองระดับ: root `N.` อยู่ column 0 และเป็น execution unit;
+child `N.M` เยื้องสองช่องและเป็น checklist ภายใน root. รายละเอียด/metadata ของ root
+เยื้องสองช่อง ส่วนของ child เยื้องสี่ช่องและเขียนเป็น nested bullet. `Satisfies:` ของ
+root กับ children รวมเป็น coverage ของ root; `Verify:` ของ root เท่านั้นเป็นคำสั่งตรวจรวม
+ส่วน child `Verify:` เป็นเอกสารประกอบ. เว้นบรรทัดก่อนและหลัง `Evidence:` แล้วแสดงผลตรวจ
+เป็นรายการย่อยตาม [ตัวอย่างหลักฐาน](TESTING_PROTOCOL.md#evidence-block-format)
 
 ก่อนส่งมอบ อ่านผลลัพธ์ซ้ำ: เนื้อหาที่สร้างหรือแก้เป็นภาษาไทย, machine contract คงเดิม,
 traceability อ้างอิงได้จริง และ Evidence ระบุเฉพาะคำสั่งกับผลที่รันและสังเกตจริง
@@ -101,8 +109,8 @@ complete task end-to-end in one pass, even when it spans many files.
   verifiable, traceable to requirements, and feasible to implement and verify in one
   pass. Never split cohesive behavior or merge unrelated behaviors solely to hit a
   target count.
-- Do NOT pre-split a task into `1.1` / `1.2` sub-steps inside `tasks.md`. Decompose
-  into working steps yourself at execution time using your own internal TODO list.
+- ใช้ root เป็น cohesive slice ที่ verify แยกได้; ใช้ children `N.M` แสดงขั้นตอนภายใน
+  โดยไม่สร้าง execution, dependency, batch, cost หรือ GitHub issue unit เพิ่ม.
 - Prefer **vertical slices** (model -> API -> validation -> tests) over horizontal
   layers that are useless alone.
 - Logic-first: extract testable logic (formulas, validation) into pure functions
@@ -127,9 +135,9 @@ complete task end-to-end in one pass, even when it spans many files.
    the task requires. Match existing conventions exactly.
 6. **Tests** — write or extend tests proving the task satisfies its IDs. See
    [TESTING_PROTOCOL.md](TESTING_PROTOCOL.md).
-7. **Summary** — mark the task `- [x]` and, in the SAME edit, append an `Evidence:`
-   block under that task line (box and evidence flip together). State which REQ-IDs
-   are now satisfied. Record what you actually RAN and OBSERVED, not the planned check.
+7. **Summary** — mark children `- [x]` พร้อม Evidence ของ child แต่ละตัวก่อน แล้ว mark
+   root `- [x]` พร้อม Evidence ของ root หลัง children ใน edit เดียวกัน. Root เสร็จไม่ได้
+   ถ้ามี child ค้าง. Record what you actually RAN and OBSERVED, not planned `Verify:`.
 8. **Handoff** — when the session ends or context is about to be cleared/compacted,
    write current state into the spec files and a handoff note. See
    [AGENT_HANDOFF_PROTOCOL.md](AGENT_HANDOFF_PROTOCOL.md) and
@@ -166,8 +174,8 @@ infeasible.
   code/tests — no uncovered REQ. Cross-check the full section/behavior list in
   `requirements.md` against what exists; a section listed in REQ but in no task is a
   blocker to surface, not a silent skip.
-- `tasks.md` checkbox is `- [x]` with an `Evidence:` block recording the exact command
-  run and observed result.
+- `tasks.md` root และ children เป็น `- [x]` พร้อม Evidence ของตนเอง; Evidence ของ root
+  อยู่หลัง children และบันทึกคำสั่งจริงกับผลที่สังเกต.
 - The change passes the enforcement floor: typecheck + tests + lint green; no secrets;
   branch/push rules respected. See [SECURITY_RULES.md](SECURITY_RULES.md).
 - A summary states satisfied IDs, modified files, and any deviation with its reason.

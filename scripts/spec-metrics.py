@@ -23,11 +23,11 @@ import glob, json, os, re, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cost_lib import all_task_ids, session_costs, task_costs, ledger_for  # noqa: E402
+from spec_trace import parse_task_hierarchy  # noqa: E402
 
 DISCLAIMER = ("estimates from local ledger — API-equivalent value, not an actual bill. "
               "baseline value is low until a few more features ship with metrics on.")
 
-CHECKBOX_RE = re.compile(r"^-\s*\[([ xX])\]\s*(\d+)", re.M)
 STATUS_RE = re.compile(r"^>\s*Status:\s*approved\s+(\d{4}-\d{2}-\d{2})", re.M)
 
 
@@ -55,11 +55,10 @@ def _task_counts(tasks_path):
     if not os.path.exists(tasks_path):
         return None
     txt = open(tasks_path, encoding="utf-8").read()
-    matches = CHECKBOX_RE.findall(txt)
-    if not matches:
+    roots = parse_task_hierarchy(txt)
+    if not roots:
         return None
-    done = sum(1 for state, _ in matches if state.lower() == "x")
-    return dict(total=len(matches), done=done)
+    return dict(total=len(roots), done=sum(1 for root in roots if root.checked))
 
 
 def _span_days(feature, feature_dir, archived):
@@ -108,8 +107,8 @@ def _rework(feature, req_path, design_path):
 def _done_task_ids(tasks_path):
     if not os.path.exists(tasks_path):
         return set()
-    txt = open(tasks_path, encoding="utf-8").read()
-    return {int(tid) for state, tid in CHECKBOX_RE.findall(txt) if state.lower() == "x"}
+    roots = parse_task_hierarchy(open(tasks_path, encoding="utf-8").read())
+    return {int(root.ordinal) for root in roots if root.checked}
 
 
 def _cost_for_feature(all_sessions, all_ids, done_ids):

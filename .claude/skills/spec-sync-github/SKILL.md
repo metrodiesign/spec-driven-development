@@ -35,10 +35,12 @@ writing the manifest file.
    `## REQ-N:` headings makes the script exit 0 with a skip message; that is expected
    — proceed but omit the REQ coverage table (step 6).
 
-3. Parse artifacts (read-only Bash). From `tasks.md`, per task: the number
+3. Parse artifacts (read-only Bash). From `tasks.md`, per root task: the number
    (`- [ ] N.` / `- [x] N.`), the headline (text up to the first ` — `), the
    scope/done text, the `Satisfies:` IDs, `Depends on:` task numbers, `Verify:`, the
-   checkbox state, and the `Evidence:` block. Read the `> Status:` line from
+   checkbox state, root `Evidence:` block และ children `N.M` พร้อม checkbox,
+   scope, `Satisfies:`, `Verify:` และ Evidence ของแต่ละ child. รวม child `Satisfies:`
+   เข้า coverage ของ root แต่ใช้ root `Verify:` เท่านั้น. Read the `> Status:` line from
    `requirements.md`; read the `## Requirement Traceability` table from `design.md`
    (if present). A bugfix spec has no `Satisfies:`/`design.md` — take the task title +
    its sub-bullets as scope, and the inline B-IDs (e.g. `(B1.1, B1.2)`) as the
@@ -54,7 +56,7 @@ writing the manifest file.
 
 6. Build the desired issue set and compute a sha256 `bodyHash` per issue (epic + each
    task) from its rendered body. Diff against the manifest to label each:
-   `create` / `update` (hash changed) / `close` (task now `[x]`, issue still open) /
+   `create` / `update` (hash changed รวม child checklist) / `close` (root now `[x]`, issue still open) /
    `skip` (unchanged). Render bodies from
    `.claude/skills/spec-sync-github/references/body-templates.md`.
 
@@ -71,9 +73,10 @@ writing the manifest file.
    a. Ensure the epic issue via `issue_write` (create or update). Body = epic
       template. Labels `spec:<feature>`, `spec-epic`, `req-spine`. Record number +
       node id + hash in the manifest immediately.
-   b. For each task in DAG order: `issue_write` create/update the task issue (body =
-      sub-issue template; labels `spec:<feature>`, `spec-task`). Set its state to
-      match the checkbox: `[x]` -> closed, `[ ]` -> open. If the manifest entry is not
+   b. For each root task in DAG order: `issue_write` create/update one task issue (body =
+      sub-issue templateพร้อม child checklist; labels `spec:<feature>`, `spec-task`).
+      Set its state to match root checkbox: `[x]` -> closed, `[ ]` -> open. ห้ามสร้าง
+      issue หรือ manifest key แยกให้ child. If the manifest entry is not
       yet `subIssueLinked`, attach it under the epic with `sub_issue_write`, then set
       `subIssueLinked: true`. Write the manifest entry (number, node id, hash, state)
       INSIDE the loop, not batched at the end — a mid-run crash must not lose what was
@@ -115,6 +118,7 @@ Key tasks by their stable number (`N.` in tasks.md) — the only stable task ide
   state lives in the sidecar manifest only.
 - Do NOT run `gh` for issue I/O (RTK rewrites its output); if you must, wrap it in
   `rtk proxy`.
-- Do NOT re-slice a task into smaller issues — one task = one sub-issue, preserving
+- Do NOT re-slice root/children into smaller issues — one root = one sub-issue;
+  children render เป็น checklist ใน body, preserving
   the coarse-task model and the REQ spine. (This is why the matt-pocock `to-issues`
   skill is intentionally NOT used here.)

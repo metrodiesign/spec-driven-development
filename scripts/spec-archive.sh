@@ -9,6 +9,7 @@ set -euo pipefail
 
 FEATURE="${1:?usage: spec-archive.sh <feature>}"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+TOOL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SPECS_DIR="$REPO_ROOT/.ai/specs"
 SRC="$SPECS_DIR/$FEATURE"
 DEST="$SPECS_DIR/archive/$FEATURE"
@@ -28,10 +29,14 @@ TASKS="$SRC/tasks.md"
   exit 1
 }
 
-# Checkbox shape shared with .ai/bin/lib-guard.sh's CB_TODO (same "- [ ]" regex, kept as
-# its own local copy here — this is an operator maintenance tool, not a security guard,
-# so it does not source the guard fragment; REQ-1.2/1.3).
-UNCHECKED=$(grep -nE '^[[:space:]]*-[[:space:]]\[[[:space:]]\]' "$TASKS" || true)
+UNCHECKED=$(PYTHONPATH="$TOOL_ROOT/scripts" python3 - "$TASKS" <<'PY'
+import sys
+from pathlib import Path
+import spec_trace
+rows = spec_trace.task_checkbox_lines(Path(sys.argv[1]).read_text(encoding="utf-8"), False)
+print("\n".join(f"{line}:{text}" for line, text in rows))
+PY
+)
 if [ -n "$UNCHECKED" ]; then
   echo "spec-archive: $FEATURE has unchecked tasks — refusing to archive:" >&2
   printf '%s\n' "$UNCHECKED" >&2
