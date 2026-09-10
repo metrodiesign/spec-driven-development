@@ -1,10 +1,11 @@
 # Requirements — SDD framework distribution
 
-> Status: draft
+> Status: completed 2026-09-10
+> Approval: not recorded
 
 เอกสารนี้กำหนดพฤติกรรมของเครื่องมือกระจาย SDD framework จาก Git revision ไปยัง consumer repository แบบ local และ reproducible
 
-สถานะ `draft` หมายถึงยังไม่ได้บันทึก phase approval ของเอกสาร requirements เท่านั้น ไม่ใช่สถานะของ implementation ซึ่งทำเสร็จและผ่าน verification แล้ว
+สถานะ `completed` หมายถึง requirements artifact และ implementation เสร็จแล้ว โดยยังไม่มีการบันทึก explicit user phase approval
 
 ## REQ-1: Source snapshot
 

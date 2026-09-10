@@ -1,12 +1,13 @@
 # Tasks — SDD framework distribution
 
-> Status: draft
+> Status: completed 2026-09-10
+> Approval: not recorded
 
 รายการนี้ผูก implementation กับ requirements และ verification ที่รันได้ใน repository
 
 ## สถานะงาน
 
-สถานะ `draft` หมายถึงยังไม่ได้บันทึก phase approval ของเอกสาร tasks เท่านั้น งาน implementation ทั้ง 6 ข้อทำเสร็จและผ่าน verification แล้ว
+สถานะ `completed` หมายถึง tasks artifact และ implementation ทั้ง 6 ข้อเสร็จแล้ว โดยยังไม่มีการบันทึก explicit user phase approval
 
 ## รายการงาน
 
@@ -16,7 +17,7 @@
 
   - Evidence:
     - test: `scripts/spec-trace.sh sdd-framework-distribution` -> ผ่าน 16 criteria และ EARS lint
-    - test: `rg -n '^> Status: draft$|^สถานะ ' .ai/specs/sdd-framework-distribution/{requirements,design,tasks}.md` -> พบ canonical status และคำอธิบาย phase approval แยกจาก implementation ครบทั้ง 3 ไฟล์
+    - test: `rg -n '^> (Status: completed 2026-09-10|Approval: not recorded)$' .ai/specs/sdd-framework-distribution/{requirements,design,tasks}.md` -> พบ completed status และ approval field แยกกันครบทั้ง 3 ไฟล์
     - viewports: n/a — CLI และเอกสาร ไม่มีหน้าจอ
     - deviations: ไม่มี
 

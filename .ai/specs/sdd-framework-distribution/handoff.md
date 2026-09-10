@@ -9,7 +9,8 @@
 | Implementation | เสร็จที่ commit `40c4f2a1b65a512b2d80362aca5142b66cbb4251` |
 | Verification | ผ่าน |
 | Pull request | [PR #153](https://github.com/metrodiesign/spec-driven-development/pull/153) ยังเป็น draft และยังไม่ merge |
-| Spec phase approval | ยังไม่ได้บันทึก จึงคง `Status: draft` ใน requirements, design และ tasks |
+| Canonical spec artifacts | requirements, design และ tasks ใช้ `Status: completed 2026-09-10` |
+| Spec phase approval | ใช้ `Approval: not recorded`; completion ไม่ได้ข้าม approval gate |
 
 ## Scope
 

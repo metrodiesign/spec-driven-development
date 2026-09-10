@@ -1,8 +1,9 @@
 # Design — SDD framework distribution
 
-> Status: draft
+> Status: completed 2026-09-10
+> Approval: not recorded
 
-สถานะ `draft` หมายถึงยังไม่ได้บันทึก phase approval ของเอกสาร design เท่านั้น ไม่ใช่สถานะของ implementation ซึ่งทำเสร็จและผ่าน verification แล้ว
+สถานะ `completed` หมายถึง design artifact และ implementation เสร็จแล้ว โดยยังไม่มีการบันทึก explicit user phase approval
 
 เครื่องมือใช้ source Git object database เป็น immutable snapshot และยืนยัน consumer lock กับ source snapshot ที่เชื่อถือได้ก่อนใช้ lock เป็นหลักฐาน ownership ของ managed paths การที่ offline `status` ผ่านพิสูจน์ได้เพียง self-consistency และ local drift ไม่ได้พิสูจน์ source provenance
 
