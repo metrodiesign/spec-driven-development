@@ -1,6 +1,6 @@
 # Handoff Note: รายการงานสองระดับแบบ Kiro
 
-ส่ง implementation ของ root task 1 เข้าสู่ audit/verify/review โดย artifacts ยังเป็น `draft`.
+Implementation ผ่าน audit/verify/review และเปิด PR #152 แล้ว โดย artifacts ยังเป็น `draft`.
 
 ## Task Summary
 
@@ -8,7 +8,7 @@
 
 ## Current Status
 
-Implementation และ targeted checks เสร็จ; พร้อมให้ pipeline gates ตรวจ.
+แก้ CI follow-up เรื่องตัวแปร `GROUPS` ของ Bash แล้ว; local guards และ review ผ่าน รอผล CI ของ commit ที่แก้.
 
 ## Files Changed
 
@@ -36,15 +36,25 @@ Implementation และ targeted checks เสร็จ; พร้อมให�
 - `pnpm test` -> ทุก package จบโดยไม่พบ failure; backend 465/465.
 - Pandoc `markdown+task_lists` -> exit 0; feature มี checkbox inputs 7 รายการ.
 
+## CI follow-up: Bash task groups
+
+- CI ล้มที่ Guard regression tests ก่อนถึง spec-trace: pane-loop อ่าน Unix group ID `1001` เป็น task ทั้งที่ไม่มีงานค้าง.
+- สาเหตุคือ `GROUPS` เป็นตัวแปรพิเศษของ Bash; เส้นทาง zsh ในเครื่องซ่อนปัญหานี้ไว้.
+- เปลี่ยนเป็น `TASK_GROUPS` ทุกโหมด พร้อม regression ที่บังคับ Bash สำหรับ all-in-one, default และ manual.
+- RED: `PANELOOP_REEXEC=1 bash .claude/hooks/tests/spec-slice.test.sh` ได้ `pass=45 fail=1`, `groups: 20`.
+- GREEN: คำสั่งเดิมและเส้นทางปกติได้ `pass=49 fail=0`; ไม่มีการเรียก GUI stub เมื่อไม่มีงานค้าง.
+- Guard suites ทั้ง 16 ชุดผ่าน, active/archive spec-trace ผ่าน และ lessons coverage ผ่าน.
+- Review ของ CI fix ไม่พบ finding; รอ GitHub CI ยืนยันหลัง push.
+
 ## Known Issues
 
-- Unified PTY ไม่คืน final numeric rc หลัง `pnpm test` session ปิด; output ทุก packageไม่มี failure.
+- ผล `pnpm test` รอบแรกไม่มี numeric exit code; verifier รัน capture ภายหลังแล้วได้ exit 0.
 
 ## Next Recommended Agent
 
-ให้ `auditor` ตรวจ diff แล้ว `verifier` รัน gate ตาม pipeline.
+ติดตาม CI ของ PR #152; ไม่ merge โดยไม่มีคำสั่งจากผู้ใช้.
 
 ## Next Steps
 
-1. Audit correctness/security/performance และกวาด failure class.
-2. Verify AC-1 ถึง AC-10 แล้วส่ง craft review.
+1. Push CI fix บน feature branch เดิม.
+2. ตรวจ guards + spec-trace และ checks ที่เหลือของ PR #152 จนจบ.

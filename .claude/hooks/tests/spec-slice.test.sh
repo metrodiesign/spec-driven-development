@@ -213,6 +213,17 @@ else
   fail=$((fail+1)); echo "FAIL: pane all-in-one scheduled fenced/Evidence checkbox :: rc=$RC :: $OUT"
 fi
 
+for pane_mode in all-in-one default 1; do
+  pane_args=()
+  [ "$pane_mode" = default ] || pane_args+=("$pane_mode")
+  OUT=$(cd "$PANE_R" && PANELOOP_REEXEC=1 PANE_STUB_CALLED="$PANE_R/osascript-called-bash-$pane_mode" PATH="$PANE_R/bin:$PATH" bash scripts/pane-loop.sh pane-fixture "${pane_args[@]}" 2>&1); RC=$?
+  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'ไม่มี task ที่จะรัน' && [ ! -e "$PANE_R/osascript-called-bash-$pane_mode" ]; then
+    pass=$((pass+1))
+  else
+    fail=$((fail+1)); echo "FAIL: pane Bash $pane_mode scheduled completed/fenced/Evidence checkbox :: rc=$RC :: $OUT"
+  fi
+done
+
 PROJECTION=$(PYTHONPATH="$REPO_ROOT/scripts" python3 - "$PANE_R/.ai/specs/pane-fixture/tasks.md" <<'PY'
 import sys
 from pathlib import Path

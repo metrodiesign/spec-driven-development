@@ -32,11 +32,8 @@
 #
 set -uo pipefail
 
-# macOS /bin/bash is 3.2.57 (no newer system bash); it mis-captures the `$(python3 ...)`
-# group parse below, collapsing the task-id list to a single bogus token -> the orchestrator
-# types `/spec-implement <garbage>` and stalls. Re-exec under zsh with bash-style word-splitting:
-# zsh captures the command-substitution correctly AND `-o shwordsplit` keeps `for x in $GROUPS`
-# splitting on spaces the way this script (written for bash) expects. Idempotent via the flag.
+# Keep the existing zsh entrypoint with Bash-style word splitting when available.
+# Task groups use TASK_GROUPS: Bash reserves GROUPS for the user's Unix group IDs.
 if [[ -z "${PANELOOP_REEXEC:-}" ]]; then
   export PANELOOP_REEXEC=1
   if command -v zsh >/dev/null 2>&1; then exec zsh -o shwordsplit "$0" "$@"; fi
@@ -87,17 +84,17 @@ shift || true   # ทิ้ง $1 (feature) ถ้ามี — เหลือ 
 ALLINONE=""
 if [[ "${1:-}" == "all-in-one" || "${1:-}" == "--all-in-one" ]]; then ALLINONE=1; shift; fi
 
-GROUPS=""       # space-separated groups; id ในกลุ่มคั่นด้วย '+'
+TASK_GROUPS=""       # space-separated groups; id ในกลุ่มคั่นด้วย '+'
 if [[ -n "$ALLINONE" ]]; then
   # ทุก pending task (เรียงตามไฟล์) → 1 group เดียวคั่นด้วย '+' (ข้าม Batch tag/args อื่น)
-  GROUPS="$(PYTHONPATH="$REPO/scripts" python3 - "$TASKS" <<'PY'
+  TASK_GROUPS="$(PYTHONPATH="$REPO/scripts" python3 - "$TASKS" <<'PY'
 import sys
 from pathlib import Path
 import spec_trace
 print('+'.join(spec_trace.root_task_ids(Path(sys.argv[1]).read_text(encoding="utf-8"), False)))
 PY
 )"
-  [[ -n "$GROUPS" ]] && echo "โหมด: all-in-one (1 session สำหรับทุก pending task)"
+  [[ -n "$TASK_GROUPS" ]] && echo "โหมด: all-in-one (1 session สำหรับทุก pending task)"
 elif [[ $# -gt 0 ]]; then
   for grp in "$@"; do                       # แต่ละ arg = 1 group (1 pane)
     members=""
@@ -118,13 +115,13 @@ PY
       [[ "$state" == "pending" ]] || { echo "!!! task $id ไม่ใช่ pending/ไม่พบ — ข้าม" >&2; continue; }
       members="${members:+$members+}$id"    # ต่อกลับด้วย '+' คงการ batch
     done
-    [[ -n "$members" ]] && GROUPS="$GROUPS $members"
+    [[ -n "$members" ]] && TASK_GROUPS="$TASK_GROUPS $members"
   done
 else
   # default: pending task ทุกตัว — auto-group ด้วย `Batch:` tag ใน tasks.md เอง
   # (tag เดียวกัน = group เดียว/pane เดียว; ไม่มี tag = อันละ pane). tag อยู่บรรทัด
   # task หรือบรรทัด continuation ก็ได้ → ใช้ python parse (portable, ไม่พึ่ง gawk).
-  GROUPS="$(PYTHONPATH="$REPO/scripts" python3 - "$TASKS" <<'PY'
+  TASK_GROUPS="$(PYTHONPATH="$REPO/scripts" python3 - "$TASKS" <<'PY'
 import sys
 from pathlib import Path
 import spec_trace
@@ -144,8 +141,8 @@ print(' '.join('+'.join(g) for g in groups))
 PY
 )"
 fi
-[[ -n "$GROUPS" ]] || { echo "ไม่มี task ที่จะรันใน $FEATURE"; exit 0; }
-echo "Feature: $FEATURE | groups: $GROUPS"
+[[ -n "$TASK_GROUPS" ]] || { echo "ไม่มี task ที่จะรันใน $FEATURE"; exit 0; }
+echo "Feature: $FEATURE | groups: $TASK_GROUPS"
 
 # --- iTerm helpers (operate on a session by id) -----------------------------
 open_pane() {  # -> echoes new session id ; opens interactive claude in a split
@@ -210,7 +207,7 @@ wait_for() {  # $1=predicate-cmd-string  $2=timeout-s  -> 0 ok / 1 timeout
 # --- main loop --------------------------------------------------------------
 # 1 group = 1 pane/session. implement ทุก id ในกลุ่มก่อน แล้ว retro+clear ครั้งเดียว
 # (batch → cache-write เย็นจ่ายรอบเดียวต่อกลุ่ม แทน 1 รอบ/task).
-for group in $GROUPS; do
+for group in $TASK_GROUPS; do
   ids="${group//+/ }"
   echo "::: group [$ids] — เปิด pane interactive"
   SID="$(open_pane | tr -d '[:space:]')"
